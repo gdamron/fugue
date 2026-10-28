@@ -192,3 +192,55 @@ fn a_retrigger_and_a_swap_at_one_instant_play_the_new_sample_over_the_fade() {
         let _ = std::fs::remove_file(path);
     }
 }
+
+#[test]
+fn retriggers_faster_than_the_fade_stay_within_twice_the_level() {
+    let held = write_level_wav(0.5, RATE as usize);
+    for every in [2, 48] {
+        let (mut kit, _surface) = build_kit(one_slot(&held));
+        let mut peak = 0.0f32;
+        for _ in 0..2_000 / every {
+            play(&mut kit);
+            for value in heard(&mut kit, every) {
+                peak = peak.max(value.abs());
+            }
+        }
+        // Fades bounded at the level (1.0) where they fold, under a play
+        // of 0.5: unbounded, a play every 2 frames sums to about 36.
+        assert!(peak <= 1.5 + TOL, "every {every} frames: {peak}");
+    }
+    let _ = std::fs::remove_file(held);
+}
+
+#[test]
+fn a_swap_mid_fade_while_playing_moves_the_fade_with_the_ringing_sound() {
+    let kick = write_level_wav(0.5, RATE as usize);
+    let quiet = write_level_wav(0.125, RATE as usize);
+    let (mut kit, _surface) = build_kit(one_slot(&kick));
+    let asset = index_of(KitControl::Asset(0), 1);
+    play(&mut kit);
+    heard(&mut kit, 8);
+    // Cut, then swapped a frame into the fade: the kick, playing and
+    // fading, rings out on its buffer, and the quiet sample waits.
+    play(&mut kit);
+    let mut fade = heard(&mut kit, 1);
+    let payload = Payload::from_arc(load_cached_sample(quiet.to_str().unwrap(), RATE).unwrap());
+    let retired = kit.apply_payload(asset, payload).ok().unwrap();
+    fade.extend(heard(&mut kit, declick_frames()));
+    let step = 0.5 / (DECLICK_SECONDS * RATE as f32);
+    for pair in fade.windows(2).take(declick_frames() as usize - 2) {
+        assert!((pair[0] - pair[1] - step).abs() < 1e-3, "{fade:?}");
+    }
+    assert!((fade.last().unwrap() - 0.5).abs() < TOL, "{fade:?}");
+    play(&mut kit);
+    heard(&mut kit, declick_frames());
+    let next = heard(&mut kit, 1)[0];
+    assert!(
+        (next - 0.125).abs() < TOL,
+        "the next play takes the swap: {next}"
+    );
+    drop(retired);
+    for path in [kick, quiet] {
+        let _ = std::fs::remove_file(path);
+    }
+}

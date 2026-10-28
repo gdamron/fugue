@@ -93,7 +93,10 @@ impl Voice {
         // A voice that has sounded nothing yet (played again at the
         // instant it started) has nothing to fade.
         if self.active && self.position > 0 {
-            self.keep_residual();
+            let folding = self.tail.gain > 0.0 || self.residual_gain > 0.0;
+            if folding {
+                self.keep_residual();
+            }
             self.tail = Tail {
                 source: if self.ringing_out {
                     Source::Previous
@@ -104,6 +107,9 @@ impl Voice {
                 amp: self.level.value(),
                 gain: 1.0,
             };
+            if folding {
+                self.bound_residual();
+            }
         }
         // A play restarts the slot's one voice, so it sounds at the level
         // written: a glide smooths only a sound that carries on.
@@ -120,6 +126,17 @@ impl Voice {
         let gain = self.residual_gain;
         self.residual = (self.residual.0 * gain + l, self.residual.1 * gain + r);
         self.residual_gain = 1.0;
+    }
+
+    /// Keeps the fades within the cut sound's level where they fold.
+    /// Retriggers closer than the fade would otherwise stack a fade per
+    /// play: an audio-rate gate would sum dozens of them. Slower ones never
+    /// reach the bound, so they fold without a step.
+    fn bound_residual(&mut self) {
+        let amp = self.tail.amp;
+        let (l, r) = self.tail_frame();
+        self.residual.0 = self.residual.0.max(-amp - l).min(amp - l);
+        self.residual.1 = self.residual.1.max(-amp - r).min(amp - r);
     }
 
     /// The tail's next frame, without advancing it.

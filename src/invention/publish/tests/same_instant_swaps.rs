@@ -39,12 +39,17 @@ fn document(module_type: &str, config: serde_json::Value) -> String {
     .to_string()
 }
 
-/// Two blocks of the DAC's left output, live, with `writes` made after the
-/// first, all for one sample.
-fn live(json: &str, writes: &[(&str, ControlValue)]) -> Vec<f32> {
+type Writes<'a> = [(&'a str, ControlValue)];
+
+/// Two blocks of the DAC's left output, live, with `before` made before the
+/// first and `writes` after it, all for one sample.
+fn live(json: &str, before: &Writes, writes: &Writes) -> Vec<f32> {
     let mut rig = Rig::new(json);
-    let mut heard = rig.render(1);
     let surface = rig.live.control_surfaces.lock().unwrap()["m"].clone();
+    for (key, value) in before {
+        surface.set_control(key, value.clone()).unwrap();
+    }
+    let mut heard = rig.render(1);
     for (key, value) in writes {
         surface.set_control(key, value.clone()).unwrap();
     }
@@ -53,13 +58,16 @@ fn live(json: &str, writes: &[(&str, ControlValue)]) -> Vec<f32> {
 }
 
 /// The same, offline.
-fn offline(json: &str, writes: &[(&str, ControlValue)]) -> Vec<f32> {
+fn offline(json: &str, before: &Writes, writes: &Writes) -> Vec<f32> {
     let mut engine = RenderEngine::new(SAMPLE_RATE);
     engine
         .load_invention(Invention::from_json(json).unwrap())
         .unwrap();
     let mut block = [0.0f32; 128];
     let mut heard = Vec::new();
+    for (key, value) in before {
+        engine.set_control("m", key, value.clone()).unwrap();
+    }
     for at in 0..2 {
         if at == 1 {
             for (key, value) in writes {
@@ -78,8 +86,8 @@ fn agree(json: &str, play: (&str, ControlValue), quiet: &str) {
     let swap = ("asset.0", ControlValue::from(quiet));
     for writes in [[swap.clone(), play.clone()], [play.clone(), swap.clone()]] {
         let first = writes[0].0;
-        let live = live(json, &writes);
-        let offline = offline(json, &writes);
+        let live = live(json, &[], &writes);
+        let offline = offline(json, &[], &writes);
         let (l, o) = (live[64], offline[64]);
         assert!(
             live == offline,
@@ -134,8 +142,8 @@ fn a_note_stolen_at_its_instant_fades_out_on_the_new_sample_live_and_offline() {
     for at in 0..3 {
         let mut writes = vec![note.clone(), note.clone()];
         writes.insert(at, swap.clone());
-        let live = live(&json, &writes);
-        let offline = offline(&json, &writes);
+        let live = live(&json, &[], &writes);
+        let offline = offline(&json, &[], &writes);
         assert!(
             live == offline,
             "swap at {at}: live {} and offline {} differ",
@@ -169,4 +177,28 @@ fn a_swap_after_a_play_has_sounded_waits_for_the_next_play() {
         "the kick rings on: {}",
         block[0]
     );
+}
+
+#[test]
+fn a_kit_play_on_a_sounding_slot_at_a_swaps_instant_agrees_live_and_offline() {
+    let dir = tempfile::tempdir().unwrap();
+    let kick = level_wav(dir.path(), "kick.wav", 0.5);
+    let quiet = level_wav(dir.path(), "quiet.wav", 0.125);
+    let config = serde_json::json!({ "samples": [{ "key": 36, "asset": kick }] });
+    let json = document("sample_kit", config);
+    let play = ("play", ControlValue::from(36.0));
+    let swap = ("asset.0", ControlValue::from(quiet.as_str()));
+    for writes in [[swap.clone(), play.clone()], [play.clone(), swap.clone()]] {
+        let first = writes[0].0;
+        let live = live(&json, std::slice::from_ref(&play), &writes);
+        let offline = offline(&json, std::slice::from_ref(&play), &writes);
+        assert!(live == offline, "{first} first: live and offline differ");
+        // The cut kick fades on its own buffer over the quiet sample's play.
+        assert!(
+            (live[64] - 0.625).abs() < 2e-3,
+            "{first} first: {}",
+            live[64]
+        );
+        assert!(live[127] < live[64] && live[127] > 0.125, "{first} first");
+    }
 }
