@@ -63,6 +63,10 @@ fn every_other_number_narrows_as_before() {
     // Spellings an f64 reads that JSON does not.
     assert!(keeps_text(&ControlValue::String("+16777217".into())));
     assert!(!keeps_text(&ControlValue::String(".5".into())));
+    // Decimal text reads as an f64 does, past what JSON parsing keeps.
+    assert!(keeps_text(&ControlValue::String(
+        "10.000000000000001".into()
+    )));
 }
 
 #[test]

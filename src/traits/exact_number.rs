@@ -12,26 +12,25 @@ use serde::{Deserialize, Deserializer};
 
 use crate::ControlValue;
 
-/// Whether an f32 misreports `number` as a whole number it is not: it
+/// Whether an f32 misreports a number as a whole number it is not: it
 /// rounds a fraction to a whole number, or one whole number to another.
-/// A whole number is compared exactly, so one past 2^53 that an f64 would
-/// also round counts too.
-fn misread_by_f32(number: &serde_json::Number) -> bool {
-    let narrowed = number.as_f64().unwrap_or(0.0) as f32;
+/// A whole number (`whole`, when the number is one) is compared exactly,
+/// so one past 2^53 that its f64 `float` also rounds counts too.
+fn misread_by_f32(whole: Option<i128>, float: f64) -> bool {
+    let narrowed = float as f32;
+    match whole {
+        Some(whole) => narrowed as i128 != whole,
+        None => narrowed.is_finite() && narrowed.fract() == 0.0 && f64::from(narrowed) != float,
+    }
+}
+
+/// `number` as [`misread_by_f32`] reads it.
+fn json_misread(number: &serde_json::Number) -> bool {
     let whole = number
         .as_i64()
         .map(i128::from)
         .or_else(|| number.as_u64().map(i128::from));
-    match whole {
-        Some(whole) => narrowed as i128 != whole,
-        None => {
-            narrowed.is_finite()
-                && narrowed.fract() == 0.0
-                && number
-                    .as_f64()
-                    .is_some_and(|float| f64::from(narrowed) != float)
-        }
-    }
+    misread_by_f32(whole, number.as_f64().unwrap_or(0.0))
 }
 
 /// Whether `value` is number text an f32 misreads, which a whole-number
@@ -39,14 +38,10 @@ fn misread_by_f32(number: &serde_json::Number) -> bool {
 pub(crate) fn keeps_text(value: &ControlValue) -> bool {
     match value {
         ControlValue::String(text) => {
-            // JSON number text, or any other spelling an f64 reads ("+5", ".5").
             let text = text.trim();
-            let number = text.parse::<serde_json::Number>().ok().or_else(|| {
-                text.parse::<f64>()
-                    .ok()
-                    .and_then(serde_json::Number::from_f64)
-            });
-            number.is_some_and(|number| misread_by_f32(&number))
+            let whole = text.parse::<i128>().ok();
+            text.parse::<f64>()
+                .is_ok_and(|float| misread_by_f32(whole, float))
         }
         _ => false,
     }
@@ -55,7 +50,7 @@ pub(crate) fn keeps_text(value: &ControlValue) -> bool {
 /// A JSON number as a write carries it: an f32, or its text when an f32
 /// misreads it. A number control reads either as the same f32.
 pub(crate) fn json_number(number: &serde_json::Number) -> ControlValue {
-    if misread_by_f32(number) {
+    if json_misread(number) {
         ControlValue::String(number.to_string())
     } else {
         ControlValue::Number(number.as_f64().unwrap_or(0.0) as f32)
