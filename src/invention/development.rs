@@ -189,7 +189,9 @@ fn apply_development_config(
                 name, key
             )
         })?;
-        pending.push((key, value));
+        // Number text an f32 misreads stays text only for a whole-number
+        // control; any other number control is handed a number.
+        pending.push((key, surface.coerce_value(key, value)));
     }
     // A payload (a melody's whole scale) applies before the scalars, which
     // may write within it.

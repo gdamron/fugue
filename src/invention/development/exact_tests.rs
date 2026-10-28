@@ -31,6 +31,23 @@ fn a_development_config_refuses_a_fraction_an_f32_rounds_whole() {
             assert!(error.contains("expects a whole number"), "{value}: {error}");
         }
     }
+    // A number control, here one its module reads itself, still takes it
+    // as the f32 it rounds to.
+    let mut host = sequencer();
+    host["modules"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "id": "h", "type": "host_dial" }));
+    host["controls"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "name": "rate", "module": "h", "control": "rate" }));
+    let built = factory("seq", host)
+        .build(48_000, &json!({ "rate": 60.0000001 }))
+        .unwrap();
+    let rate = built.control_surface.unwrap().get_control("rate").unwrap();
+    assert_eq!(rate, crate::ControlValue::Number(60.0));
+
     let built = factory("seq", sequencer())
         .build(48_000, &json!({ "note": 61 }))
         .unwrap();
