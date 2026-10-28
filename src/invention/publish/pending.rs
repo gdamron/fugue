@@ -221,40 +221,20 @@ impl PendingLog {
     /// settled cannot be known, so the log forgets every write it holds
     /// rather than list one as pending for ever. Then settles expired each
     /// write whose ttl the audio thread has rendered past with no outcome
-    /// (see [`Self::expire`]).
+    /// (see [`Self::expire`]), and, once the audio side has sent its last
+    /// outcome, every write and timed edit still waiting (see
+    /// [`Self::strand`]).
     pub(crate) fn settle(&mut self) {
-        // Before the outcomes, so every one sent up to it is received.
+        // Before the outcomes, so every one sent up to them is received.
         let rendered = self.transport.rendered();
+        let ended = self.receiver.ended();
         while let Some((id, outcome, latched)) = self.receiver.try_recv() {
             if let Some(at) = self.expired.iter().position(|expired| *expired == id) {
                 self.expired.remove(at);
                 continue;
             }
             if let Some(at) = self.timed.iter().position(|(timed, _)| *timed == id) {
-                let edit = self.timed.remove(at).and_then(|(_, edit)| edit);
-                let landed = matches!(
-                    outcome,
-                    Outcome::Applied { .. } | Outcome::AppliedLate { .. }
-                );
-                match edit {
-                    Some(edit) => {
-                        // Refused on its beat, it latched its clock there.
-                        if let (Some(at), LoggedWhen::Beat { beat }) = (latched, &edit.when) {
-                            self.log.latched(at, beat.clock());
-                        }
-                        self.log.timed_edit(edit.settled(outcome));
-                    }
-                    // One the log cannot replay counts as a commit, if it
-                    // landed or latched a clock.
-                    None if landed || latched.is_some() => self.log.edited(),
-                    None => {}
-                }
-                if self.timed_outcomes.len() == TIMED_CAPACITY {
-                    self.timed_outcomes.pop_front();
-                    self.timed_lost = true;
-                }
-                self.timed_outcomes.push_back((id, outcome));
-                self.steps.push_back(DocumentStep::Timed);
+                self.timed_settled(at, outcome, latched);
             } else {
                 let write = self.writes.iter().position(|(pending, _)| *pending == id);
                 let write = write
@@ -287,6 +267,59 @@ impl PendingLog {
             self.timed_lost = true;
         }
         self.expire(rendered);
+        if ended {
+            self.strand();
+        }
+    }
+
+    /// Settles the timed edit `at` in [`Self::timed`] as `outcome` says,
+    /// with the sample it `latched` its clock on if it did.
+    fn timed_settled(&mut self, at: usize, outcome: Outcome, latched: Option<u64>) {
+        let Some((id, edit)) = self.timed.remove(at) else {
+            return;
+        };
+        let landed = matches!(
+            outcome,
+            Outcome::Applied { .. } | Outcome::AppliedLate { .. }
+        );
+        match edit {
+            Some(edit) => {
+                // Refused on its beat, it latched its clock there.
+                if let (Some(at), LoggedWhen::Beat { beat }) = (latched, &edit.when) {
+                    self.log.latched(at, beat.clock());
+                }
+                self.log.timed_edit(edit.settled(outcome));
+            }
+            // One the log cannot replay counts as a commit, if it landed or
+            // latched a clock.
+            None if landed || latched.is_some() => self.log.edited(),
+            None => {}
+        }
+        if self.timed_outcomes.len() == TIMED_CAPACITY {
+            self.timed_outcomes.pop_front();
+            self.timed_lost = true;
+        }
+        self.timed_outcomes.push_back((id, outcome));
+        self.steps.push_back(DocumentStep::Timed);
+    }
+
+    /// Settles every write and timed edit still waiting as refused
+    /// ([`Refusal::Stopped`]) once the audio side has sent its last
+    /// outcome, as a render that panicked does (see `graph::unwind`): none
+    /// will apply, so none is listed as waiting until the invention stops,
+    /// and a reply awaiting one says so. One submitted as the queue closed
+    /// is settled by the next call.
+    fn strand(&mut self) {
+        let stopped = Outcome::Refused(Refusal::Stopped);
+        while let Some((id, _)) = self.timed.front() {
+            let id = *id;
+            self.timed_settled(0, stopped, None);
+            self.received(id, stopped);
+        }
+        for (id, write) in std::mem::take(&mut self.writes) {
+            self.settled(id, Some(write), stopped, None);
+            self.received(id, stopped);
+        }
     }
 
     /// Settles each write whose ttl ran out by `rendered`, read before the

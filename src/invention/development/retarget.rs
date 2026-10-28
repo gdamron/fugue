@@ -16,7 +16,7 @@
 use super::compiled_graph::process_order;
 use super::*;
 use crate::control_request::Refusal;
-use crate::payload::{LeakOnUnwind, Payload, Retired};
+use crate::payload::{Payload, RetireOnUnwind, Retired};
 
 /// What a development's inner order is computed from, by inner module
 /// index: the ids, and the routes as `(from, to)` pairs in routing order,
@@ -91,11 +91,12 @@ pub(super) fn apply_reordered(
         // Built by no development's surface (a handover): no order.
         Err(payload) => return apply(payload),
     };
-    let mut reordered = LeakOnUnwind::new(reordered);
+    let mut reordered = RetireOnUnwind::new(reordered);
     let Some(inner) = reordered.inner.take() else {
         return Err((Refusal::Invalid, Payload::owned(reordered.into_inner())));
     };
-    // An inner module panicking leaves the box to leak, not to free here.
+    // An inner module panicking leaves the box for the graph to keep, not
+    // to free here.
     let applied = apply(inner);
     let mut reordered = reordered.into_inner();
     match applied {

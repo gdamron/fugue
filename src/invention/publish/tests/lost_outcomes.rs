@@ -13,7 +13,7 @@ use crate::invention::publish::{Authoring, DocumentStep, PendingLog, PendingWrit
 use crate::ControlValue;
 
 /// An authored, announced write of `osc.frequency`, made at `when`.
-fn write(value: f32, when: When) -> PendingWrite {
+pub(super) fn write(value: f32, when: When) -> PendingWrite {
     PendingWrite {
         module_id: "osc".into(),
         key: "frequency".into(),
@@ -146,4 +146,39 @@ fn a_timed_write_applied_before_its_ttl_ran_out_settles_applied() {
     let settled: Vec<_> = announced.iter().map(|a| (a.request, a.outcome)).collect();
     assert_eq!(settled, [(id, Some(applied))]);
     assert_eq!(recorded(&mut log), 1);
+}
+
+/// Once the audio side has sent its last outcome (a render panicked),
+/// every write still waiting settles refused, as the invention stopping
+/// settles it: a timed one is announced so, and one a reply awaits is held
+/// for it. An outcome sent before the end settles its write as it says.
+#[test]
+fn writes_waiting_as_the_audio_side_ends_settle_stopped() {
+    let (mut sender, receiver) = outcome_channel_reserving(4, 4);
+    let mut log = PendingLog::new(receiver, Arc::default());
+    let (applied, timed, awaited) = (RequestId(1), RequestId(2), RequestId(3));
+    log.submitted(applied, write(220.0, When::Now));
+    log.submitted(timed, write(330.0, When::AtSample(1_000_000)));
+    let awaiting = PendingWrite {
+        awaited: true,
+        ..write(440.0, When::Now)
+    };
+    log.hold_room(1);
+    log.submitted(awaited, awaiting);
+    sender.send(applied, Outcome::Applied { at: 0 }, None);
+    sender.end();
+
+    let stopped = Outcome::Refused(Refusal::Stopped);
+    let announced = log.take_announcements();
+    let settled: Vec<_> = announced.iter().map(|a| (a.request, a.outcome)).collect();
+    assert_eq!(
+        settled,
+        [
+            (applied, Some(Outcome::Applied { at: 0 })),
+            (timed, Some(stopped))
+        ]
+    );
+    assert!(!log.waiting(timed) && !log.waiting(awaited));
+    assert_eq!(log.outcome_of(awaited), Some(stopped), "held for its reply");
+    assert_eq!(recorded(&mut log), 1, "only the applied one");
 }
