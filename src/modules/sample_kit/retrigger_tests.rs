@@ -77,6 +77,40 @@ fn a_retrigger_mid_waveform_fades_the_old_sound_without_a_step() {
 }
 
 #[test]
+fn a_retrigger_inside_the_fade_carries_the_first_fade_on() {
+    let sine: Vec<f32> = (0..RATE as usize)
+        .map(|n| 0.5 * (std::f32::consts::TAU * 220.0 * n as f32 / RATE as f32).sin())
+        .collect();
+    let path = write_levels_wav(&sine);
+    let (mut kit, _surface) = build_kit(one_slot(&path));
+    play(&mut kit);
+    let mut frames = heard(&mut kit, 50);
+    frames.reserve(2 * declick_frames() as usize + 1);
+    play(&mut kit);
+    frames.extend(heard(&mut kit, 1));
+    // Played again a frame into the first fade, at the sine's height: had
+    // the second fade replaced the first outright, the output would drop
+    // by about 0.48 here.
+    let ((), allocs, frees) = allocator_events(|| {
+        let _audio = AudioThreadScope::enter();
+        play(&mut kit);
+        for _ in 0..2 * declick_frames() {
+            kit.process(1);
+            frames.push(kit.get_output("audio_left").unwrap());
+        }
+    });
+    assert_eq!((allocs, frees), (0, 0));
+    // A sine at 220 Hz moves by at most 0.016 a frame; the fades add their
+    // slope (0.004 each).
+    let jump = frames
+        .windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0, f32::max);
+    assert!(jump < 0.03, "{jump}");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn a_swap_during_the_fade_leaves_it_on_the_buffer_it_was_reading() {
     let kick = write_level_wav(0.5, RATE as usize);
     let quiet = write_level_wav(0.125, RATE as usize);
