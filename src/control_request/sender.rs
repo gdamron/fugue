@@ -1,11 +1,13 @@
 //! Submitting requests to the audio thread.
 
+use super::backlog::{hold, Backlog, Held};
 use super::conditions::WatchSlots;
 use super::event::EventCounter;
 use super::queue::{bounded, QueueConsumer, QueueProducer};
 use super::request::{Request, RequestId, When};
-use super::sync::{debug_assert_control_thread, Arc, AtomicU64, Ordering};
+use super::sync::{debug_assert_control_thread, Arc, AtomicBool, AtomicU64, Ordering};
 use super::transport::Transport;
+use crate::audio_thread::on_audio_thread;
 
 /// Creates a request channel holding up to `capacity` requests (rounded as
 /// [`bounded`] rounds it), timing relative requests against `transport`.
@@ -17,12 +19,14 @@ pub(crate) fn request_channel(
 ) -> (RequestSender, QueueConsumer<Request>) {
     debug_assert_control_thread("request_channel");
     let (queue, consumer) = bounded(capacity);
+    let backlog = Backlog::default();
     let shared = Arc::new(SenderShared {
         next_id: AtomicU64::new(1),
         overflows: EventCounter::new(),
         transport,
         watches: Arc::new(WatchSlots::default()),
-        reserved: Arc::new(ReservedQueued::default()),
+        reserved: Arc::new(ReservedQueued::holding(backlog.flag())),
+        backlog,
     });
     let sender = RequestSender {
         queue,
@@ -60,6 +64,8 @@ struct SenderShared {
     /// each settles.
     watches: Arc<WatchSlots>,
     reserved: Arc<ReservedQueued>,
+    /// Reserved requests that found the queue full (see `backlog`).
+    backlog: Backlog,
 }
 
 /// Reserved requests ([`Request::reserved`]) queued and taken, so the drain
@@ -71,9 +77,26 @@ pub(crate) struct ReservedQueued {
     queued: AtomicU64,
     /// Written by the drain alone.
     taken: AtomicU64,
+    /// What the channel holds for want of room (see `backlog`).
+    held: Arc<Held>,
 }
 
 impl ReservedQueued {
+    /// Counts for a channel whose backlog sets `held`.
+    fn holding(held: Arc<Held>) -> Self {
+        Self {
+            held,
+            ..Self::default()
+        }
+    }
+
+    /// Whether the channel holds one tagged `generation` or older on the
+    /// control side, to queue once there is room: the drain keeps that
+    /// generation's bridge for it.
+    pub(crate) fn held_through(&self, generation: u64) -> bool {
+        self.held.through(generation)
+    }
+
     /// The drain took one.
     pub(crate) fn took(&self) {
         let taken = self.taken.load(Ordering::Relaxed);
@@ -103,7 +126,11 @@ impl RequestSender {
 
     /// Assigns `request` the channel's next id, resolves its relative times
     /// and queues it. Lock-free and allocation-free from any thread,
-    /// including the audio thread.
+    /// including the audio thread, while the queue has room and nothing is
+    /// held. A reserved request that finds none is held (see `backlog`),
+    /// which takes a control lock and allocates the backlog once, so only
+    /// control threads may submit one that could be: nothing submits from
+    /// the audio thread, and in debug builds one is refused there.
     ///
     /// [`When::AfterSamples`] and the `ttl` count from the transport's
     /// published count ([`Transport::rendered`]) as of this call: they
@@ -116,7 +143,8 @@ impl RequestSender {
     /// # Errors
     ///
     /// [`QueueFull`] with the request (id assigned) when the queue has no
-    /// room, or is [`closed`](Self::closed); the overflow is also counted
+    /// room and it cannot be held, or the queue is
+    /// [`closed`](Self::closed); the overflow is also counted
     /// in [`overflows`](Self::overflows).
     // The request comes back by value, as large as it is (a condition makes
     // it 176 bytes), so a full queue never allocates.
@@ -160,33 +188,84 @@ impl RequestSender {
         if watching {
             self.shared.watches.take();
         }
-        // A reserved request may take any slot: the handles that leave
-        // slots free leave some for it.
+        // While any is held, what comes after waits behind it or is refused,
+        // so it never overtakes (see `backlog`).
+        let pushed = match self.flushed() {
+            true => self.push(request),
+            false => Err(request),
+        };
+        let refused = match pushed {
+            Ok(()) => return Ok(id),
+            Err(request) if !request.reserved || self.queue.is_closed() || on_audio_thread() => {
+                request
+            }
+            Err(request) => {
+                let mut held = self.shared.backlog.lock();
+                let held_now = hold(&mut held, request);
+                self.shared.backlog.update(&held);
+                match held_now {
+                    // Its watch slot stays taken: it is still in flight.
+                    Ok(()) => return Ok(id),
+                    Err(request) => request,
+                }
+            }
+        };
+        if watching {
+            self.shared.watches.release();
+        }
+        self.shared.overflows.record();
+        Err(QueueFull(refused))
+    }
+
+    /// Queues `request` if there is room for it: any slot for a reserved
+    /// one, the handles that leave slots free leaving some for it.
+    #[allow(clippy::result_large_err)]
+    fn push(&self, request: Request) -> Result<(), Request> {
         let reserve = match request.reserved {
             true => 0,
             false => self.reserve,
         };
         let reserved = request.reserved;
-        let pushed = if reserve == 0 || self.queue.leaves(reserve) {
-            self.queue.try_push(request)
-        } else {
-            Err(request)
-        };
-        match pushed {
-            Ok(()) => {
-                if reserved {
-                    self.shared.reserved.queued.fetch_add(1, Ordering::Release);
-                }
-                Ok(id)
-            }
-            Err(request) => {
-                if watching {
-                    self.shared.watches.release();
-                }
-                self.shared.overflows.record();
-                Err(QueueFull(request))
+        match reserve == 0 || self.queue.leaves(reserve) {
+            true => self.queue.try_push(request)?,
+            false => return Err(request),
+        }
+        if reserved {
+            self.shared.reserved.queued.fetch_add(1, Ordering::Release);
+        }
+        Ok(())
+    }
+
+    /// Queues what the channel holds, oldest first, as far as there is
+    /// room, and returns whether none is left held. Costs one atomic load
+    /// while none is. Serialized with submissions (under a live graph's
+    /// publisher); control threads only. A closed queue never takes one,
+    /// so what is held then is dropped, here off the audio thread.
+    pub(crate) fn flushed(&self) -> bool {
+        if !self.shared.backlog.waiting() {
+            return true;
+        }
+        if on_audio_thread() {
+            return false;
+        }
+        let mut held = self.shared.backlog.lock();
+        if self.queue.is_closed() {
+            held.clear();
+        }
+        while let Some(request) = held.pop_front() {
+            if let Err(request) = self.push(request) {
+                held.push_front(request);
+                break;
             }
         }
+        self.shared.backlog.update(&held);
+        held.is_empty()
+    }
+
+    /// Whether the channel holds any request (see [`Self::flushed`]), for a
+    /// tick to read without a lock.
+    pub(crate) fn holding(&self) -> Arc<Held> {
+        self.shared.backlog.flag()
     }
 
     /// Whether the channel's drain stopped reading: a render panicked, and
@@ -195,11 +274,13 @@ impl RequestSender {
         self.queue.is_closed()
     }
 
-    /// Whether a request submitted now would find room. Exact while
-    /// submissions are serialized, as a live graph's are (under its
-    /// publisher): the audio thread only frees slots.
+    /// Whether a request submitted now would find room: none while the
+    /// channel still holds any after queuing what it can (see
+    /// [`Self::flushed`]). Exact while submissions are serialized, as a
+    /// live graph's are (under its publisher): the audio thread only frees
+    /// slots.
     pub(crate) fn has_room(&self) -> bool {
-        self.queue.leaves(self.reserve)
+        self.flushed() && self.queue.leaves(self.reserve)
     }
 
     /// Whether `count` requests submitted now, one after another, would all
@@ -209,7 +290,7 @@ impl RequestSender {
             return true;
         };
         let ahead = self.reserve.saturating_add(last);
-        ahead < self.queue.capacity() && self.queue.leaves(ahead)
+        self.flushed() && ahead < self.queue.capacity() && self.queue.leaves(ahead)
     }
 
     /// Whether [`CONDITION_CAPACITY`](super::CONDITION_CAPACITY) requests

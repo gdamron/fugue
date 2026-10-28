@@ -210,6 +210,18 @@ impl Publisher {
         self.generation
     }
 
+    /// Queues what the request channel holds for want of room, as far as
+    /// there is room now, and returns whether none is left held (see
+    /// `control_request::backlog`).
+    pub(crate) fn flush_held(&self) -> bool {
+        self.requests.flushed()
+    }
+
+    /// Whether a reserved request waits in the queue, not yet taken.
+    pub(crate) fn reserved_waiting(&self) -> bool {
+        self.requests.reserved_queued().waiting()
+    }
+
     /// Publications the audio thread has installed so far.
     pub(crate) fn applied(&self) -> u64 {
         self.applied.load(std::sync::atomic::Ordering::Relaxed)
