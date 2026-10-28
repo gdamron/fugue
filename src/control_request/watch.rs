@@ -27,9 +27,11 @@ use super::timeline::Timeline;
 mod cursor;
 mod edges;
 mod ramp;
+mod room;
 
 pub(crate) use cursor::{Cursors, StepClock, CURSOR_CAPACITY};
 pub(crate) use edges::{EdgeCursors, EdgeHost, Ports};
+pub(crate) use room::RampRoom;
 
 /// What watches need of the graph: its modules' timelines, and applying a
 /// request as a sample-timed one is applied.

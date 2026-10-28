@@ -347,8 +347,19 @@ impl RunningInvention {
     }
 
     fn with_audio_diagnostics(&self, mut status: RuntimeStatus) -> RuntimeStatus {
-        status.diagnostics = (self.backend.diagnostics()).map(|diagnostics| diagnostics.snapshot());
+        status.diagnostics = (self.backend.diagnostics()).map(|diagnostics| {
+            let mut snapshot = diagnostics.snapshot();
+            snapshot.table_ramp_jumps = self.table_ramp_jumps();
+            snapshot
+        });
         status
+    }
+
+    /// How many scheduled ramps jumped to their values for want of room in
+    /// the request drain since playback started (see
+    /// [`crate::AudioDiagnosticsSnapshot::table_ramp_jumps`]).
+    pub fn table_ramp_jumps(&self) -> u64 {
+        self.live.table_ramp_jumps()
     }
 
     /// Returns the declarative document describing the current graph: the

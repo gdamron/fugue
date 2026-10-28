@@ -30,6 +30,7 @@ use std::sync::Arc;
 
 use super::compile::CompiledTopology;
 use super::{RoutingConnection, SignalGraph};
+use crate::control_request::RampRoom;
 use crate::invention::runtime::ModuleInstance;
 use crate::spsc::{Consumer, Producer};
 use crate::{GraphModule, Module, MAX_BLOCK};
@@ -75,6 +76,10 @@ pub(crate) struct Publication {
     /// A timed edit's fate, which landing it decides (see `landing`); none
     /// for an immediate edit.
     pub(crate) fate: Option<FateGuard>,
+    /// More room for the ramps of the tables the drain plays, when the
+    /// graph it installs needs it (see [`RampRoom`]): taken as it installs,
+    /// leaving here the room it replaces, freed with the rest.
+    pub(crate) ramp_room: Option<RampRoom>,
 }
 
 impl Publication {
@@ -477,7 +482,8 @@ impl SignalGraph {
     /// sample-identical across the install as long as the edit leaves its
     /// per-sample order (and so its delayed edge) as it was. Last, each
     /// survivor takes the payloads the publication carries for it (see
-    /// [`Handover`]).
+    /// [`Handover`]), and the drain takes the room the publication carries
+    /// for the tables' ramps.
     fn install(&mut self, publication: &mut Publication) {
         self.flush_replaced(publication);
         let mut moved = 0;
@@ -521,6 +527,11 @@ impl SignalGraph {
         }
         self.reset_installed_inputs(publication, moved);
         self.hand_over(publication);
+        // Before the tables are found again on the graph it installs.
+        let room = publication.ramp_room.as_mut();
+        if let (Some(room), Some(drain)) = (room, self.requests.as_mut()) {
+            drain.watches.take_room(room);
+        }
     }
 
     /// Whether the running module at `old` in the retired map and the

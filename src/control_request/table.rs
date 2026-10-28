@@ -88,6 +88,39 @@ pub(crate) struct TableEntry {
     pub(crate) target: TableTarget,
 }
 
+/// The most ramps a table of entries at `spans` (each entry's step and
+/// ramp steps) can run at once: the most whose ramps overlap, a ramp
+/// running from its step through its end step, both included. A count to
+/// size a drain's room by, on a control thread: it ignores that a later
+/// entry on the same control ends a ramp, so it never counts short.
+/// Allocates.
+pub(crate) fn most_ramps(spans: impl IntoIterator<Item = (u64, u64)>) -> usize {
+    // Each ramp's start (-1, so at one step it sorts before an end) and
+    // end (+1).
+    let mut edges: Vec<(u64, i8)> = Vec::new();
+    for (step, ramp_steps) in spans.into_iter().filter(|&(_, ramp)| ramp > 0) {
+        edges.push((step, -1));
+        edges.push((step.saturating_add(ramp_steps), 1));
+    }
+    edges.sort_unstable();
+    let (mut running, mut most) = (0usize, 0usize);
+    for (_, edge) in edges {
+        if edge < 0 {
+            running += 1;
+            most = most.max(running);
+        } else {
+            running -= 1;
+        }
+    }
+    most
+}
+
+/// [`most_ramps`] of `table`'s entries. Allocates: control thread.
+pub(crate) fn table_ramps(table: &dyn BeatTable) -> usize {
+    let entries = (0..table.len()).filter_map(|index| table.entry(index));
+    most_ramps(entries.map(|entry| (entry.step, entry.ramp_steps)))
+}
+
 /// A module's count of its clock input's rising edges (see
 /// [`BeatTable::counted`]), as the drain carries it on.
 #[derive(Clone, Copy, Debug, PartialEq)]

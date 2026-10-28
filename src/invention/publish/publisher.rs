@@ -200,6 +200,14 @@ impl Publisher {
         (publisher, ends)
     }
 
+    /// Sizes the drain of `graph`, linked to this and not yet live, for
+    /// the ramps of the tables its bound modules play (see
+    /// `control_request::RampRoom`), the mirror keeping the room it holds.
+    /// Allocates: a control thread, before the graph goes live.
+    pub(crate) fn fit_table_ramps(&mut self, graph: &mut SignalGraph) {
+        self.mirror.table_ramps = graph.fit_table_ramps();
+    }
+
     /// The topology as of the latest publication.
     pub(crate) fn mirror(&self) -> &TopologyMirror {
         &self.mirror

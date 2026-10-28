@@ -6,8 +6,9 @@
 
 use super::{Publication, RoutingConnection, SignalGraph};
 use crate::control_request::{
-    flush_staged, kept_hold, take_automation, BeatHost, BeatTable, ControlTarget, Outcome,
-    Outcomes, Player, RequestValue, RtValue, Standing, StepClock, Timeline, Watches,
+    flush_staged, kept_hold, table_ramps, take_automation, BeatHost, BeatTable, ControlTarget,
+    Outcome, Outcomes, Player, RampRoom, RequestValue, RtValue, Standing, StepClock, Timeline,
+    Watches,
 };
 
 impl BeatHost for SignalGraph {
@@ -102,6 +103,25 @@ impl BeatHost for SignalGraph {
 }
 
 impl SignalGraph {
+    /// Gives the drain room for every ramp its modules' tables can run at
+    /// once (see [`RampRoom`]), when it holds less, and returns the room
+    /// it holds. Allocates and frees: a control thread, before the graph
+    /// goes live or under an offline render's lock.
+    pub(crate) fn fit_table_ramps(&mut self) -> usize {
+        let tables = self
+            .modules
+            .values()
+            .filter_map(|instance| instance.module().beat_table());
+        let needed: usize = tables.map(table_ramps).sum();
+        let Some(drain) = self.requests.as_mut() else {
+            return 0;
+        };
+        if RampRoom::fitting(needed) > drain.watches.table_room() {
+            drain.watches.take_room(&mut RampRoom::new(needed));
+        }
+        drain.watches.table_room()
+    }
+
     /// Whether `publication` keeps the table of the module at `module_idx`
     /// on the drain as it is: the module surviving, stepping on the clock
     /// output it steps on now (the only source on its table's clock

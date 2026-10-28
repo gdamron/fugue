@@ -13,7 +13,8 @@ use std::sync::Arc;
 
 use crate::audio_thread::ControlLock;
 use crate::control_request::{
-    Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue,
+    most_ramps, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
+    RtValue,
 };
 use crate::invention::declared::{
     Checked, Declaration, DeclaredSurface, Queued, Route, WriteOptions, STALE,
@@ -227,6 +228,7 @@ impl ControlSchedulerControls {
             let checked = Checked {
                 generation,
                 targets: target_module_ids(&spec),
+                ramps: spec_ramps(&spec),
                 record: Box::new(record),
             };
             let write = ("schedule", payload, spec_json(&spec).into());
@@ -292,6 +294,12 @@ impl ControlSchedulerControls {
     /// process-order dependency discovery on topology changes.
     pub(crate) fn target_module_ids(&self) -> Vec<String> {
         self.shared.state.lock().unwrap().targets.clone()
+    }
+
+    /// The most ramps the schedule recorded can run at once: the room a
+    /// drain playing it needs (see `control_request::RampRoom`).
+    pub(crate) fn table_ramps(&self) -> usize {
+        spec_ramps(&self.shared.state.lock().unwrap().spec)
     }
 
     /// [`Self::target_module_ids`], or `None` while a control thread holds
@@ -366,6 +374,14 @@ impl ControlSchedulerControls {
             _state: self.shared.state.lock().unwrap(),
         }
     }
+}
+
+/// The most ramps `spec` can run at once (see [`most_ramps`]).
+fn spec_ramps(spec: &[ScheduleEntry]) -> usize {
+    most_ramps(
+        spec.iter()
+            .map(|entry| (entry.at_step, entry.ramp_steps.unwrap_or(0))),
+    )
 }
 
 fn spec_json(spec: &[ScheduleEntry]) -> String {

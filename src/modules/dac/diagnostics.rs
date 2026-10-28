@@ -66,6 +66,13 @@ pub struct AudioDiagnosticsSnapshot {
     /// block, so this is expected to stay at zero.
     #[serde(default)]
     pub graph_rebuild_count: u64,
+    /// Number of scheduled ramps that jumped straight to their values
+    /// because the request drain had no room left to glide them: more ramps
+    /// at once than its documented limit, or a schedule written while its
+    /// room could not grow yet. Filled in by the runtime; zero from the
+    /// backend.
+    #[serde(default)]
+    pub table_ramp_jumps: u64,
 }
 
 /// Why the audio host reported a stream error other than an xrun.
@@ -267,6 +274,7 @@ impl AudioDiagnostics {
                 .map(|ns| ns_to_ms(ns as f64)),
             stream_restart_count: self.stream_restart_count.load(Ordering::Relaxed),
             graph_rebuild_count: self.graph_rebuild_count.load(Ordering::Relaxed),
+            table_ramp_jumps: 0,
         }
     }
 

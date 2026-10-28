@@ -98,6 +98,7 @@ fn a_schedule_resolved_before_an_offline_edit_is_refused_as_stale() {
     let checked = Checked {
         generation,
         targets: Vec::new(),
+        ramps: 0,
         record: Box::new(|| recorded.set(true)),
     };
     let payload = crate::payload::Payload::new(0_u32);

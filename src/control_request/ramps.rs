@@ -9,13 +9,16 @@
 //! # Bounded
 //!
 //! A ramp runs in the graph's [`Ramps`], a table apart from the watches,
-//! preallocated and capped at [`RAMP_CAPACITY`] ramps of requests, and as
-//! many of tables. A request's ramp's room is taken as its request is: one
-//! that would leave a ramp waiting or running without room is refused
-//! ([`Refusal::PendingFull`](super::Refusal::PendingFull)) then, never at
-//! its beat. A table's entry finding no room writes its value at once, a
-//! jump where the scheduler before tables glided, and is counted
-//! ([`Ramps::crowded`]) so a status can show it.
+//! preallocated and capped at [`RAMP_CAPACITY`] ramps of requests, and
+//! apart from them the tables' ramps, in room a control thread sizes from
+//! the tables the drain plays (see `super::watch::RampRoom`): never less
+//! than [`RAMP_CAPACITY`], and grown as an edit or a schedule write needs
+//! more, up to [`TABLE_RAMP_LIMIT`]. A request's ramp's room is taken as its
+//! request is: one that would leave a ramp waiting or running without room
+//! is refused ([`Refusal::PendingFull`](super::Refusal::PendingFull)) then,
+//! never at its beat. A table's entry finding no room (past the limit)
+//! writes its value at once, a jump where the scheduler before tables
+//! glided, and is counted ([`Ramps::crowded`]), which a status shows.
 //!
 //! # Writes
 //!
@@ -55,6 +58,11 @@ use super::watch::BeatHost;
 /// The most ramps in beats one graph keeps waiting for their beat or
 /// running.
 pub(crate) const RAMP_CAPACITY: usize = 64;
+
+/// The most tables' ramps one graph's drain runs at once, however many its
+/// tables could: past it, an entry's ramp jumps to its value and is
+/// counted ([`Ramps::crowded`]).
+pub(crate) const TABLE_RAMP_LIMIT: usize = 1024;
 
 /// A ramp's course on its clock's timeline.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -212,12 +220,38 @@ impl Ramps {
     /// Room for `capacity` ramps of requests and as many of tables.
     /// Allocates: control thread.
     pub(crate) fn new(capacity: usize) -> Self {
+        Self::with_tables(capacity, capacity)
+    }
+
+    /// Room for `capacity` ramps of requests and `tables` of tables.
+    /// Allocates: control thread.
+    pub(crate) fn with_tables(capacity: usize, tables: usize) -> Self {
         Self {
-            entries: Vec::with_capacity(2 * capacity),
+            entries: Vec::with_capacity(capacity + tables),
             limit: capacity,
-            table_limit: capacity,
+            table_limit: tables,
             crowded: Arc::new(EventCounter::new()),
         }
+    }
+
+    /// The tables' ramps it holds at most.
+    pub(crate) fn table_room(&self) -> usize {
+        self.table_limit
+    }
+
+    /// Takes `room`'s room for tables' ramps, when it has more, moving
+    /// every ramp running into it, in order: `room` is left holding this
+    /// one's, to free off the audio thread. Its count of crowded ramps
+    /// stays. Allocation- and free-free: `room` holds as many requests'
+    /// ramps, and more tables'.
+    pub(crate) fn take_room(&mut self, room: &mut Ramps) {
+        let fits = self.entries.len() <= room.entries.capacity() - room.entries.len();
+        if room.table_limit <= self.table_limit || room.limit != self.limit || !fits {
+            return;
+        }
+        room.entries.append(&mut self.entries);
+        std::mem::swap(&mut self.entries, &mut room.entries);
+        std::mem::swap(&mut self.table_limit, &mut room.table_limit);
     }
 
     /// Counts each table's ramp refused because the tables' room was full

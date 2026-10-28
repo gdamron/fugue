@@ -66,21 +66,24 @@ impl Retarget {
     }
 
     /// Under `publisher`: the topology recompiled with module `id` writing
-    /// `targets`, or `None` when it needs none or cannot publish one now
-    /// (see the module docs), or another scheduler's schedule no longer
-    /// resolves.
+    /// `targets` and a schedule running `ramps` ramps at once, or `None`
+    /// when it needs none (the targets compiled, and room enough for the
+    /// tables' ramps) or cannot publish one now (see the module docs), or
+    /// another scheduler's schedule no longer resolves.
     pub(crate) fn prepare(
         &self,
         publisher: &Publisher,
         id: &str,
-        targets: Vec<String>,
+        (targets, ramps): (Vec<String>, usize),
     ) -> Option<Recompile> {
         let directory = self.directory.upgrade()?;
         if publisher.timed_waiting() || self.backlogged(publisher) {
             return None;
         }
         let mut change = super::change_against(publisher, directory, &self.requests);
-        if !change.retarget(id, targets) {
+        // Both: a recompile for either takes the room the other needs.
+        let grows = change.write_ramps(id, ramps);
+        if !(change.retarget(id, targets) || grows) {
             return None;
         }
         let mut prepared = change.compile();
