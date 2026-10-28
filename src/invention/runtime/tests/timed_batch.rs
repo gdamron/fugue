@@ -137,7 +137,10 @@ fn a_reload_on_the_next_downbeat_lands_whole_on_it() {
     assert_eq!(audio.render(INTO_THE_BAR), twin.render(INTO_THE_BAR));
 
     let reloaded = DOCUMENT
-        .replace(r#""cutoff": 400.0"#, r#""filter_type": "highpass""#)
+        .replace(
+            r#""type": "filter", "config": { "cutoff": 400.0 }"#,
+            r#""type": "vca", "config": {}"#,
+        )
         .replace(r#""frequency": 220.0"#, r#""frequency": 330.0"#);
     let reloaded = Invention::from_json(&reloaded).unwrap();
     let queued = (running.reload_at(reloaded, &next_bar(), None)).unwrap();

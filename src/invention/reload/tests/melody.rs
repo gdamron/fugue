@@ -68,9 +68,11 @@ fn reloading_the_original_after_a_whole_scale_brings_back_what_it_replaced() {
     let (mut running, pump) = rescored(MELODY);
     let report = running.reload(doc(MELODY)).expect("diff applies");
     pump.render(1);
-    // The degree written within the scale is gone from the original, and a
-    // removed key rebuilds the melody as the original builds.
-    assert_eq!(report.swapped, ["tune"], "{report:?}");
+    // The scale written whole is gone from the original: it returns to the
+    // original's scale by a control write, as the original builds it, and
+    // the melody keeps its instance.
+    assert!(report.swapped.is_empty(), "{report:?}");
+    assert_eq!(report.controls_updated[0], "tune.degrees", "{report:?}");
     assert_eq!(read(&running, "tune", "degree_count"), number(3.0));
     assert_eq!(read(&running, "tune", "degree.1"), number(2.0));
 }

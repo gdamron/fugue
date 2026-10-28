@@ -67,8 +67,11 @@ pub(crate) struct Implicit<'a> {
 /// the control's value in a fresh build of that config (see
 /// [`config_diff::implicit_restores`]), so the module sounds as the file
 /// does without a rebuild. A write `fresh` gives no value for keeps playing
-/// (a development instance's, one no write restores). An edit batch passes
-/// none: its document states every write it records.
+/// (a development instance's, one no write restores). A key the new config
+/// removes returns the same way, to its fresh value, and rebuilds the
+/// module only when `fresh` gives none. An edit batch passes none: its
+/// document states every write it records, and removes no key from a
+/// module it keeps.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn plan_reload(
     current_modules: &IndexMap<String, RuntimeModuleInfo>,
@@ -120,9 +123,13 @@ pub(crate) fn plan_reload(
                     // As a cold build applies the config: a value replacing
                     // others (a melody's whole scale) first, then every key
                     // it replaces, changed or not (see `ConfigKey::replacing`).
-                    let planned = control_updates_for(&previous, &config, &kind, |key| {
-                        has_control(&spec.id, key)
-                    })
+                    let planned = control_updates_for(
+                        &previous,
+                        &config,
+                        &kind,
+                        |key| has_control(&spec.id, key),
+                        &fresh,
+                    )
                     .and_then(|mut updates| {
                         let replayed = replay_replaced(keys, &config, &mut updates, |key| {
                             has_control(&spec.id, key)

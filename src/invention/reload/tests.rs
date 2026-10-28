@@ -18,6 +18,7 @@ mod mixer_rebuild;
 mod mixer_removal;
 mod numeric;
 mod relative_assets;
+mod removed_keys;
 mod replacing;
 mod sample_assets;
 mod sample_levels;
