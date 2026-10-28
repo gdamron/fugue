@@ -126,7 +126,7 @@ fn a_clockless_drain_refuses_what_a_full_store_cannot_take() {
 
 /// A graph a [`NullBackend`] renders, linked to settle through it, and the
 /// backend's raw render handle. No reclaimer thread runs.
-fn null_linked(json: &str) -> (LiveGraph, NullBackend, crate::modules::dac::Settle) {
+pub(super) fn null_linked(json: &str) -> (LiveGraph, NullBackend, crate::modules::dac::Settle) {
     let document = Invention::from_json(json).unwrap();
     let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(document).unwrap();
     let ports = Arc::new(Mutex::new(module_ports(&runtime.modules)));
@@ -246,7 +246,7 @@ fn a_settle_installs_every_edit_published_before_it() {
     );
 }
 
-const OSCILLATOR: &str = r#"{
+pub(super) const OSCILLATOR: &str = r#"{
     "version": "1.0.0",
     "modules": [
         { "id": "osc", "type": "oscillator", "config": { "frequency": 440.0 } },
