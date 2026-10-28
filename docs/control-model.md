@@ -133,7 +133,8 @@ editor hints, and whether a write is an event.
 
   A module whose event reads a value as it sounds, rather than as it
   applies, keeps the rule on every path: a sample instrument's note off
-  takes the release in force as the note next renders. A scheduler playing its own table
+  takes the release in force as the note next renders, and a sample kit's
+  play or an instrument's note takes a sample swapped in at its instant. A scheduler playing its own table
   (one not stepped by the graph's drain) lands its block's writes on its
   targets together, at the block's start.
 

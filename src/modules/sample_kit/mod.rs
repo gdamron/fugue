@@ -189,6 +189,9 @@ struct Voice {
     previous: Shared<SampleData>,
     /// Whether the voice is playing `previous`.
     ringing_out: bool,
+    /// Whether a `play` started the voice since it last rendered: it has
+    /// sounded nothing yet, so a swap at the same instant reaches it.
+    fresh: bool,
     /// The slot's level, gliding to each write while the slot sounds, as a
     /// mixer's fader does: a level that stepped mid-sample would click.
     level: LinearRamp,
@@ -214,9 +217,15 @@ impl Voice {
     }
 
     /// Takes `sample` for the next play, handing back the handle it no
-    /// longer needs: the sounding one rings out to its end.
+    /// longer needs: the sounding one rings out to its end. A play at the
+    /// same instant, which has sounded nothing yet, takes it instead, as
+    /// it would had the swap been written first.
     fn swap(&mut self, sample: Shared<SampleData>) -> Shared<SampleData> {
         let replaced = std::mem::replace(&mut self.sample, sample);
+        if self.fresh {
+            self.active = self.sample.len() > 0;
+            return replaced;
+        }
         if !self.active || self.ringing_out {
             return replaced;
         }
@@ -235,6 +244,8 @@ pub struct SampleKit {
     /// per-frame play path never touches strings.
     numeric_keys: Vec<Option<i32>>,
     last_play_input: f32,
+    /// Whether any voice is `fresh`.
+    fresh_plays: bool,
 }
 
 impl SampleKit {
@@ -259,6 +270,7 @@ impl SampleKit {
                     previous: sample.clone(),
                     sample,
                     ringing_out: false,
+                    fresh: false,
                     level: LinearRamp::new(level, glide),
                     position: 0,
                     active: false,
@@ -273,6 +285,7 @@ impl SampleKit {
             voices,
             numeric_keys,
             last_play_input: 0.0,
+            fresh_plays: false,
         }
     }
 
@@ -287,6 +300,7 @@ impl Module for SampleKit {
     }
 
     fn process(&mut self, frames: usize) -> bool {
+        self.finish_events();
         for i in 0..frames {
             let play = self.inputs.play(i);
             if play > 0.5 && self.last_play_input <= 0.5 {
@@ -366,7 +380,10 @@ impl Module for SampleKit {
                 let voice = usize::try_from(slot)
                     .ok()
                     .and_then(|slot| self.voices.get_mut(slot));
-                voice.ok_or(Refusal::Invalid)?.start();
+                let voice = voice.ok_or(Refusal::Invalid)?;
+                voice.start();
+                voice.fresh = true;
+                self.fresh_plays = true;
                 Ok(value)
             }
             (Some(KitControl::Level(slot)), RtValue::F32(level)) => {
@@ -379,6 +396,16 @@ impl Module for SampleKit {
                 Ok(RtValue::F32(level))
             }
             _ => Err(Refusal::Unsupported),
+        }
+    }
+
+    /// A play takes its slot's sample as it sounds, so a swap at the same
+    /// instant plays, whichever was written first.
+    fn finish_events(&mut self) {
+        if std::mem::take(&mut self.fresh_plays) {
+            for voice in self.voices.iter_mut() {
+                voice.fresh = false;
+            }
         }
     }
 

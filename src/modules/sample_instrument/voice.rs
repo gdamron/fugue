@@ -79,6 +79,10 @@ pub(crate) struct Voice {
     pub velocity: f32,
     pub active: bool,
     pub held: bool,
+    /// Whether a `note_on` started the voice since the instrument last
+    /// rendered: it has sounded nothing yet, so a zone swap at the same
+    /// instant reaches it (see [`Self::relatch`]).
+    pub fresh: bool,
     /// Whether the sustain loop wraps at its end this pass. Always true
     /// while held; once released, true until a pass whose exit leaves the
     /// tail long enough for the fade to finish in it.
@@ -116,6 +120,7 @@ impl Voice {
             velocity: 1.0,
             active: false,
             held: false,
+            fresh: false,
             wraps: true,
             release_gain: 1.0,
             release_step: 0.0,
@@ -221,6 +226,16 @@ impl Voice {
         self.release_gain = 1.0;
         self.release_step = 0.0;
         self.started = started;
+    }
+
+    /// Takes `audio`, its zone's new audio, in place of what it latched at
+    /// its start, which it has not sounded yet. Letting go of its clone
+    /// frees nothing: the sample cache keeps the buffer (see
+    /// [`ZoneAudio::sample`]).
+    pub fn relatch(&mut self, audio: &ZoneAudio) {
+        self.active = audio.sample.len() > 0;
+        self.sample = Some(Arc::clone(&audio.sample));
+        self.loop_region = audio.loop_region;
     }
 
     /// Begins the release phase: the fade below takes `1/step` frames, and
