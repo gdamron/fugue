@@ -68,9 +68,11 @@ fn reloading_the_original_after_a_whole_scale_brings_back_what_it_replaced() {
     let (mut running, pump) = rescored(MELODY);
     let report = running.reload(doc(MELODY)).expect("diff applies");
     pump.render(1);
-    // The degree written within the scale is gone from the original, and a
-    // removed key rebuilds the melody as the original builds.
-    assert_eq!(report.swapped, ["tune"], "{report:?}");
+    // The scale written whole is gone from the original: it returns to the
+    // original's scale by a control write, as the original builds it, and
+    // the melody keeps its instance.
+    assert!(report.swapped.is_empty(), "{report:?}");
+    assert_eq!(report.controls_updated[0], "tune.degrees", "{report:?}");
     assert_eq!(read(&running, "tune", "degree_count"), number(3.0));
     assert_eq!(read(&running, "tune", "degree.1"), number(2.0));
 }
@@ -84,11 +86,11 @@ fn an_authored_count_within_a_loaded_scale_is_restored_by_reloading_it() {
         .unwrap();
     pump.render(1);
     // The document holds the scale but no count: reloading it restores the
-    // count its scale builds, by a control write.
+    // count its scale builds, by writing the scale again.
     let report = running.reload(doc(&loaded)).expect("diff applies");
     pump.render(1);
     assert!(report.swapped.is_empty(), "{report:?}");
-    assert_eq!(report.controls_updated, ["tune.degree_count"]);
+    assert_eq!(report.controls_updated, ["tune.degrees"]);
     assert_eq!(read(&running, "tune", "degree_count"), number(3.0));
 }
 
@@ -194,4 +196,32 @@ fn a_developments_scale_applies_before_a_degree_written_within_it() {
     let (running, pump) = start_pumped(json);
     pump.render(1);
     assert_eq!(read(&running, "line", "a_step"), number(3.0));
+}
+
+/// The melody's seed after reloading `to` over `from`, with `seed` written
+/// first when given; nothing is rebuilt.
+fn seed_after_reload(from: &str, written: Option<f32>, to: &str) -> ControlValue {
+    let (mut running, pump) = start_pumped(from);
+    if let Some(seed) = written {
+        running.set_control("tune", "seed", number(seed)).unwrap();
+    }
+    pump.render(1);
+    let report = running.reload(doc(to)).expect("diff applies");
+    pump.render(1);
+    assert!(report.swapped.is_empty(), "{report:?}");
+    assert_eq!(report.controls_updated, ["tune.seed"], "{report:?}");
+    read(&running, "tune", "seed")
+}
+
+#[test]
+fn a_reload_returns_a_melody_with_no_seed_to_no_seed() {
+    let unseeded = MELODY.replace(r#", "seed": 42"#, "");
+    let restored = seed_after_reload(&unseeded, Some(5.0), &unseeded);
+    assert_eq!(
+        restored,
+        number(-1.0),
+        "a stream from entropy, as the file loads"
+    );
+    let removed = seed_after_reload(MELODY, None, &unseeded);
+    assert_eq!(removed, number(-1.0));
 }

@@ -18,7 +18,7 @@ use rand::{RngExt, SeedableRng};
 
 use self::declared::{
     degree_index, weight_index, Scale as ScalePayload, Weights, DEGREES, DEGREE_COUNT, MAX_DEGREES,
-    NOTE_WEIGHTS, ROOT_NOTE, SEED, TABLE,
+    NOTE_WEIGHTS, ROOT_NOTE, SEED, TABLE, UNSEEDED,
 };
 use self::degrees::Degrees;
 
@@ -70,7 +70,13 @@ impl ModuleFactory for MelodyFactory {
         let reader = ConfigReader::new(TYPE_ID, config);
         let refused = |refusal: String| format!("{TYPE_ID} config {refusal}");
         let root_note = reader.int::<u8>(&ROOT_NOTE_KEY)?.unwrap_or(60);
-        let seed = reader.int::<u64>(&SEED_KEY)?;
+        // A saved write of "no seed" reads as no seed.
+        let unseeded =
+            reader.get("seed").and_then(serde_json::Value::as_f64) == Some(f64::from(UNSEEDED));
+        let seed = match unseeded {
+            true => None,
+            false => reader.int::<u64>(&SEED_KEY)?,
+        };
         let scale = match reader.get("degrees") {
             Some(value) => {
                 declared::list("degrees", value, declared::degree_of).map_err(refused)?
@@ -161,7 +167,7 @@ fn number(key: &str, value: &serde_json::Value) -> Result<f32, String> {
 ///
 /// # Controls
 /// - `root_note`: Root MIDI note (0-127)
-/// - `seed`: RNG seed; setting it restarts the stream
+/// - `seed`: RNG seed; setting it restarts the stream (-1: from entropy)
 /// - `degrees`, `note_weights`: The whole scale and base weights (JSON text)
 /// - `degree_count`: Number of active scale degrees (1-128)
 /// - `degree.{n}`: Scale degree at position n (±127)
@@ -170,6 +176,9 @@ pub struct MelodyGenerator {
     degrees: Degrees,
     root_note: u8,
     rng: StdRng,
+    /// Where a write of [`UNSEEDED`] restarts the stream from: drawn from
+    /// entropy as the melody is built, then from each stream it starts.
+    entropy: u64,
     cells: Arc<ControlCells>,
     current_note: Note,
     inputs: inputs::MelodyInputs,
@@ -195,15 +204,17 @@ impl MelodyGenerator {
         degrees: Degrees,
         cells: Arc<ControlCells>,
     ) -> Self {
+        let mut entropy: StdRng = rand::make_rng();
         let rng = match seed {
             Some(seed) => StdRng::seed_from_u64(seed),
-            None => rand::make_rng(),
+            None => StdRng::seed_from_u64(entropy.random()),
         };
         let current_note = Note::new(60);
         let melody = Self {
             degrees,
             root_note: root_note.min(127),
             rng,
+            entropy: entropy.random(),
             cells,
             current_note,
             inputs: inputs::MelodyInputs::new(),
@@ -212,7 +223,8 @@ impl MelodyGenerator {
         };
         let cells = &melody.cells;
         cells.publish(ROOT_NOTE, RtValue::F32(f32::from(melody.root_note)));
-        cells.publish(SEED, RtValue::F32(seed.unwrap_or(0) as f32));
+        let seed = seed.map_or(UNSEEDED, |seed| seed as f32);
+        cells.publish(SEED, RtValue::F32(seed));
         melody.publish_table(true);
         melody
     }
@@ -316,8 +328,13 @@ impl Module for MelodyGenerator {
                 f32::from(self.root_note)
             }
             DEGREE_COUNT => self.degrees.set_count(value as usize) as f32,
+            SEED if value < 0.0 => {
+                self.rng = StdRng::seed_from_u64(self.entropy);
+                self.entropy = self.rng.random();
+                UNSEEDED
+            }
             SEED => {
-                let seed = value.max(0.0) as u64;
+                let seed = value as u64;
                 self.rng = StdRng::seed_from_u64(seed);
                 seed as f32
             }

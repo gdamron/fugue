@@ -28,6 +28,10 @@ const FIRST_WEIGHT: u16 = FIRST_DEGREE + MAX_DEGREES as u16;
 /// The seed as a number: f32 controls hold integers exactly to 2^24.
 const SEED_LIMIT: f32 = 16_777_216.0;
 
+/// The seed of a melody with none: it plays a stream from entropy. Written,
+/// it restarts the stream from entropy, as a melody built with no seed.
+pub(super) const UNSEEDED: f32 = -1.0;
+
 const DECLS: &[ControlDecl] = &[
     ControlDecl::new(
         "root_note",
@@ -54,16 +58,17 @@ const DECLS: &[ControlDecl] = &[
     ControlDecl::new(
         "seed",
         DeclKind::Number {
-            min: 0.0,
+            min: UNSEEDED,
             max: SEED_LIMIT,
         },
-        RtValue::F32(0.0),
+        RtValue::F32(UNSEEDED),
         "RNG seed: same seed, same melody; setting it (re)starts the stream. \
-         Note: f32 controls carry ~24 bits of integer precision; use module \
-         config JSON for full 64-bit seeds.",
+         -1 is no seed: a stream from entropy, as a melody with no seed \
+         configured plays. Note: f32 controls carry ~24 bits of integer \
+         precision; use module config JSON for full 64-bit seeds.",
     )
     // Only from below: the melody seeds from any number written.
-    .clamped(0.0, f32::MAX)
+    .clamped(UNSEEDED, f32::MAX)
     .whole(),
     ControlDecl::payload(
         "degrees",

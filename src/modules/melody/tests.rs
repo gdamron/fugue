@@ -151,6 +151,36 @@ fn reseeding_restarts_the_stream() {
 }
 
 #[test]
+fn a_melody_with_no_seed_reads_as_unseeded_and_a_write_of_it_unseeds() {
+    let mut melody = make_melody();
+    assert_eq!(melody.get_control("seed").unwrap(), UNSEEDED);
+    let seeded = notes(&mut seeded_melody(7), 32);
+    melody.set_control("seed", 7.0).unwrap();
+    assert_eq!(notes(&mut melody, 32), seeded);
+    // Unseeded again: a stream from entropy, not seed 7's (or seed 0's).
+    melody.set_control("seed", UNSEEDED).unwrap();
+    assert_eq!(melody.get_control("seed").unwrap(), UNSEEDED);
+    let unseeded = notes(&mut melody, 32);
+    assert_ne!(unseeded, seeded);
+    assert_ne!(unseeded, notes(&mut seeded_melody(0), 32));
+    // Each write of it restarts from fresh entropy.
+    melody.set_control("seed", UNSEEDED).unwrap();
+    assert_ne!(notes(&mut melody, 32), unseeded);
+}
+
+#[test]
+fn a_saved_write_of_no_seed_builds_unseeded() {
+    for config in [serde_json::json!({ "seed": -1 }), serde_json::json!({})] {
+        let melody = built(config.clone()).unwrap();
+        assert_eq!(
+            read(&melody, "seed"),
+            ControlValue::Number(UNSEEDED),
+            "{config}"
+        );
+    }
+}
+
+#[test]
 fn degree_root_and_weight_changes_reach_the_notes() {
     let mut melody = seeded_melody(9);
     write_list(&mut melody, "degrees", "[0, 4]");
