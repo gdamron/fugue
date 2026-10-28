@@ -12,18 +12,37 @@ use serde::{Deserialize, Deserializer};
 
 use crate::ControlValue;
 
-/// Whether an f32 misreports `number` as a whole number it is not: it
+/// Whether an f32 misreports a number as a whole number it is not: it
 /// rounds a fraction to a whole number, or one whole number to another.
-fn misread_by_f32(number: f64) -> bool {
-    let narrowed = number as f32;
-    narrowed.is_finite() && narrowed.fract() == 0.0 && f64::from(narrowed) != number
+/// A whole number (`whole`, when the number is one) is compared exactly,
+/// so one past 2^53 that its f64 `float` also rounds counts too.
+fn misread_by_f32(whole: Option<i128>, float: f64) -> bool {
+    let narrowed = float as f32;
+    match whole {
+        Some(whole) => narrowed as i128 != whole,
+        None => narrowed.is_finite() && narrowed.fract() == 0.0 && f64::from(narrowed) != float,
+    }
+}
+
+/// `number` as [`misread_by_f32`] reads it.
+fn json_misread(number: &serde_json::Number) -> bool {
+    let whole = number
+        .as_i64()
+        .map(i128::from)
+        .or_else(|| number.as_u64().map(i128::from));
+    misread_by_f32(whole, number.as_f64().unwrap_or(0.0))
 }
 
 /// Whether `value` is number text an f32 misreads, which a whole-number
 /// control's declaration reads from its text (see the module docs).
 pub(crate) fn keeps_text(value: &ControlValue) -> bool {
     match value {
-        ControlValue::String(text) => text.trim().parse::<f64>().is_ok_and(misread_by_f32),
+        ControlValue::String(text) => {
+            let text = text.trim();
+            let whole = text.parse::<i128>().ok();
+            text.parse::<f64>()
+                .is_ok_and(|float| misread_by_f32(whole, float))
+        }
         _ => false,
     }
 }
@@ -31,9 +50,10 @@ pub(crate) fn keeps_text(value: &ControlValue) -> bool {
 /// A JSON number as a write carries it: an f32, or its text when an f32
 /// misreads it. A number control reads either as the same f32.
 pub(crate) fn json_number(number: &serde_json::Number) -> ControlValue {
-    match number.as_f64() {
-        Some(float) if misread_by_f32(float) => ControlValue::String(number.to_string()),
-        float => ControlValue::Number(float.unwrap_or(0.0) as f32),
+    if json_misread(number) {
+        ControlValue::String(number.to_string())
+    } else {
+        ControlValue::Number(number.as_f64().unwrap_or(0.0) as f32)
     }
 }
 
@@ -45,6 +65,37 @@ pub(crate) fn json_scalar(value: &serde_json::Value) -> Option<ControlValue> {
         serde_json::Value::Bool(flag) => Some(ControlValue::Bool(*flag)),
         serde_json::Value::String(text) => Some(ControlValue::String(text.clone())),
         _ => None,
+    }
+}
+
+impl ControlValue {
+    /// A JSON scalar as a control write carries it, for a host that takes
+    /// control values as JSON; `None` for an array, object or null.
+    ///
+    /// A number an f32 would misreport as a whole number it is not (a
+    /// whole number past 2^24 an f32 cannot hold, or a fraction it rounds
+    /// to one) keeps its exact text, so a whole-number control reads it
+    /// exactly and refuses what it cannot hold rather than taking a
+    /// rounded value. Every other number narrows to an f32, as `as f32`
+    /// would; narrowing every number that way loses this precision before
+    /// any control sees it.
+    ///
+    /// ```
+    /// use fugue::ControlValue;
+    /// use serde_json::json;
+    ///
+    /// let exact = |value| ControlValue::from_json(&value).unwrap();
+    /// assert_eq!(exact(json!(16_777_217)), ControlValue::String("16777217".into()));
+    /// assert_eq!(exact(json!(9_007_199_254_740_991_i64)), ControlValue::String("9007199254740991".into()));
+    /// assert_eq!(exact(json!(i64::MAX)), ControlValue::String(i64::MAX.to_string()));
+    /// assert_eq!(exact(json!(-i64::MAX)), ControlValue::String((-i64::MAX).to_string()));
+    /// assert_eq!(exact(json!(60)), ControlValue::Number(60.0));
+    /// assert_eq!(exact(json!(0.74)), ControlValue::Number(0.74));
+    /// assert_eq!(exact(json!(true)), ControlValue::Bool(true));
+    /// assert_eq!(ControlValue::from_json(&json!(null)), None);
+    /// ```
+    pub fn from_json(value: &serde_json::Value) -> Option<Self> {
+        json_scalar(value)
     }
 }
 

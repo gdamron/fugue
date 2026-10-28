@@ -15,6 +15,7 @@ mod exact_integers;
 mod front_doors;
 mod non_finite;
 mod pending;
+mod reclaimer;
 mod script_timing;
 #[cfg(feature = "spectrogram")]
 mod spectrum;

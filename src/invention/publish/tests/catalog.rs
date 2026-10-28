@@ -28,7 +28,7 @@ const NOT_COVERED: &[(&str, &str)] = &[];
 /// so a fix removes it.
 const ALLOCATES: &[(&str, &str)] = &[];
 
-const DAC_ONLY: &str = r#"{
+pub(super) const DAC_ONLY: &str = r#"{
     "version": "1.0.0",
     "modules": [{ "id": "dac", "type": "dac", "config": { "soft_clip": false } }],
     "connections": []
@@ -371,6 +371,8 @@ fn wasm_config() -> serde_json::Value {
 
 #[test]
 fn no_module_type_allocates_frees_or_locks_on_the_audio_thread() {
+    #[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
+    let _cache = crate::plugins::wasm::alloc_tests::temp_cache();
     let registry = ModuleRegistry::default();
     let configs = configs(&registry);
     let mut failures = Vec::new();

@@ -5,8 +5,10 @@
 //! finalizes its file or stream, so retired publications are freed on a
 //! short cadence rather than whenever the next change happens to start.
 //! The same cadence frees the engine's retired request payloads (see
-//! `crate::payload`). With no reclaimer thread (wasm32, or a failed spawn),
-//! changes and control writes reclaim on their own control thread instead.
+//! `crate::payload`). With no reclaimer thread (wasm32 has none), changes
+//! and control writes reclaim on their own control thread instead. A host
+//! with threads treats a failed spawn as a failed start (see
+//! `InventionRuntime::start_with_backend`).
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -79,24 +81,82 @@ impl Reclaimer {
     }
 
     /// Starts a thread that reclaims, then runs `tick`, every
-    /// [`RECLAIM_INTERVAL`] until `reclaimer` is dropped. Returns false when
-    /// no thread could start; changes and control writes still reclaim
-    /// before they lock the publisher.
-    pub(crate) fn spawn(reclaimer: &Arc<Self>, tick: impl Fn() + Send + 'static) -> bool {
-        let threaded = &reclaimer.threaded;
-        let reclaimer = Arc::downgrade(reclaimer);
-        let started = std::thread::Builder::new()
-            .name("fugue-reclaim".to_string())
-            .spawn(move || loop {
+    /// [`RECLAIM_INTERVAL`] until `reclaimer` is dropped.
+    ///
+    /// # Errors
+    ///
+    /// The operating system's refusal when no thread could start. Changes
+    /// and control writes still reclaim before they lock the publisher, but
+    /// nothing queues the note offs the request channel holds for want of
+    /// room until the next write, so a host that can will not run without
+    /// the thread.
+    pub(crate) fn spawn(
+        reclaimer: &Arc<Self>,
+        tick: impl Fn() + Send + 'static,
+    ) -> std::io::Result<()> {
+        Self::spawn_with(reclaimer, tick, |name, body| {
+            std::thread::Builder::new()
+                .name(name.to_string())
+                .spawn(body)
+                .map(drop)
+        })
+    }
+
+    /// [`Self::spawn`], starting the thread through `start`, so a test can
+    /// refuse it.
+    fn spawn_with(
+        reclaimer: &Arc<Self>,
+        tick: impl Fn() + Send + 'static,
+        start: impl FnOnce(&str, Box<dyn FnOnce() + Send>) -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
+        let weak = Arc::downgrade(reclaimer);
+        let started = start(
+            "fugue-reclaim",
+            Box::new(move || loop {
                 std::thread::sleep(RECLAIM_INTERVAL);
-                let Some(reclaimer) = reclaimer.upgrade() else {
+                let Some(reclaimer) = weak.upgrade() else {
                     break;
                 };
                 reclaimer.reclaim();
                 tick();
-            })
-            .is_ok();
-        threaded.store(started, Ordering::Relaxed);
+            }),
+        );
+        reclaimer.threaded.store(started.is_ok(), Ordering::Relaxed);
         started
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::invention::graph::Publication;
+    use crate::spsc::Ring;
+
+    fn reclaimer() -> Arc<Reclaimer> {
+        Arc::new(Reclaimer::new(
+            Ring::<Box<Publication>>::with_capacity(1),
+            RetireQueue::with_capacity(4),
+        ))
+    }
+
+    #[test]
+    fn a_refused_thread_is_an_error_and_leaves_the_reclaimer_unthreaded() {
+        let reclaimer = reclaimer();
+        let refused = Reclaimer::spawn_with(
+            &reclaimer,
+            || (),
+            |_, _| Err(std::io::Error::other("no threads left")),
+        );
+
+        let error = refused.expect_err("the thread was refused");
+        assert_eq!(error.to_string(), "no threads left");
+        assert!(!reclaimer.threaded());
+    }
+
+    #[test]
+    fn a_started_thread_marks_the_reclaimer_threaded() {
+        let reclaimer = reclaimer();
+        Reclaimer::spawn(&reclaimer, || ()).expect("a thread starts");
+        assert!(reclaimer.threaded());
     }
 }

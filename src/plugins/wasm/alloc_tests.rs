@@ -1,10 +1,46 @@
 //! The host side of the input and output paths makes no allocation per call.
 
+use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use crate::alloc_counter::allocator_events;
+
+/// Points the compiled-component cache at a fresh directory until dropped,
+/// so a test never writes under the real `~/.fugue`. The environment is
+/// process-wide, so the tests that load a component take turns.
+pub(crate) struct TempCache {
+    previous: Option<OsString>,
+    _dir: tempfile::TempDir,
+    _turn: MutexGuard<'static, ()>,
+}
+
+pub(crate) fn temp_cache() -> TempCache {
+    static TURN: OnceLock<Mutex<()>> = OnceLock::new();
+    let turn = TURN
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = tempfile::tempdir().expect("cache tempdir");
+    let previous = std::env::var_os(super::CACHE_DIR_ENV);
+    std::env::set_var(super::CACHE_DIR_ENV, dir.path());
+    TempCache {
+        previous,
+        _dir: dir,
+        _turn: turn,
+    }
+}
+
+impl Drop for TempCache {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(value) => std::env::set_var(super::CACHE_DIR_ENV, value),
+            None => std::env::remove_var(super::CACHE_DIR_ENV),
+        }
+    }
+}
 
 /// Builds the fixture guest component (the one `tests/plugin_wit_test.rs`
 /// loads) and returns its path, kept alive by the returned tempdir.
@@ -56,6 +92,7 @@ pub(crate) fn fixture_manifest() -> crate::pkg::PackageManifest {
 
 #[test]
 fn set_input_and_set_control_make_no_host_allocation() {
+    let _cache = temp_cache();
     let (_temp, path) = fixture_component();
     let mut graph_module =
         super::load_component_module(&path, 48_000, "{}", &fixture_manifest()).expect("load");
@@ -77,6 +114,7 @@ fn set_input_and_set_control_make_no_host_allocation() {
 
 #[test]
 fn set_input_block_lowers_the_input_block_without_a_host_allocation() {
+    let _cache = temp_cache();
     let (_temp, path) = fixture_component();
     let mut module =
         super::WasmModule::load(&path, 48_000, "{}", &fixture_manifest()).expect("load");
@@ -99,6 +137,7 @@ fn set_input_block_lowers_the_input_block_without_a_host_allocation() {
 
 #[test]
 fn process_copies_the_emitted_output_without_a_host_allocation() {
+    let _cache = temp_cache();
     let (_temp, path) = fixture_component();
     let mut graph_module =
         super::load_component_module(&path, 48_000, "{}", &fixture_manifest()).expect("load");

@@ -470,3 +470,47 @@ fn a_closed_queue_drops_what_was_held() {
     assert!(sender.submit(reserved(9.0)).is_err());
     assert!(!sender.holding().any(), "dropped");
 }
+
+/// Holding takes a control lock and allocates the backlog, which the audio
+/// thread must never do. It is refused as a full queue refuses, in release
+/// builds too: the check reads the audio-thread flag, not a debug assertion.
+#[test]
+fn the_audio_thread_is_refused_a_held_submission_in_every_build() {
+    let (sender, mut consumer) = request_channel(4, Default::default());
+    for n in 0..4 {
+        sender.submit(reserved(n as f32)).unwrap();
+    }
+
+    let refused = {
+        let _audio = crate::audio_thread::AudioThreadScope::enter();
+        assert!(crate::audio_thread::on_audio_thread());
+        sender.submit(reserved(9.0))
+    };
+
+    assert!(refused.is_err(), "refused, not held");
+    assert!(!sender.holding().any(), "nothing was held");
+    assert_eq!(sender.overflows().count(), 1, "counted as a full queue is");
+    // The same submission off the audio thread is held.
+    assert!(sender.submit(reserved(9.0)).is_ok());
+    assert!(sender.holding().any());
+    drop(consumer.pop());
+}
+
+#[test]
+fn the_audio_thread_leaves_what_is_held_for_a_control_thread() {
+    let (sender, mut consumer) = request_channel(4, Default::default());
+    for n in 0..5 {
+        sender.submit(reserved(n as f32)).unwrap();
+    }
+    assert!(sender.holding().any());
+    drop(consumer.pop());
+
+    let flushed = {
+        let _audio = crate::audio_thread::AudioThreadScope::enter();
+        sender.flushed()
+    };
+
+    assert!(!flushed, "the audio thread does not queue what is held");
+    assert!(sender.holding().any(), "still held");
+    assert!(sender.flushed(), "a control thread queues it");
+}

@@ -125,5 +125,6 @@ pub use pkg::{LockError, LockSource, LockedPackage, Lockfile, LOCKFILE_NAME, LOC
 
 #[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
 pub use plugins::wasm::{
-    load_component_module, load_manifest_module, WasmModule, WasmModuleFactory,
+    load_component_module, load_manifest_module, WasmModule, WasmModuleFactory, WasmModuleHandle,
+    CACHE_DIR_ENV as WASM_CACHE_DIR_ENV,
 };
