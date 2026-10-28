@@ -77,6 +77,10 @@ pub struct RuntimeState {
     /// graph was built or last reloaded against declares them, for the
     /// writes recorded here (see [`Self::write_stored_control`]).
     pub(crate) replacing: ReplacingKeys,
+    /// Which controls load the audio they name, as the same registry
+    /// declares them, for the asset writes recorded here (see
+    /// [`Self::names_audio`]).
+    pub(crate) audio: audio_assets::AudioControls,
     /// The authored writes made to each module since its stored config was
     /// last taken from a document that its stored config tracks apart from
     /// its keys (see [`WrittenSince`]).
@@ -223,6 +227,16 @@ impl RuntimeState {
     /// reloading the original file see no change and keep the written value;
     /// a write it cannot hold is noted apart for reload to restore.
     /// A perform-intent write is never recorded, here or in the document.
+    /// Whether control `key` of module `id` loads the audio it names, as
+    /// the module's declaration has it: an `asset` a development exposes
+    /// from a frequency does not, and its value is no path.
+    pub(crate) fn names_audio(&self, id: &str, key: &str) -> bool {
+        match self.modules.get(id) {
+            Some(info) => self.audio.names_audio(&info.module_type, key),
+            None => audio_assets::is_asset_control(key),
+        }
+    }
+
     pub(crate) fn record_authored_control(&mut self, id: &str, key: &str, value: &ControlValue) {
         self.authored_epoch += 1;
         (self.authored_log).push((id.to_string(), key.to_string(), value.clone()));
@@ -252,7 +266,9 @@ impl RuntimeState {
                 return Some(held);
             };
             let from = before.source_path.as_deref();
-            let rebased = audio_assets::rebase_asset_write(from, self.source_path(), key, &scalar);
+            let asset = self.names_audio(id, key);
+            let rebased =
+                audio_assets::rebase_asset_write(from, self.source_path(), asset, &scalar);
             Some(match rebased == scalar {
                 true => held,
                 false => authored_document::control_json(&rebased),
@@ -313,7 +329,9 @@ impl RuntimeState {
     /// when the original's value is not one a control takes (a scale
     /// written as an array). Does nothing when no module has `id`.
     pub(crate) fn write_stored_control(&mut self, id: &str, key: &str, value: &ControlValue) {
-        let value = &audio_assets::resolve_checked_asset_write(self.source_path(), key, value);
+        let asset = self.names_audio(id, key);
+        let value =
+            &audio_assets::resolve_checked_asset_write(self.source_path(), (key, asset), value);
         let Some(info) = self.modules.get_mut(id) else {
             return;
         };
@@ -341,7 +359,7 @@ impl RuntimeState {
             authored_document::write_config_control(&mut info.config, key, value);
             return;
         }
-        let value = &*audio_assets::stored_asset_write(key, value);
+        let value = &*audio_assets::stored_asset_write(asset, value);
         let asset = authored_document::control_json(value);
         if authored_document::write_entry_asset(&mut info.config, key, &asset) {
             return;

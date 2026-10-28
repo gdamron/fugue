@@ -268,13 +268,21 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         // A relative asset path loads against the invention's directory,
         // as a standalone write's does; the document keeps it as written.
         let source_path = self.document.source_path.as_deref();
-        let load =
-            audio_assets::resolve_asset_write(source_path, key, &applied).map_err(|refusal| {
+        let module_type = (self.document.modules.iter())
+            .find(|spec| spec.id == module_id)
+            .map(|spec| spec.module_type.as_str());
+        let asset = module_type.map_or_else(
+            || audio_assets::is_asset_control(key),
+            |module_type| self.facts.names_audio(module_type, key),
+        );
+        let load = audio_assets::resolve_asset_write(source_path, (key, asset), &applied).map_err(
+            |refusal| {
                 Refusal(
                     EditFailureReason::InvalidControlValue,
                     format!("control '{module_id}.{key}': {refusal}"),
                 )
-            })?;
+            },
+        )?;
         let modules: Vec<&str> = self
             .document
             .modules
@@ -311,6 +319,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         self.control_writes.push(CandidateWrite {
             edit_index: index,
             write: ControlWrite::new(module_id, key, applied),
+            asset,
         });
         Ok(())
     }

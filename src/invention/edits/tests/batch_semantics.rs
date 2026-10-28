@@ -10,13 +10,17 @@ fn writes<'c>(
 ) -> Vec<(usize, String, ControlValue)> {
     writes
         .into_iter()
-        .map(|CandidateWrite { edit_index, write }| {
-            (
-                *edit_index,
-                format!("{}.{}", write.module_id, write.key),
-                write.value.clone(),
-            )
-        })
+        .map(
+            |CandidateWrite {
+                 edit_index, write, ..
+             }| {
+                (
+                    *edit_index,
+                    format!("{}.{}", write.module_id, write.key),
+                    write.value.clone(),
+                )
+            },
+        )
         .collect()
 }
 

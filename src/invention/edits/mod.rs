@@ -115,6 +115,13 @@ pub(crate) trait EditFacts {
         &[]
     }
 
+    /// Whether control `key` of a module of `module_type` loads the audio
+    /// it names, as its declaration has it (see
+    /// `audio_assets::AudioControls`); by the key's shape by default.
+    fn names_audio(&self, _module_type: &str, key: &str) -> bool {
+        crate::invention::audio_assets::is_asset_control(key)
+    }
+
     /// Called when `remove_module` removes `id` after an earlier
     /// [`Self::describe`] in this batch built it: drop anything kept for it.
     fn forget(&mut self, _id: &str) {}
@@ -160,6 +167,8 @@ pub(crate) struct CandidateWrite {
     pub(crate) edit_index: usize,
     /// The write, carrying the value as coerced to the control's kind.
     pub(crate) write: ControlWrite,
+    /// Whether the control written loads the audio its value names.
+    pub(crate) asset: bool,
 }
 
 /// A batch applied to a copy of the authored document.

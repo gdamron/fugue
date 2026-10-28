@@ -33,14 +33,18 @@ impl RuntimeSnapshot {
     /// back too, for recording it (see `publish::Authoring`).
     pub(super) fn asset_to_load(
         &self,
-        key: &str,
+        (module_id, key): (&str, &str),
         value: &ControlValue,
     ) -> Result<(ControlValue, Option<PathBuf>), GraphCommandError> {
-        if !audio_assets::is_asset_control(key) {
+        let (asset, source_path) = {
+            let state = self.state.lock().unwrap();
+            let source_path = state.source_path().map(PathBuf::from);
+            (state.names_audio(module_id, key), source_path)
+        };
+        if !asset {
             return Ok((value.clone(), None));
         }
-        let source_path = self.state.lock().unwrap().source_path().map(PathBuf::from);
-        let load = audio_assets::resolve_asset_write(source_path.as_deref(), key, value)
+        let load = audio_assets::resolve_asset_write(source_path.as_deref(), (key, asset), value)
             .map_err(GraphCommandError::ControlError)?;
         Ok((load, source_path))
     }

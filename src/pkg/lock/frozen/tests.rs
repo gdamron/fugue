@@ -3,7 +3,7 @@
 //! fails with resolution left to the loaders' own version choices.
 
 use super::*;
-use crate::invention::audio_assets::resolve_audio_assets;
+use crate::invention::audio_assets::{resolve_audio_assets, Declarations};
 use crate::modules::sample_loading::resolve_source;
 use crate::pkg::audio_asset::with_packs_dir;
 use crate::pkg::content::{ContentCatalog, ContentDetailQuery, ContentRef, ContentRoots};
@@ -153,7 +153,8 @@ fn document_loads_pin_the_governing_lock_not_the_one_beside_the_invention() {
     fs::create_dir_all(tmp.path().join("piece")).unwrap();
     with_packs_dir(&packs, || {
         with_governing(lock, || {
-            resolve_audio_assets(&mut invention, &Default::default()).unwrap();
+            resolve_audio_assets(&mut invention, &Declarations::of(&Default::default(), None))
+                .unwrap();
         });
     });
     assert!(Path::new(&asset_of(&invention)).ends_with("1.0.0/a.wav"));
@@ -170,9 +171,10 @@ fn a_ref_the_locked_version_does_not_satisfy_is_refused_and_the_lock_kept() {
         sampler_document(&format!("{KIT}@^1.1:a.wav"), &tmp.path().join("main.json"));
     with_packs_dir(&packs, || {
         with_governing(lock, || {
-            let err = resolve_audio_assets(&mut invention, &Default::default())
-                .unwrap_err()
-                .to_string();
+            let err =
+                resolve_audio_assets(&mut invention, &Declarations::of(&Default::default(), None))
+                    .unwrap_err()
+                    .to_string();
             assert!(err.contains("does not satisfy ^1.1"), "{err}");
             let err = resolve_source(&format!("{KIT}@^1.1:a.wav")).unwrap_err();
             assert!(err.contains("locks fugue.test.kit@1.0.0"), "{err}");

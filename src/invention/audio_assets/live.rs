@@ -13,11 +13,11 @@
 
 use std::path::Path;
 
-use super::is_asset_control;
 use crate::ControlValue;
 
 /// `value` as the module should load it, for a live write to control `key`
-/// of an invention loaded from `source_path`.
+/// of an invention loaded from `source_path`, a control that loads the
+/// audio it names when `asset` (see [`super::AudioControls`]).
 ///
 /// A relative path in a write to an asset control joins the invention's
 /// directory. With no invention file there is nothing to resolve it
@@ -26,13 +26,13 @@ use crate::ControlValue;
 /// Anything else comes back unchanged.
 pub(crate) fn resolve_asset_write(
     source_path: Option<&Path>,
-    key: &str,
+    (key, asset): (&str, bool),
     value: &ControlValue,
 ) -> Result<ControlValue, String> {
     let ControlValue::String(text) = value else {
         return Ok(value.clone());
     };
-    if !is_asset_control(key) || !is_relative_path(text) {
+    if !asset || !is_relative_path(text) {
         return Ok(value.clone());
     }
     match source_path.and_then(Path::parent) {
@@ -50,10 +50,10 @@ pub(crate) fn resolve_asset_write(
 /// is kept as written.
 pub(crate) fn resolve_checked_asset_write(
     source_path: Option<&Path>,
-    key: &str,
+    write: (&str, bool),
     value: &ControlValue,
 ) -> ControlValue {
-    resolve_asset_write(source_path, key, value).unwrap_or_else(|_| value.clone())
+    resolve_asset_write(source_path, write, value).unwrap_or_else(|_| value.clone())
 }
 
 /// A write made against the invention at `from`, as the invention at `to`
@@ -61,11 +61,12 @@ pub(crate) fn resolve_checked_asset_write(
 /// from `to`'s directory (relative when the file sits under it, absolute
 /// otherwise). Recording follows a timed edit that brought in a document
 /// from another directory after the write was made. Anything else, and a
-/// path both directories share, comes back unchanged.
+/// path both directories share, comes back unchanged. `asset` says whether
+/// the control written loads the audio it names.
 pub(crate) fn rebase_asset_write(
     from: Option<&Path>,
     to: Option<&Path>,
-    key: &str,
+    asset: bool,
     value: &ControlValue,
 ) -> ControlValue {
     let from_dir = from.and_then(Path::parent);
@@ -76,7 +77,7 @@ pub(crate) fn rebase_asset_write(
     let Some(from_dir) = from_dir.filter(|dir| Some(*dir) != to_dir) else {
         return value.clone();
     };
-    if !is_asset_control(key) || !is_relative_path(text) {
+    if !asset || !is_relative_path(text) {
         return value.clone();
     }
     // Absolute, so the fallback names the file whatever directory a

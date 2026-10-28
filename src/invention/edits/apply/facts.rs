@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 
+use crate::invention::audio_assets::AudioControls;
 use crate::invention::builder::resolve_invention_assets;
 use crate::invention::declared::{DeclaredSurface, Route};
 use crate::invention::edits::{EditFacts, ModuleFacts};
@@ -23,6 +24,8 @@ use crate::{ControlKind, ControlValue, GraphModule, ModuleRegistry};
 /// edit is checked against the same view of the graph.
 pub(super) struct LiveFacts {
     registry: Arc<ModuleRegistry>,
+    /// Which controls load the audio they name, as `registry` declares them.
+    audio: AudioControls,
     sample_rate: u32,
     ports: IndexMap<String, ModulePorts>,
     surfaces: IndexMap<String, ControlSurfaceInstance>,
@@ -87,6 +90,7 @@ impl LiveFacts {
         }
         Self {
             registry: running.registry(),
+            audio: AudioControls::of(running.registry()),
             sample_rate: running.sample_rate,
             ports: running.module_ports.lock().unwrap().clone(),
             surfaces: running.control_surfaces.lock().unwrap().clone(),
@@ -238,8 +242,8 @@ impl LiveFacts {
             config: config.clone(),
         });
         let developments = Some(self.developments.clone());
-        let (resolved, _) =
-            resolve_invention_assets(probe, developments).map_err(|error| error.to_string())?;
+        let (resolved, _) = resolve_invention_assets(probe, developments, Some(&*self.registry))
+            .map_err(|error| error.to_string())?;
         Ok(resolved
             .modules
             .into_iter()
@@ -252,6 +256,10 @@ impl LiveFacts {
 impl EditFacts for LiveFacts {
     fn config_keys(&self, module_type: &str) -> &'static [ConfigKey] {
         self.registry.config_keys(module_type)
+    }
+
+    fn names_audio(&self, module_type: &str, key: &str) -> bool {
+        self.audio.names_audio(module_type, key)
     }
 
     fn module(&self, id: &str) -> Option<ModuleFacts> {

@@ -337,7 +337,7 @@ impl RuntimeSnapshot {
         options: &WriteOptions,
     ) -> Result<ControlAck, GraphCommandError> {
         let value = self.coerced(module_id, key, value)?;
-        let (load, _) = self.asset_to_load(key, &value)?;
+        let (load, _) = self.asset_to_load((module_id, key), &value)?;
         let queued = self.submit_transient(module_id, key, load, options)?;
         Ok(ControlAck::new(value, &queued))
     }
@@ -360,7 +360,7 @@ impl RuntimeSnapshot {
         // set_control_transient stays uncoerced: its callers are
         // internal telemetry writes that already carry the right type.
         let value = self.coerced(module_id, key, value)?;
-        let (load, origin) = self.asset_to_load(key, &value)?;
+        let (load, origin) = self.asset_to_load((module_id, key), &value)?;
         let Some(live) = &self.live else {
             let queued = self.submit_transient(module_id, key, load, options)?;
             // Offline, a write applies as it is made, unless it lost.
