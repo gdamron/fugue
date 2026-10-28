@@ -37,6 +37,42 @@ pub(crate) struct Applying {
     pub(crate) timed: bool,
     /// The sample it applies at, reported late when due before it.
     pub(crate) at: u64,
+    /// The sample it was due at.
+    pub(crate) due: u64,
+}
+
+/// Where a write applied at once runs among the writes staged on its
+/// module at its sample ([`flush_staged_before`]): after those weaker than
+/// `key` (by due sample, rank and receipt), before the stronger.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Before {
+    at: u64,
+    key: (u64, Rank, u64),
+    event: bool,
+}
+
+impl Before {
+    /// For a write of `standing`, weighed as [`contest`] weighs it.
+    pub(crate) fn write(standing: Standing, applying: Applying) -> Self {
+        let key = (standing.due, standing.rank, applying.id.0);
+        let (at, event) = (applying.at, false);
+        Self { at, key, event }
+    }
+
+    /// For an event, which holds nothing: after every write staged at its
+    /// sample due no later than it, before those due after it, so it reads
+    /// the values in force at its own due sample: one a write due after it
+    /// replaced there runs before it (`Slot::earlier`).
+    pub(crate) fn event(applying: Applying) -> Self {
+        let key = (applying.due, Rank::MAX, u64::MAX);
+        let (at, event) = (applying.at, true);
+        Self { at, key, event }
+    }
+
+    /// The sample it applies at.
+    pub(crate) fn at(self) -> u64 {
+        self.at
+    }
 }
 
 /// The request applying, whether its write was just staged, how many wait,
@@ -124,6 +160,13 @@ struct Slot {
     /// The hold word the write took, and the one it replaced.
     hold: AtomicU64,
     prev: AtomicU64,
+    /// The value of a write due earlier that gave way or lost to it here
+    /// at its sample ([`EMPTY`] when none; a fresh stage clears it), its
+    /// due sample and hold word: in force between the two, for an event
+    /// due there ([`Before::event`]).
+    earlier: AtomicU64,
+    earlier_due: AtomicU64,
+    earlier_hold: AtomicU64,
 }
 
 impl Slot {
@@ -143,14 +186,39 @@ impl Slot {
         (self.at.load(Relaxed) >= since).then(|| (due, rank, self.id.load(Relaxed)))
     }
 
+    /// The value kept here, by what decides between two ([`contest`]);
+    /// of two alike, the later received wins.
+    fn earlier_key(&self) -> Option<(u64, Rank)> {
+        let kept = self.earlier.load(Relaxed) != EMPTY;
+        let rank = rank_of(self.earlier_hold.load(Relaxed)).filter(|_| kept)?;
+        Some((self.earlier_due.load(Relaxed), rank))
+    }
+
+    /// Keeps `value`, of `standing` and losing to the write here, for an
+    /// event due between them to read ([`Staged::earlier_by`]) while that
+    /// one stays staged, unless the one kept would have set it after.
+    fn keep_earlier(&self, standing: Standing, value: RtValue) {
+        let mine = (standing.due, standing.rank);
+        if self.earlier_key().is_none_or(|kept| kept <= mine) {
+            self.earlier.store(encode(value), Relaxed);
+            self.earlier_due.store(standing.due, Relaxed);
+            self.earlier_hold.store(standing.word(), Relaxed);
+        }
+    }
+
     /// Settles the write staged here at `at` as losing to one of
     /// `winner`'s, its setter never run; the winner takes its hold over,
     /// as it would from one applied. Whether one was staged.
-    fn give_way(&self, at: u64, winner: Rank, outcomes: &mut Outcomes) -> bool {
+    fn give_way(&self, at: u64, (due, winner): (u64, Rank), outcomes: &mut Outcomes) -> bool {
         let staged = self.held.load(Relaxed) != EMPTY && self.at.load(Relaxed) == at;
         let (Some(rank), true) = (rank_of(self.hold.load(Relaxed)), staged) else {
             return false;
         };
+        let earlier = self.due.load(Relaxed);
+        let value = (earlier < due).then(|| self.value.load(Relaxed));
+        self.earlier.store(value.unwrap_or(EMPTY), Relaxed);
+        self.earlier_due.store(earlier, Relaxed);
+        self.earlier_hold.store(self.hold.load(Relaxed), Relaxed);
         self.held.store(EMPTY, Relaxed);
         self.hold.store(0, Relaxed);
         let id = RequestId(self.id.load(Relaxed));
@@ -183,6 +251,7 @@ impl Staged {
         let slots: Box<[Slot]> = (0..len)
             .map(|_| Slot {
                 held: AtomicU64::new(EMPTY),
+                earlier: AtomicU64::new(EMPTY),
                 ..Slot::default()
             })
             .collect();
@@ -235,22 +304,33 @@ impl Staged {
         self.len.store(len + 1, Relaxed);
     }
 
-    /// Whether the `position`th write staged is stronger than one of
-    /// `than` at its sample, moving it to place `kept` if so.
-    fn keeps(&self, position: usize, kept: usize, than: Option<(Standing, Applying)>) -> bool {
-        let (Some((standing, applying)), Some(control)) = (than, self.order.get(position)) else {
+    /// Whether the `position`th write staged runs after `than`, at its
+    /// sample, moving it to place `kept` if so.
+    fn keeps(&self, position: usize, kept: usize, than: Option<Before>) -> bool {
+        let (Some(than), Some(control)) = (than, self.order.get(position)) else {
             return false;
         };
         let control = control.load(Relaxed);
-        let mine = (standing.due, standing.rank, applying.id.0);
         // One that gave way stands no more (its hold is 0).
         let stronger = (self.slots.get(usize::from(control)))
-            .and_then(|slot| slot.standing_at(applying.at))
-            .is_some_and(|theirs| theirs > mine);
+            .and_then(|slot| slot.standing_at(than.at))
+            .is_some_and(|theirs| theirs > than.key);
         if stronger {
             self.order[kept].store(control, Relaxed);
         }
         stronger
+    }
+
+    /// The value a write staged on the `kept`th control listed replaced,
+    /// if due by `due` (then in force), taken so it runs once.
+    fn earlier_by(&self, kept: usize, due: u64) -> Option<(ControlIndex, RtValue)> {
+        let control = ControlIndex(self.order.get(kept)?.load(Relaxed));
+        let slot = self.slots.get(usize::from(control.0))?;
+        if slot.earlier_due.load(Relaxed) > due {
+            return None;
+        }
+        let word = slot.earlier.swap(EMPTY, Relaxed);
+        (word != EMPTY).then(|| (control, decode(word)))
     }
 
     /// Takes the `position`th write staged, emptying its slot (none for
@@ -330,7 +410,7 @@ pub(crate) fn contest<M: Module + ?Sized>(
         return Err(standing.rank.loses_to(theirs.1));
     }
     admits_hold(module, control, standing)?;
-    Ok(slot.give_way(applying.at, standing.rank, outcomes))
+    Ok(slot.give_way(applying.at, (standing.due, standing.rank), outcomes))
 }
 
 /// Records that a write of `standing`, applying as `applying` names,
@@ -388,7 +468,12 @@ pub(crate) fn stage_write<M: Module + ?Sized>(
     if earlier {
         flush_staged(module, outcomes);
     }
-    let listed = contest(&*module, control, standing, applying, outcomes)?;
+    let listed = contest(&*module, control, standing, applying, outcomes).inspect_err(|_| {
+        let slots = module.declared().map(|(_, cells)| &cells.staged.slots);
+        if let Some(slot) = slots.and_then(|slots| slots.get(usize::from(control.0))) {
+            slot.keep_earlier(standing, value);
+        }
+    })?;
     // Automation still waiting was written before this sample.
     take_automation(module);
     let Some((table, cells)) = module.declared() else {
@@ -405,6 +490,8 @@ pub(crate) fn stage_write<M: Module + ?Sized>(
     let prev = if listed {
         slot.prev.load(Relaxed)
     } else {
+        // Only a write given way at this sample is read in its place.
+        slot.earlier.store(EMPTY, Relaxed);
         prev
     };
     slot.value.store(encode(value), Relaxed);
@@ -445,12 +532,11 @@ pub(crate) fn flush_watched<M: Module + ?Sized>(module: &mut M, outcomes: &mut O
     }
 }
 
-/// [`flush_staged`], but a write staged at `applying`'s sample stronger
-/// than one of `standing` (by due sample, rank and receipt) stays staged,
-/// to run after it. Allocation- and lock-free.
+/// [`flush_staged`], but a write staged at `than`'s sample that runs after
+/// it ([`Before`]) stays staged. Allocation- and lock-free.
 pub(crate) fn flush_staged_before<M: Module + ?Sized>(
     module: &mut M,
-    than: Option<(Standing, Applying)>,
+    than: Option<Before>,
     outcomes: &mut Outcomes,
 ) {
     if outcomes.staged() == 0 {
@@ -466,6 +552,12 @@ pub(crate) fn flush_staged_before<M: Module + ?Sized>(
             return;
         };
         if cells.staged.keeps(position, kept, than) {
+            let earlier = than.filter(|than| than.event);
+            let earlier = earlier.and_then(|than| cells.staged.earlier_by(kept, than.key.0));
+            if let Some((control, value)) = earlier {
+                // Reported already, as it gave way; only its value is read.
+                let _ = apply_declared(module, control, value);
+            }
             kept += 1;
             continue;
         }

@@ -74,6 +74,7 @@ impl Conditions {
                 id,
                 timed: true,
                 at,
+                due,
             });
             let outcome = match host.apply(&target, standing, value, outcomes) {
                 Ok(()) if due < at => Outcome::AppliedLate { at, due },
@@ -173,7 +174,7 @@ fn apply_pending(
     let Request {
         target, value, id, ..
     } = request;
-    outcomes.applying(Applying { id, timed, at });
+    outcomes.applying(Applying { id, timed, at, due });
     let outcome = match host.apply(&target, standing, value, outcomes) {
         Ok(()) if due < at => Outcome::AppliedLate { at, due },
         Ok(()) => Outcome::Applied { at },

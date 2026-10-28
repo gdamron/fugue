@@ -34,6 +34,7 @@ fn applying(id: u64, at: u64) -> Applying {
         id: RequestId(id),
         timed: false,
         at,
+        due: at,
     }
 }
 
@@ -310,4 +311,110 @@ fn a_full_table_stages_and_flushes_without_allocating() {
     }
     assert!(widest > 8, "a table of {widest}");
     eprintln!("widest table staged: {widest} controls; slowest stage and flush: {slowest:?}");
+}
+
+#[test]
+fn only_an_event_due_between_two_writes_reads_the_one_replaced() {
+    let mut dial = dial();
+    let (mut store, _received) = store();
+    let outcomes = &mut store.outcomes;
+    stage(&mut *dial, outcomes, (LEVEL, RtValue::F32(0.5)), 1, (6, 10));
+    stage(
+        &mut *dial,
+        outcomes,
+        (LEVEL, RtValue::F32(0.75)),
+        2,
+        (8, 10),
+    );
+    let between = Applying {
+        due: 7,
+        ..applying(3, 10)
+    };
+    // A write applied at once runs no replaced setter: one runs a sample.
+    flush_staged_before(&mut *dial, Some(Before::write(user(7), between)), outcomes);
+    assert_eq!(cells(&*dial).load(LEVEL), Some(RtValue::F32(0.25)));
+    // An event due between them reads the value in force then.
+    flush_staged_before(&mut *dial, Some(Before::event(between)), outcomes);
+    assert_eq!(cells(&*dial).load(LEVEL), Some(RtValue::F32(0.5)));
+    flush_staged(&mut *dial, outcomes);
+    assert_eq!(cells(&*dial).load(LEVEL), Some(RtValue::F32(0.75)));
+}
+
+#[test]
+fn a_value_replaced_at_an_earlier_sample_is_not_read_again() {
+    let mut dial = dial();
+    let (mut store, _received) = store();
+    let outcomes = &mut store.outcomes;
+    stage(&mut *dial, outcomes, (LEVEL, RtValue::F32(0.5)), 1, (6, 10));
+    // A write applied at once over it, never staged in its place.
+    let over = applying(2, 10);
+    assert_eq!(contest(&*dial, LEVEL, user(8), over, outcomes), Ok(true));
+    stage(
+        &mut *dial,
+        outcomes,
+        (LEVEL, RtValue::F32(0.75)),
+        3,
+        (25, 20),
+    );
+    let event = Applying {
+        due: 19,
+        ..applying(4, 20)
+    };
+    flush_staged_before(&mut *dial, Some(Before::event(event)), outcomes);
+    assert_eq!(cells(&*dial).load(LEVEL), Some(RtValue::F32(0.25)));
+}
+
+#[test]
+fn a_write_losing_to_a_staged_one_is_read_by_an_event_after_it() {
+    let mut dial = dial();
+    let (mut store, _received) = store();
+    let outcomes = &mut store.outcomes;
+    stage(
+        &mut *dial,
+        outcomes,
+        (LEVEL, RtValue::F32(0.75)),
+        1,
+        (8, 10),
+    );
+    let lost = Err(Outcome::Superseded);
+    let write = |value| (LEVEL, RtValue::F32(value));
+    assert_eq!(
+        contend(&mut *dial, outcomes, write(0.5), (2, user(6)), 10),
+        lost
+    );
+    // One due before it does not take its place.
+    assert_eq!(
+        contend(&mut *dial, outcomes, write(1.0), (3, user(3)), 10),
+        lost
+    );
+    let event = Applying {
+        due: 7,
+        ..applying(4, 10)
+    };
+    flush_staged_before(&mut *dial, Some(Before::event(event)), outcomes);
+    assert_eq!(cells(&*dial).load(LEVEL), Some(RtValue::F32(0.5)));
+}
+
+#[test]
+fn of_two_writes_due_together_an_event_reads_the_one_that_would_set_last() {
+    let between = Applying {
+        due: 7,
+        ..applying(9, 10)
+    };
+    let write = |value| (LEVEL, RtValue::F32(value));
+    for (first, second, heard) in [
+        (user(6), script(6), 0.5),
+        (script(6), user(6), 0.1),
+        (user(6), user(6), 0.1),
+    ] {
+        let mut dial = dial();
+        let (mut store, _received) = store();
+        let outcomes = &mut store.outcomes;
+        contend(&mut *dial, outcomes, write(0.5), (1, first), 10).unwrap();
+        stage(&mut *dial, outcomes, write(0.75), 2, (8, 10));
+        let lost = contend(&mut *dial, outcomes, write(0.1), (3, second), 10);
+        assert!(lost.is_err());
+        flush_staged_before(&mut *dial, Some(Before::event(between)), outcomes);
+        assert_eq!(cells(&*dial).load(LEVEL), Some(RtValue::F32(heard)));
+    }
 }

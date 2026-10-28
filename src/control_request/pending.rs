@@ -459,7 +459,12 @@ impl PendingStore {
             } = request;
             let payload = value.is_payload();
             let timed = when != When::Now;
-            outcomes.applying(Applying { id, timed, at: now });
+            outcomes.applying(Applying {
+                id,
+                timed,
+                at: now,
+                due,
+            });
             let outcome = match apply(&target, standing, value, outcomes) {
                 Ok(()) if due < now => Outcome::AppliedLate { at: now, due },
                 Ok(()) => Outcome::Applied { at: now },

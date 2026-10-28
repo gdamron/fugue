@@ -502,7 +502,7 @@ impl Watches {
             let late_event = watch.request.fires() && due < now;
             if let (true, RequestValue::Value(value)) = (watch.repeats(), &watch.request.value) {
                 let value = RequestValue::Value(*value);
-                outcomes.applying(on_beat(watch.request.id, now));
+                outcomes.applying(on_beat(watch.request.id, due, now));
                 let result = host.apply(&watch.request.target, standing, value, outcomes);
                 if result.is_err() && due == now {
                     self.entries[i].latched = Some(now);
@@ -538,7 +538,7 @@ impl Watches {
                 target, value, id, ..
             } = self.entries.remove(i).request;
             let payload = value.is_payload();
-            outcomes.applying(on_beat(id, now));
+            outcomes.applying(on_beat(id, due, now));
             let result = host.apply(&target, standing, value, outcomes);
             if result.is_ok() {
                 self.ramps.supersede(&target, &*host);
@@ -557,12 +557,13 @@ impl Watches {
     }
 }
 
-/// Request `id` applying on its beat at `now`.
-fn on_beat(id: RequestId, now: u64) -> Applying {
+/// Request `id`, due on its beat at `due`, applying at `now`.
+fn on_beat(id: RequestId, due: u64, now: u64) -> Applying {
     Applying {
         id,
         timed: true,
         at: now,
+        due,
     }
 }
 

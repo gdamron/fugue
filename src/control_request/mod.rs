@@ -107,7 +107,7 @@ pub(crate) use request::{
 };
 pub(crate) use sender::{request_channel, QueueFull, RequestSender, ReservedQueued};
 pub(crate) use staged::{
-    contest, flush_staged, flush_staged_before, flush_watched, stage_write, stand, Applying,
+    contest, flush_staged, flush_staged_before, flush_watched, stage_write, stand, Applying, Before,
 };
 pub(crate) use table::{BeatTable, Counted, Player, TableEntry, TableTarget, TableValue};
 pub(crate) use timeline::{first_sample_reaching, Timeline, BEFORE_START};

@@ -45,7 +45,7 @@ impl Watches {
         let result = match (host.current(&target), standing) {
             (Some(from), Some(_)) if from.is_finite() => {
                 let value = RequestValue::Value(RtValue::F32(from));
-                outcomes.applying(super::on_beat(watch.request.id, now));
+                outcomes.applying(super::on_beat(watch.request.id, due, now));
                 host.apply(&target, standing, value, outcomes)
                     .map(|()| from)
             }
