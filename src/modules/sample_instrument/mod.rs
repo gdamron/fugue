@@ -633,6 +633,7 @@ impl Module for SampleInstrument {
         if std::mem::take(&mut self.fresh_notes) {
             for voice in self.voices.iter_mut() {
                 voice.fresh = false;
+                voice.fade_fresh = false;
             }
         }
         if std::mem::take(&mut self.releasing) {
@@ -705,6 +706,9 @@ impl Module for SampleInstrument {
         for voice in self.voices.iter_mut() {
             if voice.fresh && voice.zone == zone {
                 voice.relatch(audio);
+            }
+            if voice.fade_fresh && voice.fade_zone == zone {
+                voice.relatch_fade(audio);
             }
         }
         Ok(replaced.into())

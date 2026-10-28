@@ -119,6 +119,34 @@ fn an_instrument_note_at_a_swaps_instant_plays_the_new_sample_live_and_offline()
 }
 
 #[test]
+fn a_note_stolen_at_its_instant_fades_out_on_the_new_sample_live_and_offline() {
+    let dir = tempfile::tempdir().unwrap();
+    let half = level_wav(dir.path(), "half.wav", 0.5);
+    let quiet = level_wav(dir.path(), "quiet.wav", 0.125);
+    let config = serde_json::json!({
+        "zones": [{ "root_note": 60, "key_range": [0, 127], "asset": half }]
+    });
+    let json = document("sample_instrument", config);
+    let note = ("note_on", ControlValue::from(60.0));
+    let swap = ("asset.0", ControlValue::from(quiet.as_str()));
+    // The second note takes the first's voice, which crossfades out: both
+    // sound the new sample, wherever the swap falls among them.
+    for at in 0..3 {
+        let mut writes = vec![note.clone(), note.clone()];
+        writes.insert(at, swap.clone());
+        let live = live(&json, &writes);
+        let offline = offline(&json, &writes);
+        assert!(
+            live == offline,
+            "swap at {at}: live {} and offline {} differ",
+            live[64],
+            offline[64]
+        );
+        assert!((live[64] - 0.25).abs() < 2e-3, "swap at {at}: {}", live[64]);
+    }
+}
+
+#[test]
 fn a_swap_after_a_play_has_sounded_waits_for_the_next_play() {
     let dir = tempfile::tempdir().unwrap();
     let kick = level_wav(dir.path(), "kick.wav", 0.5);

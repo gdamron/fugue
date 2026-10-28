@@ -106,6 +106,11 @@ pub(crate) struct Voice {
     fade_amp: f32,
     fade_gain: f32,
     fade_step: f32,
+    /// The stolen note's zone, and whether that note was `fresh`: a note
+    /// stolen at the instant it started has sounded nothing, so a zone swap
+    /// at that instant reaches its tail as well (see [`Self::relatch_fade`]).
+    pub fade_zone: usize,
+    pub fade_fresh: bool,
 }
 
 impl Voice {
@@ -132,6 +137,8 @@ impl Voice {
             fade_amp: 0.0,
             fade_gain: 0.0,
             fade_step: 0.0,
+            fade_zone: 0,
+            fade_fresh: false,
         }
     }
 
@@ -173,6 +180,8 @@ impl Voice {
         self.fade_amp = amp;
         self.fade_gain = 1.0;
         self.fade_step = step;
+        self.fade_zone = self.zone;
+        self.fade_fresh = self.fresh;
     }
 
     /// Reads and advances the stolen note's crossfade tail for this frame.
@@ -236,6 +245,13 @@ impl Voice {
         self.active = audio.sample.len() > 0;
         self.sample = Some(Arc::clone(&audio.sample));
         self.loop_region = audio.loop_region;
+    }
+
+    /// Takes `audio` into the crossfade tail of a note stolen at the
+    /// instant it started, as [`Self::relatch`] does for the note itself.
+    pub fn relatch_fade(&mut self, audio: &ZoneAudio) {
+        self.fade_sample = Some(Arc::clone(&audio.sample));
+        self.fade_loop = audio.loop_region;
     }
 
     /// Begins the release phase: the fade below takes `1/step` frames, and
