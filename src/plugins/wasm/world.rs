@@ -30,41 +30,44 @@ pub(super) fn check_world(
 ) -> Result<ComponentExportIndex, String> {
     let ty = component.component_type();
     let mut first_world = false;
+    let mut built_for = None;
     for (name, _) in ty.exports(engine) {
         first_world |= FIRST_WORLD_EXPORTS.contains(&name);
+        // Exact: given a name that isn't exported, wasmtime's lookup would
+        // take a semver-compatible one instead.
+        if name == GUEST_INTERFACE {
+            if let Some(guest) = component.get_export_index(None, GUEST_INTERFACE) {
+                return Ok(guest);
+            }
+        }
         let Some(rest) = name.strip_prefix("fugue:module/guest") else {
             continue;
         };
-        let version = match rest.strip_prefix('@') {
-            Some(version) => version,
-            None if rest.is_empty() => "(unversioned)",
+        match rest.strip_prefix('@') {
+            Some(version) => built_for = Some(format!("the fugue:module@{version} world")),
+            None if rest.is_empty() => built_for = Some("an unversioned fugue:module world".into()),
             // Another interface whose name starts the same, such as `guest-extra`.
-            None => continue,
-        };
-        // Exact: wasmtime's lookup would also take a semver-compatible one.
-        return if version == WORLD_VERSION {
-            component
-                .get_export_index(None, GUEST_INTERFACE)
-                .ok_or_else(|| refusal(WORLD_VERSION))
-        } else {
-            Err(refusal(version))
-        };
+            None => {}
+        }
     }
-    Err(if first_world {
-        refusal(FIRST_WORLD_VERSION)
-    } else {
-        format!(
+    if first_world {
+        built_for = Some(format!("the fugue:module@{FIRST_WORLD_VERSION} world"));
+    }
+    Err(match built_for {
+        Some(built_for) => refusal(&built_for),
+        None => format!(
             "this wasm module exports no fugue:module/guest interface, so it is not a \
              Fugue module: build it against fugue:module@{WORLD_VERSION} \
              (wit/fugue-module.wit)"
-        )
+        ),
     })
 }
 
+/// `built_for` names the world, as in "the fugue:module@0.1.0 world".
 fn refusal(built_for: &str) -> String {
     format!(
-        "this wasm module was built for the fugue:module@{built_for} world, and this \
-         host loads fugue:module@{WORLD_VERSION} modules: rebuild it against \
+        "this wasm module was built for {built_for}, and this host loads \
+         fugue:module@{WORLD_VERSION} modules: rebuild it against \
          fugue:module@{WORLD_VERSION} (wit/fugue-module.wit), which writes each \
          output block with the host's `emit-output` import"
     )
@@ -126,6 +129,29 @@ mod tests {
                 && refusal.contains("rebuild it against fugue:module@0.2.0"),
             "{refusal}"
         );
+    }
+
+    #[test]
+    fn an_unversioned_guest_is_refused() {
+        let refusal = check(&exporting("fugue:module/guest")).unwrap_err();
+        assert!(
+            refusal.contains("built for an unversioned fugue:module world"),
+            "{refusal}"
+        );
+    }
+
+    /// Another interface with a guest-like name, or another version beside
+    /// this one, doesn't hide this version's export.
+    #[test]
+    fn this_version_passes_beside_other_guest_names() {
+        for other in ["fugue:module/guest-extra@0.2.0", "fugue:module/guest@0.1.9"] {
+            let wat = format!(
+                r#"(component (instance $guest)
+                    (export "{other}" (instance $guest))
+                    (export "{GUEST_INTERFACE}" (instance $guest)))"#
+            );
+            assert_eq!(check(&wat), Ok(()), "{other}");
+        }
     }
 
     #[test]
