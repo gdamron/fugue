@@ -35,13 +35,19 @@ pub(super) fn check_world(
         let Some(rest) = name.strip_prefix("fugue:module/guest") else {
             continue;
         };
-        return match rest.strip_prefix('@') {
-            // Exact: wasmtime's lookup would also take a semver-compatible one.
-            Some(WORLD_VERSION) => component
+        let version = match rest.strip_prefix('@') {
+            Some(version) => version,
+            None if rest.is_empty() => "(unversioned)",
+            // Another interface whose name starts the same, such as `guest-extra`.
+            None => continue,
+        };
+        // Exact: wasmtime's lookup would also take a semver-compatible one.
+        return if version == WORLD_VERSION {
+            component
                 .get_export_index(None, GUEST_INTERFACE)
-                .ok_or_else(|| refusal(WORLD_VERSION)),
-            Some(version) => Err(refusal(version)),
-            None => Err(refusal("(unversioned)")),
+                .ok_or_else(|| refusal(WORLD_VERSION))
+        } else {
+            Err(refusal(version))
         };
     }
     Err(if first_world {
@@ -124,11 +130,16 @@ mod tests {
 
     #[test]
     fn a_component_that_is_no_guest_is_refused() {
-        let refusal = check("(component)").unwrap_err();
-        assert!(
-            refusal.contains("exports no fugue:module/guest"),
-            "{refusal}"
-        );
+        for wat in [
+            "(component)".to_string(),
+            exporting("fugue:module/guest-extra@0.2.0"),
+        ] {
+            let refusal = check(&wat).unwrap_err();
+            assert!(
+                refusal.contains("exports no fugue:module/guest"),
+                "{refusal}"
+            );
+        }
     }
 
     #[test]
