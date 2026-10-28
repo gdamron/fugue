@@ -301,12 +301,11 @@ fn a_write_kept_over_a_timed_edit_is_announced_as_it_applies_and_plays_on_past_i
 }
 
 /// A kept write a gesture replaces at its exact sample is superseded, as
-/// its reply says, yet its copy, which the edit owns, still applies as the
-/// edit lands: the write plays again and is recorded, unannounced. Document
-/// and playback agree. Breaking the copy of a write that lost is the audio
-/// thread's to do, as it coalesces copies by target and edit.
+/// its reply says, and its copy, which waits on it applying, breaks: as
+/// the edit lands its own value plays and is recorded, as it would were
+/// nothing kept. Nothing more is announced.
 #[test]
-fn a_kept_write_replaced_at_its_sample_is_superseded_though_its_copy_lands_unannounced() {
+fn a_kept_write_replaced_at_its_sample_is_superseded_and_not_reasserted() {
     let (mut running, pump, sink) = on_manual();
     retune_waiting(&mut running);
     let authored = ControlWrite::new("osc", "frequency", 330.0.into());
@@ -325,12 +324,11 @@ fn a_kept_write_replaced_at_its_sample_is_superseded_though_its_copy_lands_unann
     pump.render(8);
     running.live.adopt_landed();
     running.announce_applied();
-    // Re-asserted as the edit lands, and recorded so.
     assert_eq!(
         running.get_control("osc", "frequency").unwrap(),
-        330.0.into()
+        550.0.into()
     );
-    assert_eq!(recorded(&running), Some(330.0));
+    assert_eq!(recorded(&running), Some(550.0));
     assert_eq!(announced(&sink), [(440.0.into(), gesture)]);
 }
 

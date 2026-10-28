@@ -423,6 +423,12 @@ impl Conditions {
                 i += 1;
                 continue;
             }
+            // Writes to one control falling due together: all but one
+            // give way before any reaches the module.
+            match self.give_way(i, at, outcomes) {
+                Some(now) => i = now,
+                None => continue,
+            }
             let Entry { request, .. } = self.take(i, &mut outcomes.chains);
             if expired(&request, at) {
                 self.settle(request, Refusal::Expired.into(), outcomes);
