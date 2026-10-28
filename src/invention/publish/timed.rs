@@ -24,7 +24,7 @@ use super::{
     publisher, Committed, DocumentStep, LiveGraph, Mirrors, PendingLog, PreparedChange, Publisher,
     Refused,
 };
-use crate::control_request::{BeatSpec, BeatTime, RequestId, When};
+use crate::control_request::{BeatSpec, BeatTime, Outcome, Refusal, RequestId, When};
 use crate::invention::audio_assets;
 use crate::invention::orchestration::ModulePorts;
 use crate::invention::request_log::{LoggedBeat, LoggedEdit, LoggedWhen};
@@ -357,12 +357,20 @@ pub(super) fn adopt_into(
 fn sync_ledger(publisher: &mut Publisher, pending: &mut PendingLog) {
     let (outcomes, lost) = pending.take_timed();
     let waiting = publisher.timed_id();
+    // Once the audio side has sent its last outcome (a render panicked),
+    // the edit waiting never lands: settled stopped here too, as the log
+    // settles every edit it still knows, since an outcome lost before
+    // may have cleared it from the log.
+    let stranded = pending.ended() && publisher.timed_landed().is_none();
     let ledger = publisher.ledger();
     for (id, outcome) in outcomes {
         ledger.outcome(id, outcome);
     }
     if lost {
         ledger.lost(waiting);
+    }
+    if let Some(id) = waiting.filter(|_| stranded) {
+        ledger.outcome(id, Outcome::Refused(Refusal::Stopped));
     }
 }
 

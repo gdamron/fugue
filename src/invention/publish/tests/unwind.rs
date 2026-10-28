@@ -11,6 +11,7 @@ use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::super::announce::Progress;
+use super::super::{EditState, EditTime};
 use super::requests::try_submit_value;
 use super::requests::{hook, submit};
 use super::*;
@@ -333,4 +334,37 @@ fn writes_waiting_as_a_render_panics_settle_refused() {
     assert_eq!(rig.live.progress(waiting), stopped);
     assert_eq!(rig.live.progress(applying), stopped);
     assert!(rig.live.pending_requests().is_empty());
+}
+
+/// A timed edit waiting as untimed outcomes are lost, then as a render
+/// panics, is settled refused (`Refusal::Stopped`): whether the loss was
+/// taken before the panic (clearing the log's edits, the waiting one
+/// left to the publisher) or with it.
+#[test]
+fn a_timed_edit_waiting_past_lost_outcomes_settles_stopped_as_a_render_panics() {
+    for taken_before in [true, false] {
+        let (mut rig, armed) = fragile_rig();
+        let far = EditTime::AtSample(rig.graph.current_sample + 48_000 * 60);
+        let mut change = rig.live.begin();
+        change.remove("fragile");
+        let prepared = change.prepare().unwrap();
+        let id = rig.live.commit_when(prepared, far, None, |_| {}).unwrap();
+        // More untimed outcomes than the queue holds, none received.
+        for _ in 0..8 {
+            for value in 0..200 {
+                submit(&rig, "fragile", 0, value as f32, When::Now);
+            }
+            rig.render(8);
+        }
+        if taken_before {
+            let status = rig.live.timed_status(id).unwrap();
+            assert_eq!(status.state, EditState::Queued, "the waiting edit stays");
+        }
+        armed.set_input.store(true, Ordering::SeqCst);
+        submit(&rig, "fragile", 0, 0.5, When::Now);
+        panicking_block(&mut rig);
+
+        let stopped = EditState::Refused(Refusal::Stopped);
+        assert_eq!(rig.live.timed_status(id).unwrap().state, stopped);
+    }
 }

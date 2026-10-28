@@ -180,6 +180,9 @@ pub(crate) struct PendingLog {
     /// outcome, should it come, is not received again; the oldest of
     /// [`LOG_CAPACITY`] go first.
     expired: VecDeque<RequestId>,
+    /// Every outcome the audio side will send has been received: it sent
+    /// its last (see [`Self::strand`]).
+    ended: bool,
 }
 
 impl PendingLog {
@@ -201,6 +204,7 @@ impl PendingLog {
             held: Vec::new(),
             transport,
             expired: VecDeque::new(),
+            ended: false,
         }
     }
 
@@ -268,6 +272,7 @@ impl PendingLog {
         }
         self.expire(rendered);
         if ended {
+            self.ended = true;
             self.strand();
         }
     }
@@ -372,6 +377,12 @@ impl PendingLog {
             self.lost += 1;
         }
         self.outcomes.push_back((id, outcome));
+    }
+
+    /// Whether every outcome the audio side will send has been received:
+    /// it sent its last (a render panicked).
+    pub(crate) fn ended(&self) -> bool {
+        self.ended
     }
 
     /// Timed edits' outcomes received since the last call, oldest first,
