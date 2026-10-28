@@ -341,7 +341,8 @@ fn config_deltas_that_cannot_be_controls_force_a_swap() {
     assert_eq!(plan.swapped.len(), 1);
     assert!(plan.control_updates.is_empty());
 
-    // A removed key means "back to the default", which needs a rebuild.
+    // A removed key with no fresh value to return to (as an edit batch
+    // plans) needs a rebuild.
     let plan = plan_for(serde_json::json!({ "waveform": "sine" }), true);
     assert_eq!(plan.swapped.len(), 1);
 
