@@ -6,7 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::invention::audio_assets::{is_relative_path, module_asset_values};
+use crate::invention::audio_assets::{audio_slots, is_relative_path};
+use crate::invention::reload::LoadedDevelopments;
 use crate::Invention;
 
 impl Invention {
@@ -58,9 +59,13 @@ impl Invention {
             asset.path = rebase(&asset.path, source_dir, &target_dir)?;
         }
         // A module's audio asset: a relative path, written as text or as a
-        // `{ "path": ... }` object. Package refs and URLs are left alone.
+        // `{ "path": ... }` object. Package refs and URLs are left alone, as
+        // is a development instance's key its development exposes as no
+        // asset. Declarations that no longer load leave every such key
+        // read as an asset, as before they were consulted.
+        let developments = LoadedDevelopments::load(self).unwrap_or_default();
         for module in &mut document.modules {
-            for value in module_asset_values(&mut module.config) {
+            for value in audio_slots(module, &developments) {
                 let path = match value {
                     serde_json::Value::String(path) => path,
                     serde_json::Value::Object(object) => match object.get_mut("path") {

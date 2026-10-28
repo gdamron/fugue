@@ -11,7 +11,7 @@ use crate::invention::reload::LoadedDevelopments;
 /// config holds the controls its development exposes, so a slot's key
 /// names audio only when the control exposed under it does in turn: an
 /// event the development calls `asset` is not read as an asset.
-pub(super) fn audio_slots<'a>(
+pub(crate) fn audio_slots<'a>(
     module: &'a mut ModuleSpec,
     developments: &LoadedDevelopments,
 ) -> impl Iterator<Item = &'a mut serde_json::Value> {

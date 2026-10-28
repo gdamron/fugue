@@ -91,3 +91,19 @@ fn an_added_instance_reads_its_exposed_keys_as_declared() {
     running.apply_edits(&[add]).expect("the batch applies");
     assert_eq!(running.get_control("n", "asset").unwrap(), 330.0.into());
 }
+
+#[test]
+fn saving_elsewhere_leaves_an_exposed_asset_that_names_no_audio_as_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let tone = json!({ "id": "a", "type": "oscillator", "config": {} });
+    let shaped = json!({ "asset": "square" });
+    let document = piece(dir.path(), (tone, "audio"), "waveform", shaped);
+    let elsewhere = tempfile::tempdir().unwrap();
+    let target = elsewhere.path().join("copy.json");
+    document.save_to_file(&target).unwrap();
+    let saved = Invention::from_file(&target.to_string_lossy()).unwrap();
+    assert_eq!(saved.modules[0].config["asset"], "square");
+    let (running, _pump) = start_pumped(saved);
+    let shape = running.get_control("m", "asset").unwrap();
+    assert_eq!(shape, ControlValue::String("square".into()));
+}

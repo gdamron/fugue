@@ -64,7 +64,7 @@ pub(crate) fn stored_asset_write<'a>(key: &str, value: &'a ControlValue) -> Cow<
 mod developments;
 mod live;
 
-use developments::audio_slots;
+pub(crate) use developments::audio_slots;
 pub(crate) use live::{
     is_relative_path, rebase_asset_write, resolve_asset_write, resolve_checked_asset_write,
 };
