@@ -443,7 +443,7 @@ fn test_velocity_scales_note_level() {
 
 #[test]
 fn test_zone_level_control_scales_output() {
-    let path = write_level_wav(0.5, 8);
+    let path = write_level_wav(0.5, 1_000);
     let config = serde_json::json!({
         "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap(), "level": 0.5 } ]
     });
@@ -454,8 +454,12 @@ fn test_zone_level_control_scales_output() {
     instrument.process(1);
     assert!((instrument.get_output("audio_left").unwrap() - 0.25).abs() < TOL);
 
+    // A sounding zone glides to its new level (see `tests/levels`).
     instrument.set_control("level.0", 1.0).unwrap();
-    instrument.process(1);
+    run(
+        &mut instrument,
+        crate::modules::mixer::gain_ramp_frames(44_100) as usize,
+    );
     assert!((instrument.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
 
     let _ = std::fs::remove_file(path);
@@ -838,5 +842,6 @@ fn the_retired_spellings_are_refused() {
     let _ = std::fs::remove_file(wav);
 }
 
+mod levels;
 mod release_order;
 mod swaps;

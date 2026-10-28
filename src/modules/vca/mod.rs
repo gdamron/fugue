@@ -10,9 +10,11 @@ use crate::control_request::{
     apply_declared, local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable,
     Refusal, RtValue,
 };
+use crate::dsp::LinearRamp;
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
+use crate::modules::mixer::gain_ramp_frames;
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -21,6 +23,9 @@ use self::controls::{LEVEL, TABLE};
 mod controls;
 mod inputs;
 mod outputs;
+
+/// The rate a VCA built without one glides at.
+pub const DEFAULT_RATE: u32 = 48_000;
 
 /// Factory for constructing VCA modules from configuration.
 pub struct VcaFactory;
@@ -39,13 +44,13 @@ impl ModuleFactory for VcaFactory {
 
     fn build(
         &self,
-        _sample_rate: u32,
+        sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let level = ConfigReader::new(TYPE_ID, config)
             .float(&LEVEL_KEY)?
             .unwrap_or(1.0);
-        let vca = Vca::with_level(level);
+        let vca = Vca::with_level_at(level, sample_rate);
         let surface = DeclaredSurface::new(TABLE.clone(), vca.cells.clone());
 
         Ok(ModuleBuildResult {
@@ -83,8 +88,9 @@ impl ModuleFactory for VcaFactory {
 /// }
 /// ```
 pub struct Vca {
-    /// Amplitude when no level signal is connected, 0 to 1.
-    level: f32,
+    /// Amplitude when no level signal is connected, 0 to 1. A write glides
+    /// to its value, as a mixer's fader does: a step would click.
+    level: LinearRamp,
     cells: Arc<ControlCells>,
     inputs: inputs::VcaInputs,
     outputs: outputs::VcaOutputs,
@@ -96,15 +102,26 @@ impl Vca {
         Self::with_level(1.0)
     }
 
-    /// Creates a new VCA at `level` (clamped to 0 to 1).
+    /// Creates a new VCA at `level` (clamped to 0 to 1), its level writes
+    /// gliding as they would at [`DEFAULT_RATE`].
     pub fn with_level(level: f32) -> Self {
+        Self::with_level_at(level, DEFAULT_RATE)
+    }
+
+    /// Creates a new VCA at `level` (clamped to 0 to 1) running at
+    /// `sample_rate`.
+    pub fn with_level_at(level: f32, sample_rate: u32) -> Self {
         let mut vca = Self {
-            level: 1.0,
+            level: LinearRamp::new(1.0, gain_ramp_frames(sample_rate)),
             cells: Arc::new(ControlCells::new([RtValue::F32(1.0)])),
             inputs: inputs::VcaInputs::new(),
             outputs: outputs::VcaOutputs::new(),
         };
         let _ = apply_declared(&mut vca, LEVEL, RtValue::F32(level));
+        // The configured level is where it starts, not a glide.
+        if let Some(RtValue::F32(level)) = vca.cells.load(LEVEL) {
+            vca.level.snap(level);
+        }
         vca
     }
 }
@@ -121,17 +138,29 @@ impl Module for Vca {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        let control_cv = if self.inputs.cv_connected() {
-            0.0
+        if self.inputs.cv_connected() {
+            for i in 0..frames {
+                let value = self.inputs.audio(i) * self.inputs.cv(i, 0.0);
+                self.outputs.set(i, value);
+            }
+            // The level glides on under the CV, so a disconnect falls back
+            // to the level written, not to one written long ago.
+            if self.level.is_gliding() {
+                for _ in 0..frames {
+                    self.level.next_value();
+                }
+            }
+        } else if self.level.is_gliding() {
+            for i in 0..frames {
+                let value = self.inputs.audio(i) * self.level.next_value();
+                self.outputs.set(i, value);
+            }
         } else {
-            self.level
-        };
-
-        let mut i = 0;
-        while i < frames {
-            let value = self.inputs.audio(i) * self.inputs.cv(i, control_cv);
-            self.outputs.set(i, value);
-            i += 1;
+            let level = self.level.value();
+            for i in 0..frames {
+                let value = self.inputs.audio(i) * level;
+                self.outputs.set(i, value);
+            }
         }
         true
     }
@@ -173,8 +202,9 @@ impl Module for Vca {
     fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
         match (control, value) {
             (LEVEL, RtValue::F32(level)) => {
-                self.level = level.clamp(0.0, 1.0);
-                Ok(RtValue::F32(self.level))
+                let level = level.clamp(0.0, 1.0);
+                self.level.set_target(level);
+                Ok(RtValue::F32(level))
             }
             _ => Err(Refusal::Unsupported),
         }
@@ -268,9 +298,12 @@ mod tests {
 
         vca.set_input("audio", 1.0).unwrap();
 
-        // Without a connected level signal, should use control
+        // Without a connected level signal, should use control, once its
+        // write has glided there
         vca.set_input_connected(1, false);
-        vca.process(1);
+        for _ in 0..gain_ramp_frames(DEFAULT_RATE) {
+            vca.process(1);
+        }
         assert_eq!(vca.get_output("audio").unwrap(), 0.5);
 
         // With signal, should use signal
@@ -294,5 +327,52 @@ mod tests {
         vca.process(3);
 
         assert_eq!(&vca.output_block(0)[..3], &[0.0, 0.25, -1.0]);
+    }
+
+    #[test]
+    fn a_level_write_glides_without_a_step_or_an_allocation() {
+        use crate::alloc_counter::allocator_events;
+        use crate::audio_thread::AudioThreadScope;
+        let mut vca = Vca::with_level_at(1.0, 44_100);
+        let glide = gain_ramp_frames(44_100) as usize;
+        vca.input_block_mut(0)[..glide].fill(1.0);
+        vca.set_control("level", 0.0).unwrap();
+        let ((), allocs, frees) = allocator_events(|| {
+            let _audio = AudioThreadScope::enter();
+            vca.process(glide);
+        });
+        assert_eq!((allocs, frees), (0, 0));
+        let heard = &vca.output_block(0)[..glide];
+        let step = 1.0 / glide as f32;
+        let mut previous = 1.0;
+        for (frame, &value) in heard.iter().enumerate() {
+            assert!(
+                (previous - value - step).abs() < step * 0.01,
+                "frame {frame}: {previous} -> {value}"
+            );
+            previous = value;
+        }
+        assert_eq!(heard[glide - 1], 0.0, "it lands on the level");
+    }
+
+    #[test]
+    fn a_level_written_under_cv_is_the_one_heard_after_a_disconnect() {
+        let mut vca = Vca::with_level_at(1.0, 44_100);
+        let glide = gain_ramp_frames(44_100) as usize;
+        vca.set_input_connected(1, true);
+        vca.set_control("level", 0.0).unwrap();
+        vca.process(glide);
+        vca.set_input_connected(1, false);
+        vca.input_block_mut(0)[0] = 1.0;
+        vca.process(1);
+        assert_eq!(vca.output_block(0)[0], 0.0, "not a glide from 1.0");
+    }
+
+    #[test]
+    fn a_configured_level_holds_from_the_first_frame() {
+        let mut vca = Vca::with_level_at(0.25, 44_100);
+        vca.input_block_mut(0)[0] = 1.0;
+        vca.process(1);
+        assert_eq!(vca.output_block(0)[0], 0.25);
     }
 }

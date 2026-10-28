@@ -66,11 +66,18 @@ fn melody(melody: serde_json::Value) -> String {
 /// An authored write to `id.key` of `original`, applied, then a reload of
 /// `original`: the write is undone by one control write to `restored`, and
 /// nothing is rebuilt.
-fn restores(
+fn restores(original: &str, at: (&str, &str), written: ControlValue, restored: ControlValue) {
+    restores_by(original, at, written, restored, at.1);
+}
+
+/// [`restores`], the one control write being to `by`: the whole key that
+/// replaces `key`, when the module exposes it.
+fn restores_by(
     original: &str,
     (id, key): (&str, &str),
     written: ControlValue,
     restored: ControlValue,
+    by: &str,
 ) {
     let (mut running, pump) = start_pumped(original);
     assert_eq!(running.get_control(id, key).unwrap(), restored, "{key}");
@@ -83,7 +90,7 @@ fn restores(
 
     assert_eq!(
         report.controls_updated,
-        [format!("{id}.{key}")],
+        [format!("{id}.{by}")],
         "{report:?}"
     );
     assert_nothing_rebuilt(&report);
@@ -116,9 +123,12 @@ fn reloading_the_original_restores_an_indexed_key() {
     // Within a whole array, the index restores to the array's value.
     let mix = mixed(json!({ "channel_count": 2, "levels": [0.8, 0.6] }));
     restores(&mix, ("mix", "level.1"), number(0.3), number(0.6));
+    // A melody's degree returns by its whole scale, as a fresh build
+    // writes the degrees.
     for degrees in [json!([0, 2, 4]), json!("[0, 2, 4]")] {
         let tune = melody(json!({ "degrees": degrees, "seed": 1 }));
-        restores(&tune, ("tune", "degree.1"), number(5.0), number(2.0));
+        let at = ("tune", "degree.1");
+        restores_by(&tune, at, number(5.0), number(2.0), "degrees");
     }
 }
 
@@ -327,22 +337,35 @@ fn a_developments_implicit_key_is_not_restored_by_one_write() {
 }
 
 #[test]
-fn a_fresh_value_no_write_reaches_is_not_restored() {
-    // An empty scale builds a count of zero, below the one its writes
-    // start at: no write restores it, so none is made.
+fn a_position_under_a_null_whole_key_returns_as_built() {
+    // A null reads as absent: the whole key returns as built.
+    let weights = melody(json!({ "degrees": [0, 2, 4], "note_weights": null, "seed": 1 }));
+    let at = ("tune", "note_weight.1");
+    restores_by(&weights, at, number(9.0), number(1.0), "note_weights");
+    let scale = melody(json!({ "degrees": null, "seed": 1 }));
+    let built = start_pumped(&scale)
+        .0
+        .get_control("tune", "degree.1")
+        .unwrap();
+    restores_by(&scale, ("tune", "degree.1"), number(5.0), built, "degrees");
+}
+
+#[test]
+fn a_count_of_an_empty_scale_returns_by_the_scale() {
+    // An empty scale builds a count of zero, below the one a count write
+    // starts at: the whole scale written again restores it.
     let tune = melody(json!({ "degrees": [], "seed": 1 }));
     let (mut running, pump) = start_pumped(&tune);
-    assert_eq!(
-        running.get_control("tune", "degree_count").unwrap(),
-        number(0.0)
-    );
     running
         .set_control("tune", "degree_count", number(2.0))
         .unwrap();
     pump.render(1);
 
     let report = running.reload(doc(&tune)).expect("diff applies");
+    pump.render(1);
 
-    assert!(report.controls_updated.is_empty(), "{report:?}");
+    assert_eq!(report.controls_updated, ["tune.degrees"], "{report:?}");
     assert_nothing_rebuilt(&report);
+    let count = running.get_control("tune", "degree_count").unwrap();
+    assert_eq!(count, number(0.0));
 }

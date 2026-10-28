@@ -36,10 +36,11 @@ use crate::control_request::{
     apply_declared, local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable,
     Refusal, RtValue,
 };
-use crate::dsp::{Allpass, Damper, DelayLine};
+use crate::dsp::{Allpass, Damper, DelayLine, LinearRamp};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
+use crate::modules::mixer::gain_ramp_frames;
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -165,9 +166,11 @@ pub struct Reverb {
     room_size: f32,
     decay: f32,
     damping: f32,
-    wet: f32,
-    dry: f32,
-    width: f32,
+    /// The output mix, gliding to each write as a mixer's fader does: a
+    /// gain that stepped would click.
+    wet: LinearRamp,
+    dry: LinearRamp,
+    width: LinearRamp,
     freeze: bool,
     /// What `room_size`, `decay` and `freeze` make of the delay network,
     /// recomputed as they change rather than every sample, and crossfaded
@@ -241,9 +244,9 @@ impl Reverb {
             room_size: 0.5,
             decay: 0.5,
             damping: 0.5,
-            wet: 0.33,
-            dry: 1.0,
-            width: 1.0,
+            wet: LinearRamp::new(0.33, gain_ramp_frames(sample_rate)),
+            dry: LinearRamp::new(1.0, gain_ramp_frames(sample_rate)),
+            width: LinearRamp::new(1.0, gain_ramp_frames(sample_rate)),
             freeze: false,
             retuning: Retuning::settled(Tuning::default(), sample_rate),
             cells,
@@ -266,6 +269,16 @@ impl Reverb {
             }
         }
         reverb.retuning = Retuning::settled(reverb.tuning(), sample_rate);
+        // The mix it is built with is where it starts, not a glide.
+        for (index, ramp) in [
+            (WET, &mut reverb.wet),
+            (DRY, &mut reverb.dry),
+            (WIDTH, &mut reverb.width),
+        ] {
+            if let Some(RtValue::F32(value)) = reverb.cells.load(index) {
+                ramp.snap(value);
+            }
+        }
         reverb
     }
 
@@ -273,9 +286,9 @@ impl Reverb {
     fn process_sample(&mut self, i: usize) {
         let frozen = self.freeze;
         let damping = self.damping;
-        let wet_ctrl = self.wet;
-        let dry = self.dry;
-        let width = self.width;
+        let wet_ctrl = self.wet.next_value();
+        let dry = self.dry.next_value();
+        let width = self.width.next_value();
         let s = self.retuning.next_weight();
         let (old, new) = (self.retuning.from(), self.retuning.to());
 
@@ -416,14 +429,20 @@ impl Module for Reverb {
                 self.freeze = freeze;
                 value
             }
+            (WET | DRY | WIDTH, RtValue::F32(value)) => {
+                let value = value.clamp(0.0, 1.0);
+                match control {
+                    WET => self.wet.set_target(value),
+                    DRY => self.dry.set_target(value),
+                    _ => self.width.set_target(value),
+                }
+                RtValue::F32(value)
+            }
             (_, RtValue::F32(value)) => {
                 let held = match control {
                     ROOM_SIZE => &mut self.room_size,
                     DECAY => &mut self.decay,
                     DAMPING => &mut self.damping,
-                    WET => &mut self.wet,
-                    DRY => &mut self.dry,
-                    WIDTH => &mut self.width,
                     _ => return Err(Refusal::Unsupported),
                 };
                 *held = value.clamp(0.0, 1.0);

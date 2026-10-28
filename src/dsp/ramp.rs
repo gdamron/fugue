@@ -35,6 +35,11 @@ impl LinearRamp {
         *self = Self::new(value, self.frames);
     }
 
+    /// Ends any glide at its target, as if it had run its course.
+    pub fn settle(&mut self) {
+        self.snap(self.target);
+    }
+
     /// Starts a glide to `target`, unless it is already the target.
     #[inline]
     pub fn set_target(&mut self, target: f32) {

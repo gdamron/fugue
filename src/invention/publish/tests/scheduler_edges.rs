@@ -324,7 +324,10 @@ fn an_entry_on_a_feedback_member_lands_at_the_next_segment() {
     let late = edges[1].next_multiple_of(64);
     assert_ne!(late, edges[1], "the edge falls inside a block");
     assert!(out[..late].iter().all(|&level| level == 0.25));
-    assert!(out[late..].iter().all(|&level| level == 0.125));
+    // From there the vca's level glides to the entry's.
+    assert!(out[late] < 0.25 && out[late] > 0.125, "{}", out[late]);
+    let landed = late + crate::modules::mixer::gain_ramp_frames(48_000) as usize;
+    assert!(out[landed..].iter().all(|&level| level == 0.125));
 }
 
 /// Moved from a clock onto a gate, a schedule plays on from the step the
