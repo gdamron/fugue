@@ -24,6 +24,8 @@ mod control_surface;
 mod declared_controls;
 #[cfg(test)]
 mod declared_tests;
+#[cfg(test)]
+mod exact_tests;
 mod fan_out;
 #[cfg(test)]
 mod fan_out_tests;
@@ -181,7 +183,7 @@ fn apply_development_config(
         {
             continue;
         }
-        let value = crate::invention::reload::scalar_control_value(value).ok_or_else(|| {
+        let value = crate::traits::exact_number::json_scalar(value).ok_or_else(|| {
             format!(
                 "Development '{}' config key '{}' must be a number, bool, or string",
                 name, key

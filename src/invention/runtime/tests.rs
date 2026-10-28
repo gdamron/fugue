@@ -11,6 +11,7 @@ use std::time::Duration;
 
 mod acks;
 mod editing;
+mod exact_integers;
 mod front_doors;
 mod non_finite;
 mod pending;

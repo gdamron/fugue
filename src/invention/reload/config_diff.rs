@@ -16,6 +16,7 @@ use crate::module_config::ConfigKind;
 use crate::{ControlSurface, ControlValue};
 
 use super::scalar_control_value;
+use crate::traits::exact_number::json_scalar;
 
 /// `config` without `keys`, which a running module holds no state for (see
 /// [`stateless_keys`]).
@@ -135,7 +136,7 @@ pub(super) fn control_updates_for(
         {
             continue;
         }
-        let control_value = scalar_control_value(value)?;
+        let control_value = json_scalar(value)?;
         if !has_control(key) {
             return None;
         }

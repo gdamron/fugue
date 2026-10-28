@@ -9,6 +9,7 @@ use crate::rpc::{
     non_finite_refusal, truncate_on_char_boundary, ControlWrite, EditFailureReason, StructuralEdit,
     MODULE_ERROR_BYTES,
 };
+use crate::traits::exact_number;
 use crate::{ControlKind, ControlValue};
 
 /// How many names a refusal lists when it shows what is available.
@@ -244,9 +245,15 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
                 ),
             ));
         };
-        // The same coercion a standalone authored write applies.
-        let applied = value.clone().coerced_to(kind);
-        if !fits_kind(&applied, kind) {
+        // The same coercion a standalone authored write applies: number
+        // text an f32 misreads stays text for a whole-number control, whose
+        // module reads it exactly when the write is made below.
+        let exact = exact_number::keeps_text(value) && self.facts.is_whole(module_id, key);
+        let applied = match exact {
+            true => value.clone(),
+            false => value.clone().coerced_to(kind),
+        };
+        if !exact && !fits_kind(&applied, kind) {
             return Err(Refusal(
                 EditFailureReason::InvalidControlValue,
                 format!(

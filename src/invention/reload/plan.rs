@@ -5,6 +5,7 @@ use indexmap::IndexMap;
 use std::collections::HashSet;
 
 use crate::module_config::{names, replaced_by, ConfigKey, ConfigKind};
+use crate::traits::exact_number::json_scalar;
 use crate::{ControlValue, Invention};
 
 use super::config_diff::{
@@ -247,7 +248,7 @@ fn restore_write(
         {
             ControlValue::String(value.to_string())
         }
-        Some(value) => scalar_control_value(value)?,
+        Some(value) => json_scalar(value)?,
         None => fresh(whole.key)?,
     };
     Some((whole.key.to_string(), value))
@@ -273,7 +274,7 @@ fn replay_replaced(
             if updates.iter().any(pending) || replayed.iter().any(pending) {
                 continue;
             }
-            match scalar_control_value(value) {
+            match json_scalar(value) {
                 Some(value) if has_control(name) => replayed.push((name.clone(), value)),
                 _ => return false,
             }
