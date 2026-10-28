@@ -1,10 +1,12 @@
 //! A module's automation at one sample: its values apply before its
 //! events, whichever control comes first and whichever was written first.
+//! Across samples (taken late), each in its sample's order.
 
 use std::sync::Arc;
 
 use super::super::{ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue};
 use super::take_automation;
+use crate::control_request::hold::FrameScope;
 use crate::control_request::Refusal;
 use crate::Module;
 
@@ -104,4 +106,62 @@ fn queued_events_apply_after_the_values_written_beside_them() {
     slots.write(NOTE, RtValue::F32(64.0), true);
     take_automation(&mut module);
     assert_eq!(module.applied, [LEVEL.0, NOTE.0, FIRE.0, NOTE.0]);
+}
+
+/// Taken late, writes span samples: a value written for a later sample
+/// than a queued event applies after it, and before the events written
+/// for its own sample, whichever was written first there.
+#[test]
+fn a_value_written_after_a_queued_events_sample_applies_after_it() {
+    let cells = ControlCells::queuing_events(DECLS.iter().map(|d| d.default), 8, None);
+    let mut module = recorder(cells);
+    let slots = &module.cells.automation;
+    let at = |sample| FrameScope::enter(sample);
+    {
+        let _at = at(10);
+        slots.write(LEVEL, RtValue::F32(0.25), false);
+        slots.write(NOTE, RtValue::F32(60.0), true);
+    }
+    {
+        let _at = at(12);
+        slots.write(NOTE, RtValue::F32(64.0), true);
+        slots.write(LEVEL, RtValue::F32(0.5), false);
+    }
+    take_automation(&mut module);
+    assert_eq!(module.applied, [LEVEL.0, NOTE.0, LEVEL.0, NOTE.0]);
+    assert_eq!(module.cells.load(LEVEL), Some(RtValue::F32(0.5)));
+}
+
+/// A value queued behind an event is the latest written, as a ramp
+/// starting from it reads.
+#[test]
+fn a_value_queued_behind_an_event_is_the_latest_written() {
+    let cells = ControlCells::queuing_events(DECLS.iter().map(|d| d.default), 8, None);
+    let module = recorder(cells);
+    let slots = &module.cells.automation;
+    {
+        let _at = FrameScope::enter(10);
+        slots.write(LEVEL, RtValue::F32(0.25), false);
+        slots.write(NOTE, RtValue::F32(60.0), true);
+    }
+    let _at = FrameScope::enter(12);
+    slots.write(LEVEL, RtValue::F32(0.5), false);
+    assert_eq!(slots.written(LEVEL), Some(RtValue::F32(0.5)));
+}
+
+/// With no room behind the events, the value still applies, in its slot.
+#[test]
+fn a_value_finding_no_room_behind_the_events_is_kept_in_its_slot() {
+    let cells = ControlCells::queuing_events(DECLS.iter().map(|d| d.default), 1, None);
+    let mut module = recorder(cells);
+    let slots = &module.cells.automation;
+    {
+        let _at = FrameScope::enter(10);
+        slots.write(NOTE, RtValue::F32(60.0), true);
+    }
+    let _at = FrameScope::enter(12);
+    slots.write(LEVEL, RtValue::F32(0.5), false);
+    drop(_at);
+    take_automation(&mut module);
+    assert_eq!(module.applied, [LEVEL.0, NOTE.0]);
 }
