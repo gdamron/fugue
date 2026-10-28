@@ -5,7 +5,8 @@
 //! finalizes its file or stream, so retired publications are freed on a
 //! short cadence rather than whenever the next change happens to start.
 //! The same cadence frees the engine's retired request payloads (see
-//! `crate::payload`).
+//! `crate::payload`). With no reclaimer thread (wasm32, or a failed spawn),
+//! changes and control writes reclaim on their own control thread instead.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -48,7 +49,7 @@ impl Reclaimer {
     }
 
     /// Whether a reclaimer thread frees retirements on its own cadence;
-    /// without one, only control-thread changes free them.
+    /// without one, control-thread changes and writes free them.
     pub(crate) fn threaded(&self) -> bool {
         self.threaded.load(Ordering::Relaxed)
     }
@@ -64,10 +65,23 @@ impl Reclaimer {
         freed
     }
 
+    /// [`Self::reclaim`] on the calling control thread, unless a reclaimer
+    /// thread frees retirements on its own cadence. Without one, every
+    /// change and every control write frees what the audio side retired:
+    /// so payload requests waiting for retire room, far-future ones
+    /// reserving it included, and the edits queued behind them, wait for
+    /// the next write or change, never for a later change alone.
+    pub(crate) fn reclaim_unthreaded(&self) -> usize {
+        match self.threaded() {
+            true => 0,
+            false => self.reclaim(),
+        }
+    }
+
     /// Starts a thread that reclaims, then runs `tick`, every
     /// [`RECLAIM_INTERVAL`] until `reclaimer` is dropped. Returns false when
-    /// no thread could start; the publisher's own changes still reclaim
-    /// before they prepare.
+    /// no thread could start; changes and control writes still reclaim
+    /// before they lock the publisher.
     pub(crate) fn spawn(reclaimer: &Arc<Self>, tick: impl Fn() + Send + 'static) -> bool {
         let threaded = &reclaimer.threaded;
         let reclaimer = Arc::downgrade(reclaimer);

@@ -49,8 +49,8 @@ use std::sync::{Arc, Mutex, Weak};
 use super::graph::GraphCommand;
 use super::graph::SignalGraph;
 use super::publish::{
-    kept_until, timed_write, Authoring, CancelCause, PendingLog, PendingWrite, Publisher, Retarget,
-    Settler, WriteTime,
+    kept_until, timed_write, Authoring, CancelCause, PendingLog, PendingWrite, Publisher,
+    Reclaimer, Retarget, Settler, WriteTime,
 };
 use super::runtime::ControlSurfaceInstance;
 #[cfg(test)]
@@ -115,6 +115,9 @@ pub(crate) struct RequestPort {
     /// Recompiles the topology ahead of a write changing what its module
     /// writes (see [`Checked::targets`]).
     pub(crate) retarget: Retarget,
+    /// Frees what the audio side retired before each submission, when no
+    /// reclaimer thread does (see [`Reclaimer::reclaim_unthreaded`]).
+    pub(crate) reclaimer: Arc<Reclaimer>,
 }
 
 impl RequestPort {
@@ -704,6 +707,9 @@ impl DeclaredSurface {
         match route {
             Route::Building(_) => unreachable!("handled under the lock"),
             Route::Live(port) => {
+                // Off the publisher's lock, since what it frees must not
+                // drop under it.
+                port.reclaimer.reclaim_unthreaded();
                 let publisher = port
                     .publisher
                     .upgrade()
