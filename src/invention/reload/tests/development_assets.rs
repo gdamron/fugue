@@ -217,3 +217,40 @@ fn a_development_used_inside_another_reads_its_exposed_keys_as_declared() {
         running.set_control("m", "asset", value).unwrap();
     });
 }
+
+#[test]
+fn a_live_relative_write_to_an_asset_aliasing_another_key_resolves() {
+    let _ungoverned = crate::pkg::lock::ungoverned_here();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("sub")).unwrap();
+    let original = constant_wav(dir.path(), 0.5, 4_800);
+    let written = constant_wav(&dir.path().join("sub"), 0.25, 4_800);
+    let samples = json!({ "samples": [{ "key": 36, "asset": original }] });
+    let kit = json!({ "id": "a", "type": "sample_kit", "config": samples });
+    let document = piece(dir.path(), (kit, "audio_left"), "asset.0", json!({}));
+    let (mut running, pump) = start_pumped(document);
+    let resolves = |running: &RunningInvention| {
+        let ControlValue::String(loaded) = running.get_control("m", "asset").unwrap() else {
+            panic!("an asset control holds a path");
+        };
+        assert_eq!(
+            std::path::Path::new(&loaded),
+            std::path::Path::new(&written)
+        );
+    };
+    let relative = ControlValue::String("sub/level-0.25.wav".into());
+    running.set_control("m", "asset", relative.clone()).unwrap();
+    pump.render(1);
+    resolves(&running);
+    running
+        .set_control("m", "asset", "level-0.5.wav".into())
+        .unwrap();
+    let edit = crate::rpc::StructuralEdit::SetControl {
+        module_id: "m".into(),
+        key: "asset".into(),
+        value: relative,
+    };
+    running.apply_edits(&[edit]).expect("the batch applies");
+    pump.render(1);
+    resolves(&running);
+}

@@ -75,7 +75,8 @@ pub(crate) fn audio_slots<'a>(
 
 /// Whether control `key` of a module of `module_type` loads the audio it
 /// names: an asset control (`asset`, `asset.N`) of a module, or of a
-/// development whose every control exposed as `key` is one in turn.
+/// development whose every control exposed as `key` aliases one in turn,
+/// whatever key the alias targets (an `asset` exposed from `asset.0`).
 pub(crate) fn names_audio_control(
     declarations: &Declarations<'_>,
     module_type: &str,
@@ -88,9 +89,9 @@ pub(crate) fn names_audio_control(
 const MAX_NESTING: usize = 32;
 
 /// Whether config key `key` of a module of `module_type` names audio: it
-/// does for any module but a development, and for a development when every
-/// control it exposes as `key` is an inner module's `key` naming audio in
-/// turn.
+/// does for a module's asset key (`asset`, `asset.N`, `samples`, `zones`),
+/// and for a development's key when every control it exposes as `key`
+/// targets an inner module's key naming audio in turn.
 fn names_audio(
     declarations: &Declarations<'_>,
     module_type: &str,
@@ -106,14 +107,13 @@ fn names_audio(
             && exposed.all(|control| {
                 let module = definition.modules.iter().find(|m| m.id == control.module);
                 module.is_some_and(|module| {
-                    control.control == key
-                        && names_audio(inner, &module.module_type, key, depth + 1)
+                    names_audio(inner, &module.module_type, &control.control, depth + 1)
                 })
             })
     };
     declarations
         .within(module_type, exposes_audio)
-        .unwrap_or(true)
+        .unwrap_or_else(|| is_asset_control(key) || matches!(key, "samples" | "zones"))
 }
 
 /// Which controls of a running graph's modules load the audio they name,
