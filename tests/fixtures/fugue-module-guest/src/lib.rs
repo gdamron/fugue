@@ -29,7 +29,7 @@ thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
 }
 
-impl Guest for TestModule {
+impl exports::fugue::module::guest::Guest for TestModule {
     fn init(sample_rate: u32, _config_json: String) -> Result<(), String> {
         STATE.with_borrow_mut(|state| {
             state.sample_rate = sample_rate as f32;
@@ -83,13 +83,6 @@ impl Guest for TestModule {
             fugue::module::host::emit_output(0, &state.output[..frames]);
         });
         true
-    }
-
-    fn get_output(port: String) -> Result<f32, String> {
-        if port != "audio" {
-            return Err(format!("unknown output: {port}"));
-        }
-        STATE.with_borrow(|state| Ok(state.output[0]))
     }
 
     fn set_control(key: String, value: f32) -> Result<(), String> {

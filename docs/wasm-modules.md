@@ -8,7 +8,8 @@ for anyone building a guest, and for contributors changing the host side
 
 A guest implements the `module` world in
 [`wit/fugue-module.wit`](../wit/fugue-module.wit), now `fugue:module@0.2.0`.
-The host calls the guest's exports, and the guest calls one host import:
+The guest exports the `guest` interface, whose functions the host calls,
+and imports the `host` interface, whose one function the guest calls:
 
 - `init`, `name`, `inputs` and `outputs` run once, when the module loads.
 - `set-input-block` hands the guest each connected input's block, then
@@ -17,6 +18,9 @@ The host calls the guest's exports, and the guest calls one host import:
   each output. The host copies the samples into a buffer it allocated when
   the module loaded.
 - `set-input` and `set-control` take single values from controls and tests.
+
+The host reads outputs only through `emit-output`; there is no export for
+reading a single output value.
 
 `process` runs on the audio thread for every block. The host side of each
 of these calls, `emit-output` included, allocates nothing, frees nothing and
@@ -46,6 +50,8 @@ is the smallest complete guest, and a good template. With `wit-bindgen`:
 ```rust
 wit_bindgen::generate!({ path: "wit", world: "module" });
 
+use exports::fugue::module::guest::Guest;
+
 impl Guest for MyModule {
     fn process(frames: u32) -> bool {
         // Render `frames` samples into a buffer the guest owns...
@@ -67,13 +73,14 @@ a component, for example with `wasm-tools component new`. Name the file
 
 The host loads guests built for exactly one version of the world, so every
 new version is a breaking one. Before it runs any guest code, it reads the
-version from the guest's import of the world's `host` interface,
-`fugue:module/host@0.2.0`. A 0.1.0 guest has no such import, and is known by
-its `output-block` export. A guest built for another version is refused with
-a message that names the version it was built for and the one it needs. A
-guest with no outputs calls nothing on the host, so its build drops the
-import; it loads unchecked, which is harmless, since the only change between
-the versions so far is how outputs are written.
+version from the guest's export of the world's `guest` interface,
+`fugue:module/guest@0.2.0`. Every guest has that export, whatever its inputs
+and outputs, so every guest is checked. (An import would not do: a guest's
+build drops imports it never calls, so a guest with no outputs would have no
+`host` import to read.) A 0.1.0 guest exported its functions directly, with
+no versioned interface, and is known by its `output-block` export. A guest
+built for another version is refused with a message that names the version
+it was built for and the one it needs.
 
 ### Migrating from 0.1.0
 
@@ -91,13 +98,17 @@ loads fugue:module@0.2.0 modules: rebuild it against fugue:module@0.2.0
 To move a guest to 0.2.0:
 
 1. Take the new `wit/fugue-module.wit`.
-2. Delete the `process-output-block` and `output-block` exports.
-3. At the end of `process`, call `emit-output` once for each output, with
+2. Move the guest's functions into the `guest` interface. With
+   `wit-bindgen`, implement `exports::fugue::module::guest::Guest` instead of
+   the world's `Guest`.
+3. Delete the `process-output-block`, `output-block` and `get-output`
+   exports.
+4. At the end of `process`, call `emit-output` once for each output, with
    the samples `output-block` used to return.
-4. Rebuild the component.
+5. Rebuild the component.
 
-The exports `init`, `name`, `inputs`, `outputs`, `set-input`,
-`set-input-connected`, `set-input-block`, `process`, `get-output` and
-`set-control` are unchanged. A guest that did its rendering in `process`
-and returned a stored block from `output-block` sounds the same after the
-move.
+The functions `init`, `name`, `inputs`, `outputs`, `set-input`,
+`set-input-connected`, `set-input-block`, `process` and `set-control` keep
+their signatures; only where they are exported from changes. A guest that
+did its rendering in `process` and returned a stored block from
+`output-block` sounds the same after the move.

@@ -14,25 +14,28 @@ interface host {
     emit-output: func(index: u32, samples: list<f32>);
 }
 
-/// A component world for Fugue graph modules.
-///
-/// The block operations are the audio hot-path interface. Scalar input/output
-/// functions mirror the legacy `Module` helpers used by tests and control
-/// commands.
-world module {
-    import host;
-
-    export init: func(sample-rate: u32, config-json: string) -> result<_, string>;
-    export name: func() -> string;
-    export inputs: func() -> list<string>;
-    export outputs: func() -> list<string>;
-    export set-input: func(port: string, value: f32) -> result<_, string>;
-    export set-input-connected: func(index: u32, connected: bool);
-    export set-input-block: func(index: u32, values: list<f32>) -> result<_, string>;
+/// What a guest gives the host. The block operations are the audio hot-path
+/// interface; `set-input` and `set-control` take single values from controls
+/// and tests.
+interface guest {
+    init: func(sample-rate: u32, config-json: string) -> result<_, string>;
+    name: func() -> string;
+    inputs: func() -> list<string>;
+    outputs: func() -> list<string>;
+    set-input: func(port: string, value: f32) -> result<_, string>;
+    set-input-connected: func(index: u32, connected: bool);
+    set-input-block: func(index: u32, values: list<f32>) -> result<_, string>;
     /// Renders one block of `frames` samples, writing each output with
     /// `emit-output`. Returns false once the module has finished, so a
     /// one-shot or envelope guest can signal completion.
-    export process: func(frames: u32) -> bool;
-    export get-output: func(port: string) -> result<f32, string>;
-    export set-control: func(key: string, value: f32) -> result<_, string>;
+    process: func(frames: u32) -> bool;
+    set-control: func(key: string, value: f32) -> result<_, string>;
+}
+
+/// A component world for Fugue graph modules. A guest's exports sit in the
+/// versioned `guest` interface, so the host reads the version a guest was
+/// built for from its export, `fugue:module/guest@0.2.0`, before it runs it.
+world module {
+    import host;
+    export guest;
 }

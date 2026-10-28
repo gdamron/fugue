@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
-use wasmtime::component::{Component, Instance, Linker, TypedFunc};
+use wasmtime::component::{Component, ComponentExportIndex, Instance, Linker, TypedFunc};
 use wasmtime::{Config, Engine, Store};
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
@@ -107,6 +107,8 @@ type SetNamedFunc = TypedFunc<(&'static str, f32), (Result<(), String>,)>;
 pub struct WasmModule {
     store: Store<HostState>,
     instance: Instance,
+    /// The guest's exported `guest` interface, which holds its functions.
+    guest: ComponentExportIndex,
     set_input_block: SetInputBlockFunc,
     /// Guest export `process(frames)`, which writes each output into the
     /// store's [`OutputBlocks`] through `emit-output`.
@@ -136,7 +138,12 @@ impl WasmModule {
     ) -> Result<Self, Box<dyn Error>> {
         let engine = component_engine()?;
         let component = cached_component(&engine, wasm_path)?;
-        world::check_world(&engine, &component)?;
+        let guest = world::check_world(&engine, &component)?;
+        let export = |name: &str| {
+            component
+                .get_export_index(Some(&guest), name)
+                .ok_or_else(|| missing_export(name))
+        };
         let mut linker = Linker::<HostState>::new(&engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
         host::add_to_linker(&mut linker)?;
@@ -145,21 +152,25 @@ impl WasmModule {
         store.set_fuel(u64::MAX / 2)?;
         let instance = linker.instantiate(&mut store, &component)?;
 
-        let init =
-            instance.get_typed_func::<(u32, String), (Result<(), String>,)>(&mut store, "init")?;
+        let init = instance
+            .get_typed_func::<(u32, String), (Result<(), String>,)>(&mut store, export("init")?)?;
         let (result,) = init.call(&mut store, (sample_rate, config_json.to_string()))?;
         result.map_err(|e| format!("wasm module init failed: {e}"))?;
 
-        let set_input_block = instance.get_typed_func(&mut store, "set-input-block")?;
-        let process = instance.get_typed_func(&mut store, "process")?;
-        let set_input = instance.get_typed_func(&mut store, "set-input")?;
-        let set_input_connected =
-            optional_typed_func(&instance, &mut store, "set-input-connected")?;
-        let set_control = instance.get_typed_func(&mut store, "set-control")?;
+        let set_input_block = instance.get_typed_func(&mut store, export("set-input-block")?)?;
+        let process = instance.get_typed_func(&mut store, export("process")?)?;
+        let set_input = instance.get_typed_func(&mut store, export("set-input")?)?;
+        // Optional, but a mistyped export fails loudly instead of being skipped.
+        let set_input_connected = match export("set-input-connected") {
+            Ok(index) => Some(instance.get_typed_func(&mut store, index)?),
+            Err(_) => None,
+        };
+        let set_control = instance.get_typed_func(&mut store, export("set-control")?)?;
 
         Ok(Self {
             store,
             instance,
+            guest,
             set_input_block,
             process,
             set_input,
@@ -199,7 +210,14 @@ impl WasmModule {
         Ok(())
     }
 
+    fn guest_export(&mut self, name: &str) -> Result<ComponentExportIndex, String> {
+        self.instance
+            .get_export_index(&mut self.store, Some(&self.guest), name)
+            .ok_or_else(|| missing_export(name))
+    }
+
     fn call_string(&mut self, export: &str) -> Result<String, Box<dyn Error>> {
+        let export = self.guest_export(export)?;
         let func = self
             .instance
             .get_typed_func::<(), (String,)>(&mut self.store, export)?;
@@ -208,6 +226,7 @@ impl WasmModule {
     }
 
     fn call_string_list(&mut self, export: &str) -> Result<Vec<String>, Box<dyn Error>> {
+        let export = self.guest_export(export)?;
         let func = self
             .instance
             .get_typed_func::<(), (Vec<String>,)>(&mut self.store, export)?;
@@ -409,22 +428,11 @@ fn leak_port_names(names: &[String]) -> Vec<&'static str> {
         .collect()
 }
 
-/// Resolves an optional export, distinguishing "not exported" (None) from
-/// "exported with the wrong signature" (error) so a mistyped fast-path export
-/// fails loudly instead of silently falling back to the slow path.
-fn optional_typed_func<Params, Results>(
-    instance: &Instance,
-    store: &mut Store<HostState>,
-    name: &str,
-) -> Result<Option<TypedFunc<Params, Results>>, Box<dyn Error>>
-where
-    Params: wasmtime::component::ComponentNamedList + wasmtime::component::Lower,
-    Results: wasmtime::component::ComponentNamedList + wasmtime::component::Lift,
-{
-    if instance.get_func(&mut *store, name).is_none() {
-        return Ok(None);
-    }
-    Ok(Some(instance.get_typed_func(&mut *store, name)?))
+fn missing_export(name: &str) -> String {
+    format!(
+        "wasm module does not export `{name}` from {}",
+        world::GUEST_INTERFACE
+    )
 }
 
 #[cfg(test)]

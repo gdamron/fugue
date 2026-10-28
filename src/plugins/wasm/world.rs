@@ -1,7 +1,7 @@
 //! The guest world this host loads (`wit/fugue-module.wit`), and the check
 //! that refuses a guest built for another version of it before it runs.
 
-use wasmtime::component::Component;
+use wasmtime::component::{Component, ComponentExportIndex};
 use wasmtime::Engine;
 
 /// The version of the `fugue:module` world this host loads. Only guests
@@ -11,35 +11,48 @@ pub(super) const WORLD_VERSION: &str = "0.2.0";
 /// The world's host interface, as a guest imports it.
 pub(super) const HOST_INTERFACE: &str = "fugue:module/host@0.2.0";
 
-/// Exports only the first world, 0.1.0, had: its guests returned each
-/// output block as a list, which the host had to allocate to read.
+/// The world's guest interface, as every guest exports it.
+pub(super) const GUEST_INTERFACE: &str = "fugue:module/guest@0.2.0";
+
+/// Exports only the first world, 0.1.0, had: its guests exported their
+/// functions bare and returned each output block as a list, which the host
+/// had to allocate to read.
 const FIRST_WORLD_EXPORTS: &[&str] = &["output-block", "process-output-block"];
 const FIRST_WORLD_VERSION: &str = "0.1.0";
 
-/// Refuses a guest built for another version of the world, naming the
-/// version it was built for and the one it needs. A guest that imports
-/// nothing from the world (it has no outputs) and exports no first-world
-/// function cannot be told apart, and loads.
-pub(super) fn check_world(engine: &Engine, component: &Component) -> Result<(), String> {
+/// Finds the guest's `guest` interface, refusing a guest built for another
+/// version of the world with a message naming the version it was built for
+/// and the one it needs. It reads only the component's type, so no guest
+/// code has run.
+pub(super) fn check_world(
+    engine: &Engine,
+    component: &Component,
+) -> Result<ComponentExportIndex, String> {
     let ty = component.component_type();
-    for (name, _) in ty.imports(engine) {
-        let Some((_, version)) = name
-            .strip_prefix("fugue:module/")
-            .and_then(|rest| rest.split_once('@'))
-        else {
+    let mut first_world = false;
+    for (name, _) in ty.exports(engine) {
+        first_world |= FIRST_WORLD_EXPORTS.contains(&name);
+        let Some(rest) = name.strip_prefix("fugue:module/guest") else {
             continue;
         };
-        if version != WORLD_VERSION {
-            return Err(refusal(version));
-        }
+        return match rest.strip_prefix('@') {
+            // Exact: wasmtime's lookup would also take a semver-compatible one.
+            Some(WORLD_VERSION) => component
+                .get_export_index(None, GUEST_INTERFACE)
+                .ok_or_else(|| refusal(WORLD_VERSION)),
+            Some(version) => Err(refusal(version)),
+            None => Err(refusal("(unversioned)")),
+        };
     }
-    if ty
-        .exports(engine)
-        .any(|(name, _)| FIRST_WORLD_EXPORTS.contains(&name))
-    {
-        return Err(refusal(FIRST_WORLD_VERSION));
-    }
-    Ok(())
+    Err(if first_world {
+        refusal(FIRST_WORLD_VERSION)
+    } else {
+        format!(
+            "this wasm module exports no fugue:module/guest interface, so it is not a \
+             Fugue module: build it against fugue:module@{WORLD_VERSION} \
+             (wit/fugue-module.wit)"
+        )
+    })
 }
 
 fn refusal(built_for: &str) -> String {
@@ -74,7 +87,12 @@ mod tests {
     fn check(wat: &str) -> Result<(), String> {
         let engine = super::super::component_engine().expect("engine");
         let component = Component::new(&engine, wat).expect("component");
-        check_world(&engine, &component)
+        check_world(&engine, &component).map(|_| ())
+    }
+
+    /// A component exporting an empty instance as `name`.
+    fn exporting(name: &str) -> String {
+        format!(r#"(component (instance $guest) (export "{name}" (instance $guest)))"#)
     }
 
     /// A stand-in for a first-world guest: its block exports, by name.
@@ -95,12 +113,20 @@ mod tests {
     }
 
     #[test]
-    fn a_guest_importing_another_host_version_is_refused() {
-        let refusal =
-            check(r#"(component (import "fugue:module/host@0.3.0" (instance)))"#).unwrap_err();
+    fn a_guest_exporting_another_version_is_refused() {
+        let refusal = check(&exporting("fugue:module/guest@0.2.1")).unwrap_err();
         assert!(
-            refusal.contains("built for the fugue:module@0.3.0 world")
+            refusal.contains("built for the fugue:module@0.2.1 world")
                 && refusal.contains("rebuild it against fugue:module@0.2.0"),
+            "{refusal}"
+        );
+    }
+
+    #[test]
+    fn a_component_that_is_no_guest_is_refused() {
+        let refusal = check("(component)").unwrap_err();
+        assert!(
+            refusal.contains("exports no fugue:module/guest"),
             "{refusal}"
         );
     }
@@ -110,11 +136,16 @@ mod tests {
         let wit = include_str!("../../../wit/fugue-module.wit");
         assert!(wit.starts_with(&format!("package fugue:module@{WORLD_VERSION};")));
         assert_eq!(HOST_INTERFACE, format!("fugue:module/host@{WORLD_VERSION}"));
+        assert_eq!(
+            GUEST_INTERFACE,
+            format!("fugue:module/guest@{WORLD_VERSION}")
+        );
     }
 
+    /// One with no outputs, too: it calls nothing on the host, so it has no
+    /// host import, but its export still names its version.
     #[test]
-    fn a_guest_importing_this_host_version_passes() {
-        let wat = format!(r#"(component (import "{HOST_INTERFACE}" (instance)))"#);
-        assert_eq!(check(&wat), Ok(()));
+    fn a_guest_exporting_this_version_passes() {
+        assert_eq!(check(&exporting(GUEST_INTERFACE)), Ok(()));
     }
 }
