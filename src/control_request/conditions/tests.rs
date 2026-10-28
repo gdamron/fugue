@@ -355,9 +355,11 @@ fn late_events_due_at_one_sample_each_finish_as_they_apply() {
     conditions.start(64, INSTALLED, &host, &mut store.outcomes);
     conditions.apply_due(INSTALLED, Some(TARGET), 64, &mut host, &mut store);
     let late = Outcome::AppliedLate { at: 64, due: 30 };
-    assert_eq!(log(&outcomes), [(1, late), (2, late), (3, late)]);
+    // The value due beside them first, as in the pending store, so each
+    // event reads it.
+    assert_eq!(log(&outcomes), [(3, late), (1, late), (2, late)]);
     // As the pending store's and a replay's: each before the next applies.
-    assert_eq!(host.finished, [1, 2]);
+    assert_eq!(host.finished, [2, 3]);
 }
 
 #[test]

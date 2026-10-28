@@ -346,6 +346,22 @@ impl PendingStore {
         &mut self,
         now: u64,
         installed: u64,
+        apply: impl FnMut(
+            &ControlTarget,
+            Option<Standing>,
+            RequestValue,
+            &mut Retirer,
+        ) -> Result<(), Outcome>,
+    ) -> bool {
+        self.apply_until(now, installed, Until::Through(now), apply)
+    }
+
+    /// [`Self::apply_due`] at `now`, stopping where `until` says.
+    pub(crate) fn apply_until(
+        &mut self,
+        now: u64,
+        installed: u64,
+        until: Until,
         mut apply: impl FnMut(
             &ControlTarget,
             Option<Standing>,
@@ -355,7 +371,7 @@ impl PendingStore {
     ) -> bool {
         let mut from = 0;
         loop {
-            let due = self.entries.partition_point(|e| e.at <= now);
+            let due = self.entries.partition_point(|e| until.reaches(e.at));
             let Some(first) = (self.entries[from..due].iter())
                 .position(|e| e.request.target.generation == installed)
                 .map(|offset| from + offset)
@@ -365,6 +381,9 @@ impl PendingStore {
             let at = self.entries[first].at;
             let mut fired = false;
             for events in [false, true] {
+                if events && !until.events(at) {
+                    break;
+                }
                 let end = first + self.entries[first..].partition_point(|e| e.at == at);
                 let applied = self.entries.extract_if(first..end, |e| {
                     e.request.target.generation == installed && e.request.fires() == events
@@ -426,36 +445,6 @@ impl PendingStore {
         applied_any
     }
 
-    /// The first plain write waiting to `target` at sample `due` (a value,
-    /// not an event) whose ttl `now` has not run out: its place, rank and
-    /// id. A write the condition table applies at that sample weighs it
-    /// (see `Conditions::give_way`). Binary search, then a scan of that
-    /// sample's entries.
-    pub(crate) fn rival(
-        &self,
-        target: &ControlTarget,
-        due: u64,
-        now: u64,
-    ) -> Option<(usize, Rank, RequestId)> {
-        let first = self.entries.partition_point(|e| e.at < due);
-        let rivals = self.entries[first..].iter().take_while(|e| e.at == due);
-        rivals
-            .enumerate()
-            .find_map(|(offset, Pending { request, .. })| {
-                let plain = !request.event && matches!(request.value, RequestValue::Value(_));
-                let live = request.target == *target && plain && !expired(request, now);
-                let rank = Rank::of(request).filter(|_| live)?;
-                Some((first + offset, rank, request.id))
-            })
-    }
-
-    /// Takes out the write at `place` (from [`Self::rival`]), to apply in
-    /// the place of the one it outranks there, or to settle. Allocation-
-    /// and free-free.
-    pub(crate) fn take(&mut self, place: usize) -> Request {
-        self.entries.remove(place).request
-    }
-
     /// The earliest `at` among entries in the `installed` generation.
     /// After [`Self::apply_due`] at `now` it is later than `now`.
     pub(crate) fn next_due(&self, installed: u64) -> Option<u64> {
@@ -511,5 +500,8 @@ impl PendingStore {
     }
 }
 
+pub(crate) use self::with_conditions::Until;
+
 #[cfg(test)]
 mod tests;
+mod with_conditions;

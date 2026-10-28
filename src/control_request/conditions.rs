@@ -194,29 +194,6 @@ impl Entry {
     }
 }
 
-/// Applies `request`, a plain write the pending store held for sample
-/// `due`, at `at` in the place of a write here it outranked, settling it
-/// as the pending store would.
-fn apply_pending(
-    request: Request,
-    due: u64,
-    at: u64,
-    host: &mut impl ConditionHost,
-    outcomes: &mut Outcomes,
-) {
-    let standing = Standing::of(&request, due);
-    let timed = request.when != When::Now;
-    let Request {
-        target, value, id, ..
-    } = request;
-    let outcome = match host.apply(&target, standing, value, &mut outcomes.retirer) {
-        Ok(()) if due < at => Outcome::AppliedLate { at, due },
-        Ok(()) => Outcome::Applied { at },
-        Err(outcome) => outcome,
-    };
-    outcomes.record(id, false, outcome, timed);
-}
-
 /// Requests timed by a condition, in receipt order. Single-threaded (the
 /// audio thread), allocated once on a control thread and never grown.
 pub(crate) struct Conditions {
@@ -410,81 +387,6 @@ impl Conditions {
         }
     }
 
-    /// Applies, in receipt order, every request in the `installed`
-    /// generation (on module `target`, if given) whose condition was met at
-    /// or before `at`, the sample its target computes next: on time at its
-    /// due sample, late after it; refuses each that waits on a request
-    /// that will not apply. Returns the earliest sample a condition read so
-    /// far is met at among the rest, which their target must not compute
-    /// past before this is called again. Allocation- and free-free.
-    pub(crate) fn apply_due(
-        &mut self,
-        installed: u64,
-        target: Option<usize>,
-        at: u64,
-        host: &mut impl ConditionHost,
-        pending: &mut PendingStore,
-    ) -> Option<u64> {
-        let mut next = None::<u64>;
-        let mut i = 0;
-        while i < self.entries.len() {
-            let entry = &self.entries[i];
-            let ours = target.is_none_or(|target| entry.request.target.module_idx == target);
-            if entry.request.target.generation != installed || !ours {
-                i += 1;
-                continue;
-            }
-            if entry.broken {
-                self.end(i, &mut pending.outcomes, Refusal::ChainBroken.into());
-                continue;
-            }
-            let Some(due) = entry.due() else {
-                i += 1;
-                continue;
-            };
-            if due > at {
-                next = Some(next.map_or(due, |next| next.min(due)));
-                i += 1;
-                continue;
-            }
-            // Writes to one control falling due together, here or in the
-            // pending store: all but one give way before any reaches the
-            // module.
-            match self.give_way(i, at, pending) {
-                Some(Survivor::Entry(now)) => i = now,
-                Some(Survivor::Pending(request, due)) => {
-                    apply_pending(request, due, at, host, &mut pending.outcomes);
-                    continue;
-                }
-                None => continue,
-            }
-            let outcomes = &mut pending.outcomes;
-            let Entry { request, .. } = self.take(i, &mut outcomes.chains);
-            if expired(&request, at) {
-                self.settle(request, Refusal::Expired.into(), outcomes);
-                continue;
-            }
-            let standing = Standing::of(&request, due);
-            let fires = request.fires();
-            let Request {
-                target, value, id, ..
-            } = request;
-            let payload = value.is_payload();
-            let outcome = match host.apply(&target, standing, value, &mut outcomes.retirer) {
-                Ok(()) if due < at => Outcome::AppliedLate { at, due },
-                Ok(()) => Outcome::Applied { at },
-                Err(outcome) => outcome,
-            };
-            // A late event finishes as it applies, as the pending store's.
-            if fires && matches!(outcome, Outcome::AppliedLate { .. }) {
-                host.finish_events();
-            }
-            outcomes.record(id, payload, outcome, true);
-            self.slots.release();
-        }
-        next
-    }
-
     /// Maps every request resolved against a generation older than
     /// `installed` into it, its target and the modules its condition reads
     /// alike: `map` gives a module's index in the installed order, or
@@ -560,6 +462,7 @@ fn read_part(part: &Predicate, seen: &mut Seen, host: &impl ConditionHost) {
     seen.next = seen.next.max(first + values.len() as u64);
 }
 
+mod apply;
 mod parts;
 mod replace;
 #[cfg(test)]
