@@ -130,7 +130,8 @@ impl RequestSender {
     /// held. A reserved request that finds none is held (see `backlog`),
     /// which takes a control lock and allocates the backlog once, so only
     /// control threads may submit one that could be: nothing submits from
-    /// the audio thread, and in debug builds one is refused there.
+    /// the audio thread, and one that would be held is refused there, as a
+    /// full queue refuses it, in release builds too.
     ///
     /// [`When::AfterSamples`] and the `ttl` count from the transport's
     /// published count ([`Transport::rendered`]) as of this call: they
