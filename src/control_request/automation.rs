@@ -25,7 +25,12 @@
 //! started, whoever played either (see [`Automation::begun`]).
 //!
 //! A module whose events must each play, a chord's notes at one step,
-//! queues them instead of coalescing them (see [`events`]).
+//! queues them instead of coalescing them (see [`events`]). Writes taken
+//! late (a target in a feedback group with its schedule's clock takes a
+//! segment's entries at its end) can span several samples: a value written
+//! for a later sample than an event already queued is queued behind it,
+//! so it applies after it, as it would have on time (a release written a
+//! step after a note off never reaches back to it).
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -33,13 +38,17 @@ use std::sync::Arc;
 use super::cells::{apply_declared, decode, encode, ControlCells};
 use super::declare::{integer_domain, DeclKind};
 use super::event::EventCounter;
+use super::hold::frame_zero;
 use super::request::{ControlIndex, RtValue};
 use crate::Module;
 
 mod events;
 #[cfg(test)]
+mod late_tests;
+#[cfg(test)]
 mod order_tests;
 
+use events::NO_SAMPLE;
 pub(crate) use events::{EventQueue, EventReserve};
 
 /// An empty slot: no tag [`encode`] makes.
@@ -81,24 +90,41 @@ impl AutomationSlots {
 
     /// Stores a write in `index`'s slot, or queues it when `index` is an
     /// event and the module queues its events (counted refused when there
-    /// is no room).
+    /// is no room), or when it is a value for a later sample than an event
+    /// queued (in its slot after all when there is no room).
     fn write(&self, index: ControlIndex, value: RtValue, event: bool) {
         if usize::from(index.0) >= self.slots.len() {
             return;
         }
+        let at = frame_zero().unwrap_or(NO_SAMPLE);
         if event && self.events.queues() {
-            if !self.events.push(index, value) {
+            if !self.events.push(index, value, at) {
                 self.refused.record();
                 return;
             }
-        } else {
+        } else if event || self.events.insert_value(index, value, at) != Some(true) {
+            // In its slot: before every event, as one written on time for
+            // its sample would be. With no room behind the events it
+            // follows, it is still kept there rather than lost, the latest
+            // write to its control.
+            if !event {
+                self.events.remove_values(index);
+            }
             self.slots[usize::from(index.0)].store(encode(value), Ordering::Relaxed);
         }
         self.pending.store(true, Ordering::Relaxed);
     }
 
-    /// The latest write to `index` waiting for the module to process.
+    /// The latest write to `index` waiting for the module to process: one
+    /// queued behind an event, else its slot's.
     pub(crate) fn written(&self, index: ControlIndex) -> Option<RtValue> {
+        let queued = (0..self.events.len())
+            .rev()
+            .filter_map(|position| self.events.get(position))
+            .find(|(queued, _)| *queued == index);
+        if let Some((_, value)) = queued {
+            return Some(value);
+        }
         let word = self
             .slots
             .get(usize::from(index.0))?
@@ -121,9 +147,10 @@ impl AutomationSlots {
 
 /// Applies every automation write waiting for `module`: its values in
 /// control order, then its events' slots, then its queued events in the
-/// order written, counting refusals. Everything waiting falls due at one
-/// sample, so an event reads the values written for it, whichever came
-/// first. Call it on the audio thread just before the module processes.
+/// order written, counting refusals. Everything waiting at one sample
+/// falls due together, so an event reads the values written for it,
+/// whichever came first; taken late, the queue's events of one sample
+/// finish ([`Module::finish_events`]) before the writes of a later one. Call it on the audio thread just before the module processes.
 /// Allocation-, free- and lock-free; one `Relaxed` load when nothing is
 /// waiting.
 #[inline]
@@ -159,13 +186,23 @@ pub(crate) fn take_automation<M: Module + ?Sized>(module: &mut M) {
         Some((_, cells)) => cells.automation.events.len(),
         None => return,
     };
+    // Taken late, the queue spans samples: the events of each finish
+    // before a later sample's writes apply, as on time.
+    let mut unfinished = None::<u64>;
     for position in 0..queued {
-        let Some((index, value)) = module
-            .declared()
-            .and_then(|(_, cells)| cells.automation.events.get(position))
-        else {
+        let Some(((index, value), (at, event))) = module.declared().and_then(|(_, cells)| {
+            let events = &cells.automation.events;
+            events.get(position).zip(events.sample(position))
+        }) else {
             break;
         };
+        if unfinished.is_some_and(|sounded| at != NO_SAMPLE && at > sounded) {
+            module.finish_events();
+            unfinished = None;
+        }
+        if event && at != NO_SAMPLE {
+            unfinished = Some(at);
+        }
         if apply_declared(module, index, value).is_err() {
             if let Some((_, cells)) = module.declared() {
                 cells.automation.refused.record();
