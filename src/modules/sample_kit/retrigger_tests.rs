@@ -205,9 +205,10 @@ fn retriggers_faster_than_the_fade_stay_within_twice_the_level() {
                 peak = peak.max(value.abs());
             }
         }
-        // Fades bounded at the level (1.0) where they fold, under a play
-        // of 0.5: unbounded, a play every 2 frames sums to about 36.
-        assert!(peak <= 1.5 + TOL, "every {every} frames: {peak}");
+        // The folded fades held within the level (1.0), under a fade and
+        // a play of 0.5 each: unbounded, a play every 2 frames sums to
+        // about 36.
+        assert!(peak <= 2.0 + TOL, "every {every} frames: {peak}");
     }
     let _ = std::fs::remove_file(held);
 }
@@ -243,4 +244,57 @@ fn a_swap_mid_fade_while_playing_moves_the_fade_with_the_ringing_sound() {
     for path in [kick, quiet] {
         let _ = std::fs::remove_file(path);
     }
+}
+
+/// The largest frame-to-frame jump across a play at frame `fold` of a
+/// constant sample, less that play's own `level` from `fold` on: a play
+/// of a constant steps in at its onset, whatever the fades do.
+fn worst_fade_jump(frames: &[f32], fold: usize, level: f32) -> f32 {
+    let fades: Vec<f32> = frames
+        .iter()
+        .enumerate()
+        .map(|(at, &v)| if at >= fold { v - level } else { v })
+        .collect();
+    fades
+        .windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0, f32::max)
+}
+
+#[test]
+fn a_loud_sample_played_twice_inside_the_fade_folds_without_a_step() {
+    let loud = write_level_wav(0.95, RATE as usize);
+    let (mut kit, _surface) = build_kit(one_slot(&loud));
+    play(&mut kit);
+    heard(&mut kit, 100);
+    play(&mut kit);
+    let mut frames = heard(&mut kit, 44);
+    play(&mut kit);
+    frames.extend(heard(&mut kit, 2 * declick_frames()));
+    // Two fades of 0.95 at the fold: bounded at one level's worth, they
+    // would step by about 0.58.
+    let jump = worst_fade_jump(&frames, 44, 0.95);
+    assert!(jump < 0.05, "{jump}");
+    let _ = std::fs::remove_file(loud);
+}
+
+#[test]
+fn a_level_drop_then_a_quick_double_play_keeps_the_louder_fade() {
+    let held = write_level_wav(0.5, RATE as usize);
+    let level = index_of(KitControl::Level(0), 1);
+    for quieter in [0.2, 0.0] {
+        let (mut kit, _surface) = build_kit(one_slot(&held));
+        play(&mut kit);
+        heard(&mut kit, 100);
+        kit.apply(level, RtValue::F32(quieter)).unwrap();
+        play(&mut kit);
+        let mut frames = heard(&mut kit, 44);
+        play(&mut kit);
+        frames.extend(heard(&mut kit, 2 * declick_frames()));
+        // The first fade, at level 1, folds at its own level, not the new
+        // one: bounded by the new level it would be cut short.
+        let jump = worst_fade_jump(&frames, 44, 0.5 * quieter);
+        assert!(jump < 0.05, "level {quieter}: {jump}");
+    }
+    let _ = std::fs::remove_file(held);
 }

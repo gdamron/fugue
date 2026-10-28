@@ -55,6 +55,9 @@ pub(super) struct Voice {
     /// so dropping that tail leaves no step.
     residual: (f32, f32),
     residual_gain: f32,
+    /// The loudest level among the fades the residual holds, which bounds
+    /// it.
+    residual_amp: f32,
     /// The tail's fade per frame.
     declick_step: f32,
 }
@@ -83,6 +86,7 @@ impl Voice {
             },
             residual: (0.0, 0.0),
             residual_gain: 0.0,
+            residual_amp: 0.0,
             declick_step: 1.0 / (DECLICK_SECONDS * sample_rate as f32).max(1.0),
         }
     }
@@ -107,9 +111,6 @@ impl Voice {
                 amp: self.level.value(),
                 gain: 1.0,
             };
-            if folding {
-                self.bound_residual();
-            }
         }
         // A play restarts the slot's one voice, so it sounds at the level
         // written: a glide smooths only a sound that carries on.
@@ -121,22 +122,23 @@ impl Voice {
 
     /// Folds what the fading tail would add next frame into the residual,
     /// before a retrigger replaces it.
+    ///
+    /// Retriggers closer than the fade would otherwise stack a fade per
+    /// play: an audio-rate gate would sum dozens of them. So the residual
+    /// holds within the loudest level among the fades it holds, which one
+    /// fold of a sample within full scale never reaches.
     fn keep_residual(&mut self) {
         let (l, r) = self.tail_frame();
         let gain = self.residual_gain;
-        self.residual = (self.residual.0 * gain + l, self.residual.1 * gain + r);
+        let held = if gain > 0.0 { self.residual_amp } else { 0.0 };
+        let amp = self.tail.amp.max(held);
+        let bound = |v: f32| v.max(-amp).min(amp);
+        self.residual = (
+            bound(self.residual.0 * gain + l),
+            bound(self.residual.1 * gain + r),
+        );
+        self.residual_amp = amp;
         self.residual_gain = 1.0;
-    }
-
-    /// Keeps the fades within the cut sound's level where they fold.
-    /// Retriggers closer than the fade would otherwise stack a fade per
-    /// play: an audio-rate gate would sum dozens of them. Slower ones never
-    /// reach the bound, so they fold without a step.
-    fn bound_residual(&mut self) {
-        let amp = self.tail.amp;
-        let (l, r) = self.tail_frame();
-        self.residual.0 = self.residual.0.max(-amp - l).min(amp - l);
-        self.residual.1 = self.residual.1.max(-amp - r).min(amp - r);
     }
 
     /// The tail's next frame, without advancing it.
