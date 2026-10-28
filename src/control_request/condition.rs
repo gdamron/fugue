@@ -143,6 +143,9 @@ pub(crate) struct Condition {
     /// Samples after it is met that its request applies: 0, on the sample
     /// it is met.
     offset: u32,
+    /// Whether it re-asserts a write kept over a timed edit (see
+    /// [`Self::kept`]).
+    kept: bool,
     parts: [Predicate; MAX_PARTS],
 }
 
@@ -160,8 +163,31 @@ impl Condition {
             join,
             len: parts.len() as u8,
             offset: 0,
+            kept: false,
             parts: all,
         })
+    }
+
+    /// The copy of a write kept over timed edit `edit` (see
+    /// `Publisher::keep_authored`): met as the edit lands, and only if
+    /// `write`, the write it copies, applied; when that settles otherwise
+    /// the copy is refused ([`Refusal::ChainBroken`]). A later copy for the
+    /// same control over the same edit replaces it (see
+    /// [`Self::kept_over`]).
+    pub(crate) fn kept(edit: RequestId, write: RequestId) -> Self {
+        let parts = [Predicate::Applied(edit), Predicate::Applied(write)];
+        Self {
+            kept: true,
+            ..Self::all(&parts).expect("two parts")
+        }
+    }
+
+    /// The timed edit a kept copy ([`Self::kept`]) is kept over.
+    pub(crate) fn kept_over(&self) -> Option<RequestId> {
+        match self.parts[0] {
+            Predicate::Applied(edit) if self.kept => Some(edit),
+            _ => None,
+        }
     }
 
     /// Met when every one of `parts` is.

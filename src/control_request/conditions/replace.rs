@@ -2,21 +2,29 @@
 //! control on the same requests, as [`PendingStore`] replaces one due at
 //! the same sample: both would apply at one sample, in receipt order, so
 //! the higher [`Rank`] stays, and at equal rank the later (last write
-//! wins). An author dragging a control a timed edit writes as it lands
-//! (see `Publisher::keep_authored`) so holds one request, and one slot,
-//! however long the drag.
+//! wins).
 //!
 //! Only a plain value with no ttl replaces or is replaced (one expiring
 //! could leave neither to apply), and only one waiting on
 //! requests applying alone: those parts are met at the same sample
 //! whenever each started waiting, which a signal's or control's are not.
 //!
+//! A write kept over a timed edit (see `Publisher::keep_authored`) is
+//! copied to apply as the edit lands, if the write itself applied
+//! ([`Condition::kept`]). Each copy waits on its own write, so copies
+//! replace by control and edit alone: the later copy replaces the one
+//! waiting, whatever their ranks, since its write is the author's latest.
+//! An author dragging a control a timed edit writes as it lands so holds
+//! one request, and one slot, however long the drag. A copy whose write
+//! then loses is refused, so neither re-asserts a value that no longer
+//! plays.
+//!
 //! [`PendingStore`]: super::super::pending::PendingStore
 
 use super::{Conditions, Entry};
 use crate::control_request::condition::{Condition, Predicate};
 use crate::control_request::hold::Rank;
-use crate::control_request::pending::Outcomes;
+use crate::control_request::pending::{Outcome, Outcomes};
 use crate::control_request::request::{Request, RequestValue};
 
 /// Whether `request` may replace a waiting request, or be replaced.
@@ -43,6 +51,22 @@ impl Conditions {
         outcomes: &mut Outcomes,
     ) -> Option<Request> {
         if !plain(&request) || request.expires.is_some() || !only_applied(&condition) {
+            return Some(request);
+        }
+        if let Some(edit) = condition.kept_over() {
+            let copy = |entry: &Entry| {
+                !entry.broken
+                    && plain(&entry.request)
+                    && entry.request.expires.is_none()
+                    && entry.request.target == request.target
+                    && entry.condition.kept_over() == Some(edit)
+            };
+            // Its parts wait on another write: it leaves, and the new copy
+            // waits from the end, so in receipt order.
+            if let Some(i) = self.entries.iter().position(copy) {
+                let old = self.take(i, &mut outcomes.chains);
+                self.settle(old.request, Outcome::Superseded, outcomes);
+            }
             return Some(request);
         }
         let same = |entry: &Entry| {

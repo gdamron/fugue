@@ -1,9 +1,11 @@
 //! A request waiting on another applying replacing one waiting for the
 //! same control on the same request, by rank, and nothing else replacing.
 
-use super::super::tests::{insert, log, request, store, table};
-use crate::control_request::condition::Predicate;
-use crate::control_request::pending::Outcome;
+use super::super::tests::{insert, log, play_ordered, request, store, table, Host};
+use crate::alloc_counter::allocator_events;
+use crate::control_request::condition::{Condition, Predicate};
+use crate::control_request::pending::{Outcome, Refusal};
+use crate::control_request::request::{Request, When};
 use crate::control_request::RequestId;
 
 const AFTER: [Predicate; 1] = [Predicate::Applied(RequestId(7))];
@@ -65,4 +67,91 @@ fn a_request_that_may_expire_is_never_replaced() {
     insert(&mut conditions, &slots, request(2, &AFTER), &mut store);
     assert_eq!(log(&outcomes), []);
     assert_eq!((conditions.len(), slots.taken()), (2, 2));
+}
+
+/// Request `id`, a copy of `write` kept over edit `edit`.
+fn copy(id: u64, edit: u64, write: u64) -> Request {
+    let mut copy = request(id, &AFTER);
+    copy.when = When::Condition(Condition::kept(RequestId(edit), RequestId(write)));
+    copy
+}
+
+/// Each copy waits on its own write, the latest the author's: it replaces
+/// the copy waiting, of a higher rank too, allocating and freeing nothing.
+#[test]
+fn a_later_kept_copy_replaces_the_one_waiting_whatever_their_ranks() {
+    let (mut store, outcomes) = store();
+    let (mut conditions, slots) = table(4);
+    let mut first = copy(1, 7, 10);
+    first.priority = 1;
+    insert(&mut conditions, &slots, first, &mut store);
+    let second = copy(2, 7, 11);
+    let ((), allocs, frees) =
+        allocator_events(|| insert(&mut conditions, &slots, second, &mut store));
+    assert_eq!((allocs, frees), (0, 0));
+    assert_eq!(log(&outcomes), [(1, Outcome::Superseded)]);
+    assert_eq!((conditions.len(), slots.taken()), (1, 1));
+    assert_eq!(conditions.entries[0].request.id, RequestId(2));
+}
+
+/// A copy replaces only a copy over the same edit: never the edit's own
+/// write waiting on the landing, which plays should the copy break.
+#[test]
+fn a_kept_copy_replaces_only_a_copy_over_the_same_edit() {
+    let (mut store, outcomes) = store();
+    let (mut conditions, slots) = table(8);
+    for request in [request(1, &AFTER), copy(2, 8, 10), copy(3, 7, 11)] {
+        insert(&mut conditions, &slots, request, &mut store);
+    }
+    insert(&mut conditions, &slots, request(4, &AFTER), &mut store);
+    assert_eq!(log(&outcomes), [(1, Outcome::Superseded)]);
+    insert(&mut conditions, &slots, copy(5, 7, 12), &mut store);
+    assert_eq!(log(&outcomes), [(3, Outcome::Superseded)]);
+    let ids: Vec<_> = conditions.entries.iter().map(|e| e.request.id.0).collect();
+    assert_eq!(ids, [2, 4, 5]);
+}
+
+/// A copy whose write lost at its own sample is refused once the table
+/// learns it, before the edit lands, so the value that never played is
+/// not re-asserted there.
+#[test]
+fn a_kept_copy_whose_write_lost_is_refused() {
+    let (mut store, outcomes) = store();
+    let (mut conditions, slots) = table(4);
+    let mut host = Host::new(vec![vec![0.0; 128]]);
+    insert(&mut conditions, &slots, copy(1, 7, 10), &mut store);
+    let lost = request(10, &AFTER);
+    store.outcomes.settle(lost, Outcome::Superseded);
+    play_ordered(&mut conditions, &mut host, &mut store, 0, 64);
+    let landed = Outcome::Applied { at: 70 };
+    store.outcomes.settle(request(7, &AFTER), landed);
+    play_ordered(&mut conditions, &mut host, &mut store, 64, 64);
+    let broken = Outcome::Refused(Refusal::ChainBroken);
+    assert_eq!(
+        log(&outcomes),
+        [(10, Outcome::Superseded), (1, broken), (7, landed)]
+    );
+    assert!(host.applied.is_empty(), "{:?}", host.applied);
+    assert_eq!((conditions.len(), slots.taken()), (0, 0));
+}
+
+/// Its write applied, the copy applies as the edit lands.
+#[test]
+fn a_kept_copy_applies_as_the_edit_lands_once_its_write_applied() {
+    let (mut store, outcomes) = store();
+    let (mut conditions, slots) = table(4);
+    let mut host = Host::new(vec![vec![0.0; 128]]);
+    insert(&mut conditions, &slots, copy(1, 7, 10), &mut store);
+    store
+        .outcomes
+        .settle(request(10, &AFTER), Outcome::Applied { at: 0 });
+    play_ordered(&mut conditions, &mut host, &mut store, 0, 64);
+    assert!(host.applied.is_empty());
+    store
+        .outcomes
+        .settle(request(7, &AFTER), Outcome::Applied { at: 70 });
+    play_ordered(&mut conditions, &mut host, &mut store, 64, 64);
+    let applied = log(&outcomes).last().copied();
+    assert_eq!(applied, Some((1, Outcome::Applied { at: 70 })));
+    assert_eq!(host.applied, [(9, 70)]);
 }

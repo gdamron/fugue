@@ -18,13 +18,13 @@ const TARGET: usize = 9;
 
 /// Signals by module (port 0 each), and how far each is computed in the
 /// current segment.
-struct Host {
+pub(super) struct Host {
     signals: Vec<Vec<f32>>,
     start: u64,
     computed: Vec<u64>,
     /// The sample the target computes next, where requests apply.
     now: u64,
-    applied: Vec<(usize, u64)>,
+    pub(super) applied: Vec<(usize, u64)>,
     /// Control 0 of each module.
     controls: Vec<f32>,
     /// How many requests had applied each time the late events applied
@@ -33,7 +33,7 @@ struct Host {
 }
 
 impl Host {
-    fn new(signals: Vec<Vec<f32>>) -> Self {
+    pub(super) fn new(signals: Vec<Vec<f32>>) -> Self {
         let computed = vec![0; signals.len()];
         Self {
             signals,
@@ -153,7 +153,7 @@ pub(super) fn log(outcomes: &OutcomeReceiver) -> Vec<(u64, Outcome)> {
 /// Plays one segment of `frames` from `start` with every source computed
 /// before the target: reads, then applies at each sample the target is
 /// split at. Returns the samples it split the target at.
-fn play_ordered(
+pub(super) fn play_ordered(
     conditions: &mut Conditions,
     host: &mut Host,
     store: &mut PendingStore,

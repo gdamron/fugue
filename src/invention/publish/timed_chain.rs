@@ -5,12 +5,15 @@
 //! the edit is cancelled, refused or expires.
 //!
 //! An authored write to one of those controls while the edit waits is kept
-//! over it ([`Publisher::keep_authored`]): chained to the landing too, at
-//! the same rank and queued after the edit's own write, so it wins there
-//! and the author's value plays on. It replaces that write, and any copy
-//! before it, as it reaches the audio thread, so the edit's own write to
-//! that one control never sounds when the copy reaches it before the
-//! landing; held back past it, the copy plays as soon as it does.
+//! over it ([`Publisher::keep_authored`]): a copy chained to the landing
+//! too, and to the write applying, at the write's rank and queued after
+//! the edit's own write, so it wins there and the author's value plays on.
+//! Both apply at the landing sample, the copy last, so the edit's own
+//! write to that one control never sounds when the copy reaches the audio
+//! thread before the landing; held back past it, the copy plays as soon as
+//! it does. The copy replaces any copy before it as it reaches the audio
+//! thread, and a write that loses at its own sample breaks its copy, so
+//! the edit's own write then plays, as it would were nothing kept.
 //!
 //! A timed write takes no part in that (see `publish::timed_write`), so a
 //! write the edit makes to a number or a switch is recorded again as it
