@@ -227,6 +227,13 @@ impl RequestSender {
         self.shared.watches.cancel(id);
     }
 
+    /// The last sample a request submitted with `ttl` just before this
+    /// call may apply at, or later: its `expires`, counted from a count
+    /// read no earlier than [`Self::submit`] read it.
+    pub(crate) fn expires_by(&self, ttl: Option<u64>) -> Option<u64> {
+        ttl.map(|ttl| self.rendered().saturating_add(ttl))
+    }
+
     /// Samples rendered as of the latest block ([`Transport::rendered`]):
     /// what [`When::AfterSamples`] counts from.
     pub(crate) fn rendered(&self) -> u64 {

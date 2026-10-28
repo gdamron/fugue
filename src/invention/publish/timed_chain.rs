@@ -123,7 +123,7 @@ impl LiveGraph {
                 authored,
             } = write;
             request.when = When::Condition(condition);
-            let (source, when) = (request.source, request.when);
+            let (source, when, ttl) = (request.source, request.when, request.ttl);
             let Ok(id) = self.requests.submit(request) else {
                 return Ok((chained, true));
             };
@@ -136,6 +136,7 @@ impl LiveGraph {
                     beat: None,
                     source,
                     when,
+                    expires: self.requests.expires_by(ttl),
                     authored,
                     announced: false,
                     awaited: false,
