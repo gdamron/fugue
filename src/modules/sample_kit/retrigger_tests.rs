@@ -300,3 +300,25 @@ fn a_level_drop_then_a_quick_double_play_keeps_the_louder_fade() {
     }
     let _ = std::fs::remove_file(held);
 }
+
+#[test]
+fn fades_folded_by_quick_retriggers_ease_out_along_the_declick() {
+    let held = write_level_wav(0.5, RATE as usize);
+    let (mut kit, _surface) = build_kit(one_slot(&held));
+    play(&mut kit);
+    heard(&mut kit, 100);
+    // Two plays 10 frames apart inside the fade: each folds what was
+    // fading into the residual, which eases out along the curve.
+    for _ in 0..2 {
+        play(&mut kit);
+        heard(&mut kit, 10);
+    }
+    play(&mut kit);
+    let fade = heard(&mut kit, declick_frames());
+    let ten = declick_gain(1.0 - 10.0 * declick_step(RATE as f32));
+    let first = 0.5 * ten;
+    let second = (first + 0.5) * ten;
+    // What fades: the third play's tail (0.5) and the residual.
+    follows_the_declick(&fade, 0.5 + second, 0.5);
+    let _ = std::fs::remove_file(held);
+}
