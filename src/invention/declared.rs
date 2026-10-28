@@ -839,7 +839,7 @@ impl DeclaredSurface {
                     }
                     None => None,
                 };
-                let (source, when) = (request.source, request.when);
+                let (source, when, ttl) = (request.source, request.when, request.ttl);
                 // A timed write is never kept: the later of it and the
                 // edit plays (see `publish::timed_write`).
                 let kept = match (&request.value, authored) {
@@ -890,6 +890,7 @@ impl DeclaredSurface {
                         beat,
                         source,
                         when,
+                        expires: port.requests.expires_by(ttl),
                         announced: options.announced,
                         awaited: options.awaited,
                         // Safe from the timed edit it was kept over, or that
