@@ -479,6 +479,8 @@ impl SignalGraph {
     /// survivor takes the payloads the publication carries for it (see
     /// [`Handover`]).
     fn install(&mut self, publication: &mut Publication) {
+        // What was staged before the edit applies to the graph it replaces.
+        self.flush_all_staged();
         let mut moved = 0;
         for (id, instance) in self.modules.iter_mut() {
             if let Some((idx, _, slot)) = publication.modules.get_full_mut(id.as_str()) {

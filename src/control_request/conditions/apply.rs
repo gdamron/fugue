@@ -15,6 +15,7 @@ use super::{ConditionHost, Conditions, Entry};
 use crate::control_request::hold::Standing;
 use crate::control_request::pending::{expired, Outcome, Outcomes, PendingStore, Refusal, Until};
 use crate::control_request::request::{Request, When};
+use crate::control_request::staged::Applying;
 
 impl Conditions {
     /// Applies, in time order, every request in the `installed` generation
@@ -69,7 +70,12 @@ impl Conditions {
                 target, value, id, ..
             } = request;
             let payload = value.is_payload();
-            let outcome = match host.apply(&target, standing, value, &mut outcomes.retirer) {
+            outcomes.applying(Applying {
+                id,
+                timed: true,
+                at,
+            });
+            let outcome = match host.apply(&target, standing, value, outcomes) {
                 Ok(()) if due < at => Outcome::AppliedLate { at, due },
                 Ok(()) => Outcome::Applied { at },
                 Err(outcome) => outcome,
@@ -139,10 +145,12 @@ fn catch_up(
     host: &mut impl ConditionHost,
 ) {
     loop {
-        let finish =
-            pending.apply_until(now, installed, until, |target, standing, value, retirer| {
-                host.apply(target, standing, value, retirer)
-            });
+        let finish = pending.apply_until(
+            now,
+            installed,
+            until,
+            |target, standing, value, outcomes| host.apply(target, standing, value, outcomes),
+        );
         if !finish {
             return;
         }
@@ -165,7 +173,8 @@ fn apply_pending(
     let Request {
         target, value, id, ..
     } = request;
-    let outcome = match host.apply(&target, standing, value, &mut outcomes.retirer) {
+    outcomes.applying(Applying { id, timed, at });
+    let outcome = match host.apply(&target, standing, value, outcomes) {
         Ok(()) if due < at => Outcome::AppliedLate { at, due },
         Ok(()) => Outcome::Applied { at },
         Err(outcome) => outcome,

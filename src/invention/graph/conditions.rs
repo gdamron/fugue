@@ -20,10 +20,9 @@ use super::publication::Publication;
 use super::requests::RequestDrain;
 use super::SignalGraph;
 use crate::control_request::{
-    ConditionHost, ControlIndex, ControlTarget, Outcome, Ramps, RequestValue, RtValue, Standing,
-    Watches,
+    ConditionHost, ControlIndex, ControlTarget, Outcome, Outcomes, Ramps, RequestValue, RtValue,
+    Standing, Watches,
 };
-use crate::payload::Retirer;
 
 /// The segment being processed: its first sample, its length, and how many
 /// process groups have computed it.
@@ -60,7 +59,8 @@ impl ConditionHost for SignalGraph {
     fn control(&self, module: usize, control: ControlIndex) -> Option<f32> {
         let (_, instance) = self.modules.get_index(module)?;
         let (_, cells) = instance.module().declared()?;
-        Some(match cells.load(control)? {
+        // A write staged on it is what it holds as it processes.
+        Some(match cells.current(control)? {
             RtValue::F32(value) => value,
             RtValue::U32(value) => value as f32,
             RtValue::I32(value) => value as f32,
@@ -82,9 +82,9 @@ impl ConditionHost for SignalGraph {
         target: &ControlTarget,
         standing: Option<Standing>,
         value: RequestValue,
-        retirer: &mut Retirer,
+        outcomes: &mut Outcomes,
     ) -> Result<(), Outcome> {
-        self.apply_ranked(target, standing, value, retirer)
+        self.stage(target, standing, value, outcomes)
     }
 }
 
@@ -119,9 +119,9 @@ impl ConditionHost for Superseding<'_> {
         target: &ControlTarget,
         standing: Option<Standing>,
         value: RequestValue,
-        retirer: &mut Retirer,
+        outcomes: &mut Outcomes,
     ) -> Result<(), Outcome> {
-        let applied = self.graph.apply_ranked(target, standing, value, retirer);
+        let applied = self.graph.stage(target, standing, value, outcomes);
         if applied.is_ok() {
             self.ramps.supersede(target, &*self.graph);
         }
@@ -182,6 +182,8 @@ impl SignalGraph {
                 let Watches { edges, ramps, .. } = &mut drain.watches;
                 to = to.min(edges.play(module, from, self, ramps));
             }
+            // The drain is out: `process_span` cannot flush.
+            self.flush_module(module, &mut drain.pending.outcomes);
             self.process_span(module, from, to);
             from = to;
         }

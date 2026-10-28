@@ -249,6 +249,24 @@ impl Holds {
         self.set(index, encode(standing.rank, standing.due));
     }
 
+    /// [`Self::take`], returning the word the write took and the one it
+    /// replaced, for [`Self::restore`].
+    pub(super) fn swap(&self, index: ControlIndex, standing: Standing) -> (u64, u64) {
+        let prev = self.word(index);
+        let taken = encode(standing.rank, standing.due);
+        self.set(index, taken);
+        (taken, prev)
+    }
+
+    /// Gives `index` back the word `prev` a write that took `taken` replaced
+    /// (see [`Self::swap`]), unless something took or freed it since: the
+    /// write was refused after all.
+    pub(super) fn restore(&self, index: ControlIndex, taken: u64, prev: u64) {
+        if self.word(index) == taken {
+            self.set(index, prev);
+        }
+    }
+
     /// Whether the latest write to take `index` was one of `standing`: no
     /// write since took it, and automation's next event has not freed it.
     pub(crate) fn kept(&self, index: ControlIndex, standing: Standing) -> bool {

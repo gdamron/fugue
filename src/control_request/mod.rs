@@ -41,6 +41,7 @@ mod queue;
 mod ramps;
 mod request;
 mod sender;
+mod staged;
 mod table;
 mod timeline;
 mod transport;
@@ -105,6 +106,7 @@ pub(crate) use request::{
     RtValue, Source, When,
 };
 pub(crate) use sender::{request_channel, QueueFull, RequestSender, ReservedQueued};
+pub(crate) use staged::{flush_staged, stage_write, Applying};
 pub(crate) use table::{BeatTable, Counted, Player, TableEntry, TableTarget, TableValue};
 pub(crate) use timeline::{first_sample_reaching, Timeline, BEFORE_START};
 pub(crate) use transport::Transport;

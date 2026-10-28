@@ -160,13 +160,14 @@ pub(crate) trait ConditionHost {
     }
 
     /// Applies `value` as the pending store's `apply` does, of `standing`
-    /// (none for an event): `Err` is what it reports instead.
+    /// (none for an event): `Err` is what it reports instead. A plain write
+    /// may stage, to report at its flush (see `Outcomes::applying`).
     fn apply(
         &mut self,
         target: &ControlTarget,
         standing: Option<Standing>,
         value: RequestValue,
-        retirer: &mut Retirer,
+        outcomes: &mut Outcomes,
     ) -> Result<(), Outcome>;
 
     /// Finishes the late events just applied (see

@@ -90,6 +90,12 @@ impl Chains {
         }
     }
 
+    /// Whether a condition waits on `id`: then it must settle as it
+    /// applies, not at a later flush (see [`super::staged`]).
+    pub(crate) fn watching(&self, id: RequestId) -> bool {
+        self.watched.iter().any(|watched| watched.id == id)
+    }
+
     /// What became of watched request `id`, once it settled.
     pub(crate) fn outcome(&self, id: RequestId) -> Option<Outcome> {
         let watched = self.watched.iter().find(|watched| watched.id == id)?;
