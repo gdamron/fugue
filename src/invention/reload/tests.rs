@@ -1,3 +1,8 @@
+//! Reload tests. One that builds a package loader (a sampler) or a
+//! development instance and then reloads it holds
+//! `pkg::lock::ungoverned_here()` first: a lock another test makes the
+//! process's meanwhile would otherwise rebuild the module.
+
 use super::plan::TypeKeys;
 use super::*;
 use crate::invention::builder::InventionBuilder;
