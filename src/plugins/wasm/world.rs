@@ -4,7 +4,8 @@
 use wasmtime::component::Component;
 use wasmtime::Engine;
 
-/// The version of the `fugue:module` world this host loads.
+/// The version of the `fugue:module` world this host loads. Only guests
+/// built for exactly this version load, so every bump is a breaking one.
 pub(super) const WORLD_VERSION: &str = "0.2.0";
 
 /// The world's host interface, as a guest imports it.
@@ -53,6 +54,22 @@ fn refusal(built_for: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loading_a_first_world_guest_is_refused_before_it_runs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("old.fugue-module.wasm");
+        std::fs::write(&path, FIRST_WORLD_GUEST).expect("write guest");
+        let manifest = super::super::alloc_tests::fixture_manifest();
+        let error = match super::super::load_component_module(&path, 48_000, "{}", &manifest) {
+            Ok(_) => panic!("a first-world guest loaded"),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            error.contains("rebuild it against fugue:module@0.2.0"),
+            "{error}"
+        );
+    }
 
     fn check(wat: &str) -> Result<(), String> {
         let engine = super::super::component_engine().expect("engine");

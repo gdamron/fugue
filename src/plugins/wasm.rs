@@ -218,10 +218,7 @@ impl WasmModule {
     /// Latches the module as failed after a guest trap or error, zeroing all
     /// outputs so downstream modules don't hold a stale sustained value.
     fn fail(&mut self, export: &str, error: &dyn std::fmt::Display) -> bool {
-        eprintln!(
-            "wasm module '{}' failed in `{export}`: {error}; muting output",
-            self.name
-        );
+        eprintln!("{}", failure_message(&self.name, export, error));
         for block in &mut self.store.data_mut().outputs.blocks {
             block.fill(0.0);
         }
@@ -316,6 +313,12 @@ impl Module for WasmModule {
             .map_err(|e| e.to_string())?;
         result
     }
+}
+
+/// Names the guest's reason: `{error:#}` prints wasmtime's whole context
+/// chain, whose outermost link is only the wasm backtrace.
+fn failure_message(name: &str, export: &str, error: &dyn std::fmt::Display) -> String {
+    format!("wasm module '{name}' failed in `{export}`: {error:#}; muting output")
 }
 
 fn component_engine() -> Result<Engine, Box<dyn Error>> {

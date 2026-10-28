@@ -7,9 +7,10 @@ interface host {
     /// The host copies the samples into a buffer it owns, so nothing is
     /// handed back for the host to free. Call it once per output from inside
     /// `process`: an output not written in a block reads as silence for that
-    /// block, a list shorter than the block is padded with silence, and
-    /// samples past the block are ignored. A call from outside `process`, or
-    /// with an index past `outputs`, fails the module.
+    /// block, a second call for one output replaces the first, a list shorter
+    /// than the block is padded with silence, and samples past the block are
+    /// ignored. A call from outside `process`, or with an index past
+    /// `outputs`, fails the module.
     emit-output: func(index: u32, samples: list<f32>);
 }
 

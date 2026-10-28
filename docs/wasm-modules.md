@@ -19,10 +19,12 @@ The host calls the guest's exports, and the guest calls one host import:
 - `set-input` and `set-control` take single values from controls and tests.
 
 `process` runs on the audio thread for every block. The host side of each
-call allocates nothing, frees nothing and takes no lock. A test checks this
-for every module type, `wasm_module` included. Keep the guest's own block
-path free of allocation, too: render into a buffer the guest owns and emit a
-slice of it.
+of these calls, `emit-output` included, allocates nothing, frees nothing and
+takes no lock. A test checks this for every module type, `wasm_module`
+included. Keep the guest's own block path free of allocation, too: render
+into a buffer the guest owns and emit a slice of it. Don't call WASI
+imports (random, clocks, stdio) from `process`: their host side allocates or
+locks.
 
 ### Writing outputs
 
@@ -30,8 +32,10 @@ slice of it.
 - A list shorter than the block is padded with silence. Samples past the
   block are ignored.
 - A second call for the same output in one block replaces the first.
-- A call from outside `process`, or with an index past `outputs`, fails the
-  module. It is muted from then on, and the reason is printed.
+- A call with an index past `outputs` fails the module: it is muted from
+  then on, and the reason is printed. So does a call from outside `process`:
+  from `init` it fails the load, and from `set-input` or `set-control` it
+  fails that call, and the module mutes at its next block.
 
 ## Building a guest
 
@@ -61,11 +65,15 @@ a component, for example with `wasm-tools component new`. Name the file
 
 ## Versions
 
-The host loads guests built for exactly one version of the world. It reads
-the version from the guest's import of the world's `host` interface,
-`fugue:module/host@0.2.0`, before it runs any guest code. A guest built for
-another version is refused with a message that names the version it was
-built for and the one it needs.
+The host loads guests built for exactly one version of the world, so every
+new version is a breaking one. Before it runs any guest code, it reads the
+version from the guest's import of the world's `host` interface,
+`fugue:module/host@0.2.0`. A 0.1.0 guest has no such import, and is known by
+its `output-block` export. A guest built for another version is refused with
+a message that names the version it was built for and the one it needs. A
+guest with no outputs calls nothing on the host, so its build drops the
+import; it loads unchecked, which is harmless, since the only change between
+the versions so far is how outputs are written.
 
 ### Migrating from 0.1.0
 

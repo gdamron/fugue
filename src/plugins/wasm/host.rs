@@ -235,7 +235,8 @@ mod tests {
     fn emit(store: &mut wasmtime::Store<HostState>, emit: &Emit, index: u32, len: u32) -> String {
         match emit.call(&mut *store, (index, len)) {
             Ok(()) => String::new(),
-            Err(error) => format!("{error:?}"),
+            // As the module prints it when it fails.
+            Err(error) => super::super::failure_message("emitter", "process", &error),
         }
     }
 
@@ -257,13 +258,13 @@ mod tests {
     }
 
     #[test]
-    fn an_index_past_the_outputs_fails() {
+    fn an_index_past_the_outputs_fails_naming_the_reason() {
         let (mut store, func) = emitter();
         store.data_mut().outputs.begin(4);
-        let error = emit(&mut store, &func, 2, 1);
+        let message = emit(&mut store, &func, 2, 1);
         assert!(
-            error.contains("index 2 is past the module's 2 outputs"),
-            "{error}"
+            message.contains("index 2 is past the module's 2 outputs"),
+            "{message}"
         );
     }
 

@@ -78,7 +78,7 @@ impl Guest for TestModule {
             for i in 0..frames {
                 state.output[i] = state.phase;
                 state.phase += state.frequency / state.sample_rate;
-                state.phase %= 1.0;
+                state.phase -= state.phase.floor();
             }
             fugue::module::host::emit_output(0, &state.output[..frames]);
         });
