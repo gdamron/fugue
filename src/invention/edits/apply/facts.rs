@@ -12,6 +12,7 @@ use crate::invention::edits::{EditFacts, ModuleFacts};
 use crate::invention::format::{Invention, ModuleSpec};
 use crate::invention::orchestration::ModulePorts;
 use crate::invention::publish::PendingWrite;
+use crate::invention::reload::LoadedDevelopments;
 use crate::invention::runtime::{ControlSurfaceInstance, RunningInvention};
 use crate::module_config::ConfigKey;
 use crate::modules::control_scheduler::name_unattached_from_handles;
@@ -28,6 +29,9 @@ pub(super) struct LiveFacts {
     /// The retained document with no modules: its assets and source path,
     /// which an added module's config is resolved against.
     assets: Invention,
+    /// The developments the running document declares, which say what an
+    /// added instance's config keys name.
+    developments: Arc<LoadedDevelopments>,
     /// The control surface of each module `describe` built for the batch,
     /// by id; the latest build for an id replaces an earlier one. The
     /// batch's writes to an added module are made on it, in order.
@@ -87,6 +91,7 @@ impl LiveFacts {
             ports: running.module_ports.lock().unwrap().clone(),
             surfaces: running.control_surfaces.lock().unwrap().clone(),
             assets,
+            developments: running.development_definitions.loaded().clone(),
             described: HashMap::new(),
             authored,
             waiting,
@@ -232,7 +237,9 @@ impl LiveFacts {
             module_type: module_type.to_string(),
             config: config.clone(),
         });
-        let resolved = resolve_invention_assets(probe).map_err(|error| error.to_string())?;
+        let developments = Some(self.developments.clone());
+        let (resolved, _) =
+            resolve_invention_assets(probe, developments).map_err(|error| error.to_string())?;
         Ok(resolved
             .modules
             .into_iter()

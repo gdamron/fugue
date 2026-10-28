@@ -9,6 +9,7 @@ use crate::ControlValue;
 
 mod authored;
 mod clock;
+mod development_assets;
 mod development_events;
 mod development_wholes;
 mod event_keys;
