@@ -77,12 +77,11 @@ impl Outcomes {
 
     /// As the edit installs: until [`Self::weighed`], the requests queued
     /// behind it are weighed as if it had installed when first due, against
-    /// the writes standing since ([`contest`]). Edits installing one after
-    /// another keep the earliest such sample.
+    /// the writes standing since ([`contest`]). Only the first edit to
+    /// install was held; one installing behind it keeps that sample.
     pub(crate) fn edit_installs(&mut self) {
         if let Some(held) = self.staging.held.take() {
-            let since = self.staging.since.map_or(held, |since| since.min(held));
-            self.staging.since = Some(since);
+            self.staging.since = Some(held);
         }
     }
 
