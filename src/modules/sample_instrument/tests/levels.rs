@@ -74,3 +74,18 @@ fn a_level_written_while_the_zone_is_silent_holds_from_the_next_notes_first_fram
     assert!((first - 0.25).abs() < TOL, "{first}");
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn a_note_ending_mid_glide_starts_its_next_note_at_the_level_written() {
+    // Eight frames of sound: the note ends long before the 10 ms glide.
+    let path = write_level_wav(0.5, 8);
+    let (mut instrument, _surface) = build_instrument(one_zone(&path, 1.0));
+    instrument.set_control("note_on", 60.0).unwrap();
+    heard(&mut instrument, 2);
+    instrument.set_control("level.0", 0.0).unwrap();
+    heard(&mut instrument, 8);
+    instrument.set_control("note_on", 60.0).unwrap();
+    let first = heard(&mut instrument, 1)[0];
+    assert_eq!(first, 0.0, "the muted zone stays muted");
+    let _ = std::fs::remove_file(path);
+}

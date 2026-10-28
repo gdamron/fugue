@@ -91,3 +91,17 @@ fn a_slot_that_ends_mid_glide_starts_its_next_play_at_the_written_level() {
     assert!((first - 0.25).abs() < TOL, "{first}");
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn a_play_while_the_slot_glides_starts_at_the_level_written() {
+    let path = write_level_wav(0.5, RATE as usize);
+    let (mut kit, _surface) = build_kit(one_slot(&path));
+    play(&mut kit);
+    heard(&mut kit, 4);
+    kit.set_control("level.0", 0.5).unwrap();
+    heard(&mut kit, 2);
+    play(&mut kit);
+    let first = heard(&mut kit, 1)[0];
+    assert!((first - 0.25).abs() < TOL, "{first}");
+    let _ = std::fs::remove_file(path);
+}

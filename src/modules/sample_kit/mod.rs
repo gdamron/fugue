@@ -198,10 +198,9 @@ struct Voice {
 
 impl Voice {
     fn start(&mut self) {
-        if !self.active {
-            // Nothing was heard, so a glide has nothing to smooth.
-            self.level.settle();
-        }
+        // A play restarts the slot's one voice, so it sounds at the level
+        // written: a glide smooths only a sound that carries on.
+        self.level.settle();
         self.ringing_out = false;
         self.position = 0;
         self.active = self.sample.len() > 0;

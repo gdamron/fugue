@@ -293,8 +293,10 @@ pub struct SampleInstrument {
     /// Zone levels gliding to each write while the zone sounds, as a
     /// mixer's fader does: a level that stepped mid-note would click.
     level_ramps: Vec<LinearRamp>,
-    /// Whether any of `level_ramps` is still moving.
-    levels_gliding: bool,
+    /// The zones whose level glides while they sound, each once. Bounded
+    /// by the voice count, as only a sounding zone glides (doubled for a
+    /// zone a steal silenced before the next frame drops it); preallocated.
+    gliding: Vec<usize>,
     /// Release fade, in seconds.
     release: f32,
     /// Whether a note off written since the last block waits for its
@@ -354,7 +356,7 @@ impl SampleInstrument {
                 .map(|&level| LinearRamp::new(level, glide))
                 .collect(),
             levels,
-            levels_gliding: false,
+            gliding: Vec::with_capacity(2 * MAX_VOICES),
             release,
             releasing: false,
             next_started: 0,
@@ -364,33 +366,50 @@ impl SampleInstrument {
         }
     }
 
+    /// Whether a voice plays zone `zone`. A stolen note's crossfade tail
+    /// keeps the level it had, so only active voices count.
+    fn sounds(&self, zone: usize) -> bool {
+        self.voices
+            .iter()
+            .any(|voice| voice.active && voice.zone == zone)
+    }
+
     /// Moves zone `zone`'s level to `level`: a glide while the zone
     /// sounds, at once while it is silent, as nothing heard would step.
     fn set_level(&mut self, zone: usize, level: f32) {
-        let ramp = &mut self.level_ramps[zone];
-        ramp.set_target(level);
-        if self
-            .voices
-            .iter()
-            .any(|voice| voice.active && voice.zone == zone)
-        {
-            self.levels_gliding = true;
-        } else {
-            ramp.settle();
-            self.levels[zone] = level;
+        self.level_ramps[zone].set_target(level);
+        let listed = self.gliding.contains(&zone);
+        if !self.sounds(zone) || (!listed && self.gliding.len() == self.gliding.capacity()) {
+            self.settle_level(zone);
+        } else if !listed {
+            self.gliding.push(zone);
         }
     }
 
-    /// Every zone's level for the next frame.
+    /// Ends zone `zone`'s glide at its target.
+    fn settle_level(&mut self, zone: usize) {
+        let ramp = &mut self.level_ramps[zone];
+        ramp.settle();
+        self.levels[zone] = ramp.value();
+    }
+
+    /// The gliding zones' levels for the next frame. A zone that fell
+    /// silent mid-glide lands on its target, so its next note starts there.
     #[inline]
     fn next_levels(&mut self) {
-        if self.levels_gliding {
-            let mut gliding = false;
-            for (level, ramp) in self.levels.iter_mut().zip(&mut self.level_ramps) {
-                *level = ramp.next_value();
-                gliding |= ramp.is_gliding();
+        let mut i = 0;
+        while i < self.gliding.len() {
+            let zone = self.gliding[i];
+            if self.sounds(zone) {
+                self.levels[zone] = self.level_ramps[zone].next_value();
+            } else {
+                self.settle_level(zone);
             }
-            self.levels_gliding = gliding;
+            if self.level_ramps[zone].is_gliding() {
+                i += 1;
+            } else {
+                self.gliding.swap_remove(i);
+            }
         }
     }
 
@@ -413,6 +432,11 @@ impl SampleInstrument {
         };
         let ratio = f64::from(freq) / f64::from(self.zones[zone_index].root_freq);
 
+        // A zone silent since a write plays its next note at the level
+        // written, not partway along a glide.
+        if !self.sounds(zone_index) {
+            self.settle_level(zone_index);
+        }
         let slot = self.claim_voice(note);
         // Taking over a sounding voice would cut its waveform mid-cycle;
         // hand the old note to the crossfade slot so it rings out instead.
