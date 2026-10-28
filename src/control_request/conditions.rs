@@ -423,9 +423,9 @@ impl Conditions {
                 i += 1;
                 continue;
             }
-            // An edit's own write and the copy kept over it fall due
-            // together: one gives way before either reaches the module.
-            match self.settle_kept(i, at, outcomes) {
+            // Writes to one control falling due together: all but one
+            // give way before any reaches the module.
+            match self.give_way(i, at, outcomes) {
                 Some(now) => i = now,
                 None => continue,
             }

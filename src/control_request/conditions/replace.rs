@@ -19,18 +19,22 @@
 //! then loses is refused, so neither re-asserts a value that no longer
 //! plays. A write waiting on the edit alone for the control (the edit's
 //! own, or one scheduled after it) waits beside the copy, to play should
-//! the copy break. As they fall due together they replace as any two
-//! here do: the lower rank, at equal rank the earlier received, gives way
-//! before either reaches the module ([`Conditions::settle_kept`]), so
-//! only one setter runs.
+//! the copy break.
+//!
+//! Writes that could not replace on arrival (that copy and that write,
+//! writes on different conditions met at one sample, writes with a ttl)
+//! replace as they fall due together, by the same rule, before either
+//! reaches the module ([`Conditions::give_way`]): one setter runs for a
+//! control at a sample, so a stateful one (a reverb retuning) runs once.
 //!
 //! [`PendingStore`]: super::super::pending::PendingStore
 
 use super::{Conditions, Entry};
 use crate::control_request::condition::{Condition, Predicate};
 use crate::control_request::hold::Rank;
+use crate::control_request::pending::expired;
 use crate::control_request::pending::{Outcome, Outcomes};
-use crate::control_request::request::{Request, RequestId, RequestValue};
+use crate::control_request::request::{Request, RequestValue};
 
 /// Whether `request` may replace a waiting request, or be replaced.
 fn plain(request: &Request) -> bool {
@@ -99,87 +103,65 @@ impl Conditions {
 }
 
 impl Conditions {
-    /// When entry `i`, due by `at`, is a write waiting on a timed edit
-    /// alone or a copy kept over that edit for the same control, and its
-    /// partner is due by `at` too (the copy's write applied), settles
-    /// whichever loses: the lower [`Rank`], at equal rank the earlier
-    /// received (entries are in receipt order). Returns where entry `i`
-    /// now is, or `None` once it left. Allocation- and free-free.
-    pub(super) fn settle_kept(
+    /// Settles, before entry `i` (due by `at`) reaches its module, every
+    /// other plain write here due by `at` for the same control, or entry
+    /// `i` itself, as two received together replace: the lower [`Rank`],
+    /// at equal rank the earlier received (entries are in receipt order),
+    /// gives way, so one setter runs for the control at the sample, the
+    /// one that would have stood last. Those this table could not replace
+    /// on arrival meet here: a kept copy and a write waiting on its edit
+    /// alone, writes on different conditions met together, and writes
+    /// with a ttl not yet run out. Returns where entry `i` now is, or
+    /// `None` once it gave way. Allocation- and free-free.
+    pub(super) fn give_way(
         &mut self,
-        i: usize,
+        mut i: usize,
         at: u64,
         outcomes: &mut Outcomes,
     ) -> Option<usize> {
-        let pair = match self.entries[i].condition.kept_over() {
-            Some(edit) => self.waiting_on(i, edit, at).map(|write| (write, i)),
-            None => self.kept_beside(i, at).map(|copy| (i, copy)),
-        };
-        let Some((write, copy)) = pair else {
+        if !self.contends(i, at) {
             return Some(i);
-        };
-        let written = Rank::of(&self.entries[write].request).expect("not an event");
-        let kept = Rank::of(&self.entries[copy].request).expect("not an event");
-        let loser = match written.cmp(&kept) {
-            std::cmp::Ordering::Less => write,
-            std::cmp::Ordering::Greater => copy,
-            std::cmp::Ordering::Equal => write.min(copy),
-        };
-        let outcome = if loser == write {
-            written.loses_to(kept)
-        } else {
-            kept.loses_to(written)
-        };
-        self.end(loser, outcomes, outcome);
-        match loser.cmp(&i) {
-            std::cmp::Ordering::Equal => None,
-            std::cmp::Ordering::Less => Some(i - 1),
-            std::cmp::Ordering::Greater => Some(i),
         }
+        while let Some(other) = self.contender(i, at) {
+            let mine = Rank::of(&self.entries[i].request).expect("not an event");
+            let theirs = Rank::of(&self.entries[other].request).expect("not an event");
+            let loser = match mine.cmp(&theirs) {
+                std::cmp::Ordering::Less => i,
+                std::cmp::Ordering::Greater => other,
+                std::cmp::Ordering::Equal => i.min(other),
+            };
+            let outcome = match loser == i {
+                true => mine.loses_to(theirs),
+                false => theirs.loses_to(mine),
+            };
+            self.end(loser, outcomes, outcome);
+            if loser == i {
+                return None;
+            }
+            if other < i {
+                i -= 1;
+            }
+        }
+        Some(i)
     }
 
-    /// The copy kept over the edit entry `i` waits on alone, for its
-    /// control, due by `at`, when entry `i` is such a write.
-    fn kept_beside(&self, i: usize, at: u64) -> Option<usize> {
+    /// Whether entry `i` would apply by `at` as a plain write: not broken,
+    /// due, and its ttl not run out.
+    fn contends(&self, i: usize, at: u64) -> bool {
         let entry = &self.entries[i];
-        let [Predicate::Applied(edit)] = entry.condition.parts() else {
-            return None;
-        };
-        if !replacing_write(entry) {
-            return None;
-        }
-        self.entries.iter().position(|other| {
-            !other.broken
-                && plain(&other.request)
-                && other.request.target == entry.request.target
-                && other.condition.kept_over() == Some(*edit)
-                && other.due().is_some_and(|due| due <= at)
-        })
+        !entry.broken
+            && plain(&entry.request)
+            && entry.due().is_some_and(|due| due <= at)
+            && !expired(&entry.request, at)
     }
 
-    /// The write waiting on `edit` alone for the control of copy `i`, due
-    /// by `at`. One at most: two such coalesce on arrival.
-    fn waiting_on(&self, i: usize, edit: RequestId, at: u64) -> Option<usize> {
-        let copy = &self.entries[i];
-        if !plain(&copy.request) {
-            return None;
-        }
-        self.entries.iter().position(|other| {
-            !other.broken
-                && replacing_write(other)
-                && other.request.target == copy.request.target
-                && other.condition.parts() == [Predicate::Applied(edit)]
-                && other.due().is_some_and(|due| due <= at)
+    /// Another entry that would apply by `at` to entry `i`'s control.
+    fn contender(&self, i: usize, at: u64) -> Option<usize> {
+        let target = self.entries[i].request.target;
+        (0..self.entries.len()).find(|&other| {
+            other != i && self.entries[other].request.target == target && self.contends(other, at)
         })
     }
-}
-
-/// Whether `entry` is a write that replaces and is replaced (a plain
-/// value with no ttl) and not a kept copy.
-fn replacing_write(entry: &Entry) -> bool {
-    entry.condition.kept_over().is_none()
-        && plain(&entry.request)
-        && entry.request.expires.is_none()
 }
 
 #[cfg(test)]

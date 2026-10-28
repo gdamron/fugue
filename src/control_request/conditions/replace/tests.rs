@@ -224,3 +224,37 @@ fn the_higher_rank_plays_as_the_edit_lands_whichever_came_first() {
         assert_eq!(applied, 1);
     }
 }
+
+/// A write with a ttl not yet run out replaces nothing on arrival, but
+/// gives way as it lands with the copy received after it: one setter.
+#[test]
+fn a_write_with_a_ttl_gives_way_to_the_copy_landing_with_it() {
+    let mut write = request(1, &AFTER);
+    write.expires = Some(1_000);
+    let (settled, applied) = land_beside(write, false);
+    assert_eq!(settled, [(1, Outcome::Superseded), (2, LANDED)]);
+    assert_eq!(applied, 1);
+}
+
+/// Writes to one control on different conditions met at one sample: the
+/// later received plays, alone.
+#[test]
+fn writes_on_different_conditions_met_together_apply_once() {
+    let (mut store, outcomes) = store();
+    let (mut conditions, slots) = table(4);
+    let mut host = Host::new(vec![vec![0.0; 128]]);
+    let on_8 = [Predicate::Applied(RequestId(8))];
+    insert(&mut conditions, &slots, request(1, &AFTER), &mut store);
+    insert(&mut conditions, &slots, request(2, &on_8), &mut store);
+    for id in [7, 8] {
+        let settled = request(id, &AFTER);
+        store.outcomes.settle(settled, Outcome::Applied { at: 70 });
+    }
+    play_ordered(&mut conditions, &mut host, &mut store, 64, 64);
+    assert_eq!((conditions.len(), slots.taken()), (0, 0));
+    let settled: Vec<_> = (log(&outcomes).into_iter())
+        .filter(|(id, _)| [1, 2].contains(id))
+        .collect();
+    assert_eq!(settled, [(1, Outcome::Superseded), (2, LANDED)]);
+    assert_eq!(host.applied.len(), 1);
+}
