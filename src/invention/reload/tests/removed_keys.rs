@@ -145,3 +145,34 @@ fn a_removed_sample_still_rebuilds() {
     assert!(report.controls_failed.is_empty(), "{report:?}");
     assert_eq!(asset, ControlValue::String(String::new()));
 }
+
+#[test]
+fn a_removed_weight_returns_by_the_whole_weights_and_leaves_no_override() {
+    let tune = |degrees: &str, weight: Option<f32>| {
+        let mut config = json!({
+            "degrees": degrees, "degree_count": 4, "note_weights": "[1, 2]", "seed": 1
+        });
+        if let Some(weight) = weight {
+            config["note_weight.3"] = json!(weight);
+        }
+        single("melody", config, "frequency")
+    };
+    let (mut running, pump) = start_pumped(&tune("[0, 2, 4]", Some(9.0)));
+    pump.render(1);
+    let removed = tune("[0, 2, 4]", None);
+    let report = running.reload(doc(&removed)).expect("diff applies");
+    pump.render(1);
+    assert!(report.swapped.is_empty(), "{report:?}");
+    assert_eq!(report.controls_updated, ["m.note_weights"], "{report:?}");
+    let weight = || running.get_control("m", "note_weight.3").unwrap();
+    assert_eq!(weight(), fresh_control(&removed, "note_weight.3"));
+
+    // A whole scale keeps a weight written to its position: the removed
+    // one was not, so the new scale weights it as a fresh build does.
+    let rescaled = tune("[0, 7]", None);
+    let report = running.reload(doc(&rescaled)).expect("diff applies");
+    pump.render(1);
+    assert!(report.swapped.is_empty(), "{report:?}");
+    let weight = running.get_control("m", "note_weight.3").unwrap();
+    assert_eq!(weight, fresh_control(&rescaled, "note_weight.3"));
+}

@@ -4,7 +4,7 @@
 use indexmap::IndexMap;
 use std::collections::HashSet;
 
-use crate::module_config::{replaced_by, ConfigKey, ConfigKind};
+use crate::module_config::{names, replaced_by, ConfigKey, ConfigKind};
 use crate::{ControlValue, Invention};
 
 use super::config_diff::{
@@ -117,35 +117,26 @@ pub(crate) fn plan_reload(
                 });
                 let previous = without(&info.config, &stateless);
                 let config = without(&spec.config, &stateless);
+                let wholes: Vec<&ConfigKey> = (keys.iter())
+                    .filter(|declared| !declared.replaces.is_empty())
+                    .filter(|declared| has_control(&spec.id, declared.key))
+                    .collect();
+                let restore = |key: &str| restore_write(&wholes, &config, key, &fresh);
                 let mut updates = if configs_equal(&previous, &config, &kind) {
                     (!stateless.is_empty() && info.config != spec.config).then(Vec::new)
                 } else {
-                    // As a cold build applies the config: a value replacing
-                    // others (a melody's whole scale) first, then every key
-                    // it replaces, changed or not (see `ConfigKey::replacing`).
                     let planned = control_updates_for(
                         &previous,
                         &config,
                         &kind,
                         |key| has_control(&spec.id, key),
-                        &fresh,
-                    )
-                    .and_then(|mut updates| {
-                        let replayed = replay_replaced(keys, &config, &mut updates, |key| {
-                            has_control(&spec.id, key)
-                        });
-                        replayed.then_some(updates)
-                    });
-                    match planned {
-                        Some(mut updates) => {
-                            updates.sort_by_key(|(key, _)| replaced_by(keys, key).is_empty());
-                            Some(updates)
-                        }
-                        None => {
-                            plan.swapped.push(spec.clone());
-                            continue;
-                        }
+                        &restore,
+                    );
+                    if planned.is_none() {
+                        plan.swapped.push(spec.clone());
+                        continue;
                     }
+                    planned
                 };
                 if let Some(implicit) = &implicit {
                     let pending = updates.as_deref().unwrap_or_default();
@@ -155,11 +146,21 @@ pub(crate) fn plan_reload(
                         pending,
                         |key| is_event(&spec.id, key),
                         |key| has_control(&spec.id, key),
-                        &fresh,
+                        &restore,
                     );
                     if !restores.is_empty() {
                         updates.get_or_insert_with(Vec::new).extend(restores);
                     }
+                }
+                // As a cold build applies the config: a value replacing
+                // others (a melody's whole scale) first, then every key it
+                // replaces, changed or not (see `ConfigKey::replacing`).
+                if let Some(updates) = &mut updates {
+                    if !replay_replaced(keys, &config, updates, |key| has_control(&spec.id, key)) {
+                        plan.swapped.push(spec.clone());
+                        continue;
+                    }
+                    updates.sort_by_key(|(key, _)| replaced_by(keys, key).is_empty());
                 }
                 plan.unchanged.push(spec.id.clone());
                 if let Some(updates) = updates {
@@ -218,6 +219,37 @@ pub(crate) fn plan_reload(
         .collect();
 
     Ok(plan)
+}
+
+/// The write that returns control `key` of a kept module to what a fresh
+/// build of `config` plays. A key one of the module's `wholes` (its
+/// replacing keys that are controls) replaces, a melody's `note_weight.3`
+/// under `note_weights`, returns by that whole key, as `config` states it
+/// or as built: the positions `config` states are written again after it
+/// ([`replay_replaced`]), and nothing the module keeps of a write to the
+/// position (a weight a whole scale keeps) outlives the file. Any other
+/// key returns as built.
+fn restore_write(
+    wholes: &[&ConfigKey],
+    config: &serde_json::Value,
+    key: &str,
+    fresh: &dyn Fn(&str) -> Option<ControlValue>,
+) -> Option<(String, ControlValue)> {
+    let replacing = |declared: &&&ConfigKey| declared.replaces.iter().any(|gone| names(gone, key));
+    let Some(whole) = wholes.iter().find(replacing) else {
+        return Some((key.to_string(), fresh(key)?));
+    };
+    // A structured key stated as structure is written as its JSON text.
+    let value = match config.get(whole.key) {
+        Some(value @ (serde_json::Value::Array(_) | serde_json::Value::Object(_)))
+            if whole.kind == ConfigKind::Json =>
+        {
+            ControlValue::String(value.to_string())
+        }
+        Some(value) => scalar_control_value(value)?,
+        None => fresh(whole.key)?,
+    };
+    Some((whole.key.to_string(), value))
 }
 
 /// Adds to `updates` the keys of `config` an update replaces among the

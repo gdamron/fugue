@@ -86,11 +86,11 @@ fn an_authored_count_within_a_loaded_scale_is_restored_by_reloading_it() {
         .unwrap();
     pump.render(1);
     // The document holds the scale but no count: reloading it restores the
-    // count its scale builds, by a control write.
+    // count its scale builds, by writing the scale again.
     let report = running.reload(doc(&loaded)).expect("diff applies");
     pump.render(1);
     assert!(report.swapped.is_empty(), "{report:?}");
-    assert_eq!(report.controls_updated, ["tune.degree_count"]);
+    assert_eq!(report.controls_updated, ["tune.degrees"]);
     assert_eq!(read(&running, "tune", "degree_count"), number(3.0));
 }
 

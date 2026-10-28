@@ -94,18 +94,18 @@ fn same_value(
 
 /// Maps a config delta to control updates, or `None` when the delta cannot be
 /// expressed as controls (a non-scalar value, a key the module does not
-/// expose as a control, or a removed key `fresh` gives no value for) and the
-/// module must be swapped.
+/// expose as a control, or a removed key `restore` gives no write for) and
+/// the module must be swapped.
 ///
-/// A removed key returns to the value `fresh` gives it, as a fresh build of
-/// `new` plays it, so deleting a setting glides back to its default as a
+/// A removed key returns by the write `restore` gives it, as a fresh build
+/// of `new` plays it, so deleting a setting glides back to its default as a
 /// key the file never stated does (see [`implicit_restores`]).
 pub(super) fn control_updates_for(
     previous: &Value,
     new: &Value,
     kind: &dyn Fn(&str) -> Option<ConfigKind>,
     mut has_control: impl FnMut(&str) -> bool,
-    fresh: &dyn Fn(&str) -> Option<ControlValue>,
+    restore: &dyn Fn(&str) -> Option<(String, ControlValue)>,
 ) -> Option<Vec<(String, ControlValue)>> {
     static EMPTY: std::sync::LazyLock<Map<String, Value>> = std::sync::LazyLock::new(Map::new);
     let previous = match previous {
@@ -117,12 +117,16 @@ pub(super) fn control_updates_for(
         other => other.as_object()?,
     };
 
-    let mut updates = Vec::new();
+    let mut updates: Vec<(String, ControlValue)> = Vec::new();
     for key in previous.keys().filter(|key| !new.contains_key(*key)) {
         if !has_control(key) {
             return None;
         }
-        updates.push((key.clone(), fresh(key)?));
+        let (written, value) = restore(key)?;
+        if !has_control(&written) {
+            return None;
+        }
+        push_once(&mut updates, written, value);
     }
     for (key, value) in new {
         if previous
@@ -135,39 +139,57 @@ pub(super) fn control_updates_for(
         if !has_control(key) {
             return None;
         }
-        updates.push((key.clone(), control_value));
+        push_once(&mut updates, key.clone(), control_value);
     }
     Some(updates)
+}
+
+/// Adds a write of `key`, unless `updates` already writes it (a whole key
+/// two removed positions restore by, or a removal and a change both do).
+fn push_once(updates: &mut Vec<(String, ControlValue)>, key: String, value: ControlValue) {
+    if !updates.iter().any(|(written, _)| *written == key) {
+        updates.push((key, value));
+    }
 }
 
 /// Restores of a kept module's controls `written` by authored writes its
 /// stored config does not record (see
 /// [`WrittenSince`](crate::invention::state::WrittenSince)): each that
 /// `config`, the new one, does not state as a scalar, and no update in
-/// `pending` writes, returns to the value `fresh` gives it, as a fresh build
-/// of `config` plays it. So reloading a file sounds as the file does, the
-/// keys it leaves implicit included, without rebuilding the module.
+/// `pending` writes, returns by the write `restore` gives it, as a fresh
+/// build of `config` plays it. So reloading a file sounds as the file does,
+/// the keys it leaves implicit included, without rebuilding the module.
 ///
-/// An event is never restored: writing it would fire it. A control `fresh`
-/// has no value for, or one a reload does not write, keeps what was
-/// written.
+/// An event is never restored: writing it would fire it. A control
+/// `restore` gives no write for, or one a reload does not write, keeps what
+/// was written.
 pub(super) fn implicit_restores(
     written: &[String],
     config: &Value,
     pending: &[(String, ControlValue)],
     is_event: impl Fn(&str) -> bool,
     mut has_control: impl FnMut(&str) -> bool,
-    fresh: &dyn Fn(&str) -> Option<ControlValue>,
+    restore: &dyn Fn(&str) -> Option<(String, ControlValue)>,
 ) -> Vec<(String, ControlValue)> {
     let states =
         |key: &str| (config.get(key)).is_some_and(|value| scalar_control_value(value).is_some());
-    written
-        .iter()
+    let mut restores = Vec::new();
+    let candidates = (written.iter())
         .filter(|key| !states(key) && !is_event(key))
-        .filter(|key| !pending.iter().any(|(updated, _)| updated == *key))
-        .filter(|key| has_control(key))
-        .filter_map(|key| Some((key.clone(), fresh(key)?)))
-        .collect()
+        .filter(|key| !pending.iter().any(|(updated, _)| updated == *key));
+    for key in candidates {
+        if !has_control(key) {
+            continue;
+        }
+        let Some((key, value)) = restore(key) else {
+            continue;
+        };
+        let pending = pending.iter().any(|(updated, _)| *updated == key);
+        if !pending && has_control(&key) {
+            push_once(&mut restores, key, value);
+        }
+    }
+    restores
 }
 
 /// What control `key` of a freshly built module holds, when a write of it
