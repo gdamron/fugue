@@ -423,6 +423,12 @@ impl Conditions {
                 i += 1;
                 continue;
             }
+            // An edit's own write and the copy kept over it fall due
+            // together: one gives way before either reaches the module.
+            match self.settle_kept(i, at, outcomes) {
+                Some(now) => i = now,
+                None => continue,
+            }
             let Entry { request, .. } = self.take(i, &mut outcomes.chains);
             if expired(&request, at) {
                 self.settle(request, Refusal::Expired.into(), outcomes);

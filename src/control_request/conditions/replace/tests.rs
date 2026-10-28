@@ -155,3 +155,57 @@ fn a_kept_copy_applies_as_the_edit_lands_once_its_write_applied() {
     assert_eq!(applied, Some((1, Outcome::Applied { at: 70 })));
     assert_eq!(host.applied, [(9, 70)]);
 }
+
+/// Plays edit 7 landing at 70 with a copy kept over it (write 10 applied
+/// first) and the edit's own `write` waiting beside it (queued first, or
+/// after the copy when `copy_first`): what settled, and how many requests
+/// reached the module.
+fn land_beside(write: Request, copy_first: bool) -> (Vec<(u64, Outcome)>, usize) {
+    let (mut store, outcomes) = store();
+    let (mut conditions, slots) = table(4);
+    let mut host = Host::new(vec![vec![0.0; 128]]);
+    let mut queue = [write, copy(2, 7, 10)];
+    if copy_first {
+        queue.reverse();
+    }
+    for request in queue {
+        insert(&mut conditions, &slots, request, &mut store);
+    }
+    store
+        .outcomes
+        .settle(request(10, &AFTER), Outcome::Applied { at: 0 });
+    store
+        .outcomes
+        .settle(request(7, &AFTER), Outcome::Applied { at: 70 });
+    play_ordered(&mut conditions, &mut host, &mut store, 64, 64);
+    assert_eq!((conditions.len(), slots.taken()), (0, 0));
+    let settled = log(&outcomes)
+        .into_iter()
+        .filter(|(id, _)| [1, 2].contains(id));
+    (settled.collect(), host.applied.len())
+}
+
+/// As the edit lands, its own write gives way to the copy before either
+/// reaches the module, so one setter runs (a reverb retunes once).
+#[test]
+fn an_edits_write_gives_way_to_the_copy_landing_with_it() {
+    for copy_first in [false, true] {
+        let (settled, applied) = land_beside(request(1, &AFTER), copy_first);
+        let landed = Outcome::Applied { at: 70 };
+        assert_eq!(settled, [(1, Outcome::Superseded), (2, landed)]);
+        assert_eq!(applied, 1);
+    }
+}
+
+/// An edit's write that outranks the copy plays, and the copy gives way.
+#[test]
+fn an_edits_write_outranking_the_copy_plays_in_its_place() {
+    for copy_first in [false, true] {
+        let mut write = request(1, &AFTER);
+        write.priority = 1;
+        let (settled, applied) = land_beside(write, copy_first);
+        let landed = Outcome::Applied { at: 70 };
+        assert_eq!(settled, [(2, Outcome::Superseded), (1, landed)]);
+        assert_eq!(applied, 1);
+    }
+}
