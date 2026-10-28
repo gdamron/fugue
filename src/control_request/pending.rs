@@ -4,7 +4,7 @@
 use super::chains::{Chains, RECENT};
 use super::hold::{Rank, Standing};
 use super::outcome::OutcomeSender;
-use super::request::{ControlTarget, Request, RequestValue, When};
+use super::request::{ControlTarget, Request, RequestId, RequestValue, When};
 use crate::payload::{Retirer, MAX_RETIRES_PER_REQUEST};
 
 /// Why a request was not applied.
@@ -353,6 +353,22 @@ impl PendingStore {
         &mut self,
         now: u64,
         installed: u64,
+        apply: impl FnMut(
+            &ControlTarget,
+            Option<Standing>,
+            RequestValue,
+            &mut Retirer,
+        ) -> Result<(), Outcome>,
+    ) -> bool {
+        self.apply_until(now, installed, Until::Through(now), apply)
+    }
+
+    /// [`Self::apply_due`] at `now`, stopping where `until` says.
+    pub(crate) fn apply_until(
+        &mut self,
+        now: u64,
+        installed: u64,
+        until: Until,
         mut apply: impl FnMut(
             &ControlTarget,
             Option<Standing>,
@@ -362,7 +378,7 @@ impl PendingStore {
     ) -> bool {
         let mut from = 0;
         loop {
-            let due = self.entries.partition_point(|e| e.at <= now);
+            let due = self.entries.partition_point(|e| until.reaches(e.at));
             let Some(first) = (self.entries[from..due].iter())
                 .position(|e| e.request.target.generation == installed)
                 .map(|offset| from + offset)
@@ -372,6 +388,9 @@ impl PendingStore {
             let at = self.entries[first].at;
             let mut fired = false;
             for events in [false, true] {
+                if events && !until.events(at) {
+                    break;
+                }
                 let end = first + self.entries[first..].partition_point(|e| e.at == at);
                 let applied = self.entries.extract_if(first..end, |e| {
                     e.request.target.generation == installed && e.request.fires() == events
@@ -488,5 +507,8 @@ impl PendingStore {
     }
 }
 
+pub(crate) use self::with_conditions::Until;
+
 #[cfg(test)]
 mod tests;
+mod with_conditions;

@@ -108,6 +108,10 @@ fn all_applied(rig: &mut Rig, count: usize) {
     }
 }
 
+/// Blocks enough for a retriggered slot's old sound to fade out (144
+/// frames at 48 kHz) before the last block's first frame.
+const DECLICK_BLOCKS: usize = 4;
+
 /// 16-bit quantization tolerance.
 const TOL: f32 = 2e-3;
 
@@ -142,7 +146,8 @@ fn play_by_slot_name_and_by_slot_number_both_trigger() {
     rig.render(1);
     assert!((heard(&rig) - 0.75).abs() < TOL, "the kick joins the ride");
     set(&rig, "play", "36".into()).unwrap();
-    rig.render(1);
+    // Past the retrigger's declick, the kick alone has restarted.
+    rig.render(DECLICK_BLOCKS);
     assert!((heard(&rig) - 0.75).abs() < TOL);
     all_applied(&mut rig, 3);
 
@@ -216,6 +221,8 @@ fn a_swap_waits_for_the_next_play_while_the_sounding_sample_rings_out() {
 
     set(&rig, "play", 36.0.into()).unwrap();
     assert_eq!(audio_block(&mut rig), (0, 0));
+    // Once the kick it cut off has faded.
+    rig.render(DECLICK_BLOCKS);
     assert!(
         (heard(&rig) - 0.0625).abs() < TOL,
         "the play takes the new one"

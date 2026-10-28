@@ -7,33 +7,37 @@ use std::sync::Arc;
 
 use super::*;
 use crate::alloc_counter::allocator_events;
+use crate::control_request::hold::Holds;
 use crate::control_request::pending::PendingStore;
 use crate::control_request::{
     outcome_channel, request_channel, ControlIndex, Edge, OutcomeReceiver, RequestId, RtValue,
 };
 
-const INSTALLED: u64 = 1;
+pub(super) const INSTALLED: u64 = 1;
 /// The module whose control the requests write.
-const TARGET: usize = 9;
+pub(super) const TARGET: usize = 9;
 
 /// Signals by module (port 0 each), and how far each is computed in the
 /// current segment.
-struct Host {
+pub(super) struct Host {
     signals: Vec<Vec<f32>>,
     start: u64,
     computed: Vec<u64>,
     /// The sample the target computes next, where requests apply.
-    now: u64,
-    applied: Vec<(usize, u64)>,
+    pub(super) now: u64,
+    pub(super) applied: Vec<(usize, u64)>,
     /// Control 0 of each module.
     controls: Vec<f32>,
     /// How many requests had applied each time the late events applied
     /// were finished.
-    finished: Vec<usize>,
+    pub(super) finished: Vec<usize>,
+    /// Holds on the target's controls, weighed as the graph weighs them,
+    /// when set.
+    pub(super) holds: Option<Holds>,
 }
 
 impl Host {
-    fn new(signals: Vec<Vec<f32>>) -> Self {
+    pub(super) fn new(signals: Vec<Vec<f32>>) -> Self {
         let computed = vec![0; signals.len()];
         Self {
             signals,
@@ -43,18 +47,19 @@ impl Host {
             applied: Vec::with_capacity(8),
             controls: vec![0.0; 2],
             finished: Vec::with_capacity(8),
+            holds: None,
         }
     }
 
     /// Starts a segment at `start`, nothing computed yet.
-    fn segment(&mut self, start: u64) {
+    pub(super) fn segment(&mut self, start: u64) {
         self.start = start;
         self.now = start;
         self.computed.fill(start);
     }
 
     /// Computes module `module` up to sample `to`.
-    fn compute(&mut self, module: usize, to: u64) {
+    pub(super) fn compute(&mut self, module: usize, to: u64) {
         self.computed[module] = to;
     }
 }
@@ -84,10 +89,14 @@ impl ConditionHost for Host {
     fn apply(
         &mut self,
         target: &ControlTarget,
-        _standing: Option<Standing>,
+        standing: Option<Standing>,
         _value: RequestValue,
         _retirer: &mut Retirer,
     ) -> Result<(), Outcome> {
+        if let (Some(holds), Some(standing)) = (&self.holds, standing) {
+            holds.admits(target.control, standing)?;
+            holds.take(target.control, standing);
+        }
         self.applied.push((target.module_idx, self.now));
         Ok(())
     }
@@ -107,8 +116,13 @@ fn gate(onsets: &[usize], len: usize) -> Vec<f32> {
 }
 
 pub(super) fn store() -> (PendingStore, OutcomeReceiver) {
+    store_for(64)
+}
+
+/// A store whose outcome channel holds `outcomes` before it drops any.
+pub(super) fn store_for(outcomes: usize) -> (PendingStore, OutcomeReceiver) {
     let queue = crate::payload::RetireQueue::with_capacity(4);
-    let (sender, outcomes) = outcome_channel(64);
+    let (sender, outcomes) = outcome_channel(outcomes);
     let store = PendingStore::new(4, Retirer::new(queue, 8), sender);
     (store, outcomes)
 }
@@ -153,7 +167,7 @@ pub(super) fn log(outcomes: &OutcomeReceiver) -> Vec<(u64, Outcome)> {
 /// Plays one segment of `frames` from `start` with every source computed
 /// before the target: reads, then applies at each sample the target is
 /// split at. Returns the samples it split the target at.
-fn play_ordered(
+pub(super) fn play_ordered(
     conditions: &mut Conditions,
     host: &mut Host,
     store: &mut PendingStore,
@@ -182,7 +196,7 @@ fn play_ordered(
 
 /// Applies what is due on the target at `at`, and what that meets in
 /// turn, as the graph does.
-fn apply_all(
+pub(super) fn apply_all(
     conditions: &mut Conditions,
     host: &mut Host,
     store: &mut PendingStore,
@@ -190,7 +204,7 @@ fn apply_all(
 ) -> Option<u64> {
     loop {
         let waiting = conditions.len();
-        let next = conditions.apply_due(INSTALLED, Some(TARGET), at, host, &mut store.outcomes);
+        let next = conditions.apply_due(INSTALLED, Some(TARGET), at, host, store);
         if conditions.len() == waiting {
             return next;
         }
@@ -307,14 +321,14 @@ fn a_condition_read_only_after_its_target_computed_applies_late() {
         host.segment(0);
         conditions.start(0, INSTALLED, &host, &mut store.outcomes);
         conditions.read(INSTALLED, Some(TARGET), &host, &store.outcomes.chains);
-        let next = conditions.apply_due(INSTALLED, Some(TARGET), 0, &mut host, &mut store.outcomes);
+        let next = conditions.apply_due(INSTALLED, Some(TARGET), 0, &mut host, &mut store);
         assert_eq!(next, None);
         host.compute(0, 64);
         conditions.read(INSTALLED, None, &host, &store.outcomes.chains);
         // Met at 30, it applies before the target's next sample, at 64.
         host.segment(64);
         conditions.start(64, INSTALLED, &host, &mut store.outcomes);
-        conditions.apply_due(INSTALLED, Some(TARGET), 64, &mut host, &mut store.outcomes);
+        conditions.apply_due(INSTALLED, Some(TARGET), 64, &mut host, &mut store);
         let late = Outcome::AppliedLate { at: 64, due: 30 };
         assert_eq!(log(&outcomes), [(1, late)]);
         // A late event finishes as it applies.
@@ -339,11 +353,13 @@ fn late_events_due_at_one_sample_each_finish_as_they_apply() {
     conditions.read(INSTALLED, None, &host, &store.outcomes.chains);
     host.segment(64);
     conditions.start(64, INSTALLED, &host, &mut store.outcomes);
-    conditions.apply_due(INSTALLED, Some(TARGET), 64, &mut host, &mut store.outcomes);
+    conditions.apply_due(INSTALLED, Some(TARGET), 64, &mut host, &mut store);
     let late = Outcome::AppliedLate { at: 64, due: 30 };
-    assert_eq!(log(&outcomes), [(1, late), (2, late), (3, late)]);
+    // The value due beside them first, as in the pending store, so each
+    // event reads it.
+    assert_eq!(log(&outcomes), [(3, late), (1, late), (2, late)]);
     // As the pending store's and a replay's: each before the next applies.
-    assert_eq!(host.finished, [1, 2]);
+    assert_eq!(host.finished, [2, 3]);
 }
 
 #[test]
