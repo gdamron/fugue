@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::invention::audio_assets::{audio_slots, is_relative_path};
+use crate::invention::audio_assets::{audio_slots, is_relative_path, module_asset_values};
 use crate::invention::reload::LoadedDevelopments;
 use crate::Invention;
 
@@ -61,9 +61,20 @@ impl Invention {
         // A module's audio asset: a relative path, written as text or as a
         // `{ "path": ... }` object. Package refs and URLs are left alone, as
         // is a development instance's key its development exposes as no
-        // asset. Declarations that no longer load leave every such key
-        // read as an asset, as before they were consulted.
-        let developments = LoadedDevelopments::load(self).unwrap_or_default();
+        // asset. When the declarations no longer load, which of an
+        // instance's keys name audio is unknown: the save is refused rather
+        // than rebasing one that does not.
+        let developments = match LoadedDevelopments::load(self) {
+            Ok(developments) => developments,
+            Err(error) if self.modules.iter().any(|module| self.holds_slots(module)) => {
+                let reason = format!(
+                    "cannot save into another directory: a development instance's asset keys \
+                     are read as its development declares them, which does not load: {error}"
+                );
+                return Err(reason.into());
+            }
+            Err(_) => LoadedDevelopments::default(),
+        };
         for module in &mut document.modules {
             for value in audio_slots(module, &developments) {
                 let path = match value {
@@ -80,6 +91,18 @@ impl Invention {
             }
         }
         Ok(document)
+    }
+}
+
+impl Invention {
+    /// Whether `module` is an instance of one of this document's
+    /// developments with a key an asset may lie under.
+    fn holds_slots(&self, module: &crate::invention::ModuleSpec) -> bool {
+        let instance = (self.developments.iter()).any(|spec| spec.name == module.module_type);
+        instance
+            && module_asset_values(&mut module.config.clone())
+                .next()
+                .is_some()
     }
 }
 

@@ -107,3 +107,20 @@ fn saving_elsewhere_leaves_an_exposed_asset_that_names_no_audio_as_written() {
     let shape = running.get_control("m", "asset").unwrap();
     assert_eq!(shape, ControlValue::String("square".into()));
 }
+
+#[test]
+fn saving_elsewhere_is_refused_when_an_instances_declaration_does_not_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let tone = json!({ "id": "a", "type": "oscillator", "config": {} });
+    let shaped = json!({ "asset": "square" });
+    let mut document = piece(dir.path(), (tone, "audio"), "waveform", shaped);
+    let gone = json!({ "name": "gone", "path": "gone.json" });
+    document
+        .developments
+        .push(serde_json::from_value(gone).unwrap());
+    let elsewhere = tempfile::tempdir().unwrap();
+    let target = elsewhere.path().join("copy.json");
+    let error = document.save_to_file(&target).unwrap_err().to_string();
+    assert!(error.contains("does not load"), "{error}");
+    assert!(!target.exists());
+}
