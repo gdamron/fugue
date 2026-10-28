@@ -26,7 +26,6 @@ use crate::control_request::{
     local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable, Refusal,
     RtValue,
 };
-use crate::dsp::LinearRamp;
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::module_config::{finite_f32, whole_number, ConfigReader};
 use crate::modules::mixer::gain_ramp_frames;
@@ -36,10 +35,12 @@ use crate::{ControlMeta, Module};
 
 use self::controls::{control_at, KitControl};
 pub use self::controls::{SlotKey, SlotSpec};
+use self::voice::Voice;
 
 mod controls;
 mod inputs;
 mod outputs;
+mod voice;
 
 pub struct SampleKitFactory;
 
@@ -178,53 +179,6 @@ fn parse_key(
     }
 }
 
-/// One playback voice per slot. Retriggering a slot restarts it (per-slot
-/// choke); different slots mix freely.
-struct Voice {
-    /// What the slot's next play plays.
-    sample: Shared<SampleData>,
-    /// The sample a swap replaced while it sounded, which rings out rather
-    /// than stopping dead (a click). Held until a later swap retires it;
-    /// the sample cache holds its buffer anyway.
-    previous: Shared<SampleData>,
-    /// Whether the voice is playing `previous`.
-    ringing_out: bool,
-    /// The slot's level, gliding to each write while the slot sounds, as a
-    /// mixer's fader does: a level that stepped mid-sample would click.
-    level: LinearRamp,
-    position: usize,
-    active: bool,
-}
-
-impl Voice {
-    fn start(&mut self) {
-        // A play restarts the slot's one voice, so it sounds at the level
-        // written: a glide smooths only a sound that carries on.
-        self.level.settle();
-        self.ringing_out = false;
-        self.position = 0;
-        self.active = self.sample.len() > 0;
-    }
-
-    fn sounding(&self) -> &SampleData {
-        match self.ringing_out {
-            true => &self.previous,
-            false => &self.sample,
-        }
-    }
-
-    /// Takes `sample` for the next play, handing back the handle it no
-    /// longer needs: the sounding one rings out to its end.
-    fn swap(&mut self, sample: Shared<SampleData>) -> Shared<SampleData> {
-        let replaced = std::mem::replace(&mut self.sample, sample);
-        if !self.active || self.ringing_out {
-            return replaced;
-        }
-        self.ringing_out = true;
-        std::mem::replace(&mut self.previous, replaced)
-    }
-}
-
 pub struct SampleKit {
     table: ControlTable,
     cells: Arc<ControlCells>,
@@ -255,14 +209,7 @@ impl SampleKit {
                     Some(RtValue::F32(level)) => level,
                     _ => 1.0,
                 };
-                Voice {
-                    previous: sample.clone(),
-                    sample,
-                    ringing_out: false,
-                    level: LinearRamp::new(level, glide),
-                    position: 0,
-                    active: false,
-                }
+                Voice::new(sample, level, glide, sample_rate)
             })
             .collect();
         Self {
@@ -306,20 +253,12 @@ impl Module for SampleKit {
             let mut left = 0.0;
             let mut right = 0.0;
             for voice in self.voices.iter_mut() {
-                if !voice.active {
+                if !voice.audible() {
                     continue;
                 }
-                let sample = voice.sounding();
-                let (l, r) = sample.frame_at(voice.position);
-                let len = sample.len();
-                let level = voice.level.next_value();
-                left += l * level;
-                right += r * level;
-                voice.position += 1;
-                if voice.position >= len {
-                    voice.active = false;
-                    voice.position = 0;
-                }
+                let (l, r) = voice.next_frame();
+                left += l;
+                right += r;
             }
             self.outputs.set(i, left, right);
         }
@@ -414,5 +353,7 @@ impl Module for SampleKit {
 
 #[cfg(test)]
 mod level_tests;
+#[cfg(test)]
+mod retrigger_tests;
 #[cfg(test)]
 mod tests;
