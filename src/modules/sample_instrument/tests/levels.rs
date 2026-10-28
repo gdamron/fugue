@@ -89,3 +89,48 @@ fn a_note_ending_mid_glide_starts_its_next_note_at_the_level_written() {
     assert_eq!(first, 0.0, "the muted zone stays muted");
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn a_burst_of_stolen_zones_never_steps_a_sounding_zones_level() {
+    use crate::control_request::RtValue;
+    use crate::modules::sample_instrument::controls::{index_of, InstrumentControl as C};
+    // Zone 0 holds note 60; zones 1..=32 each own one key above it and
+    // play silence, so only zone 0 is heard.
+    const ZONES: usize = 33;
+    let path = write_level_wav(0.5, RATE as usize);
+    let silent = write_level_wav(0.0, RATE as usize);
+    let zones: Vec<_> = (0..ZONES)
+        .map(|zone| {
+            let key = 60 + zone;
+            let asset = if zone == 0 { &path } else { &silent };
+            let asset = asset.to_str().unwrap();
+            serde_json::json!({ "root_note": key, "key_range": [key, key], "asset": asset })
+        })
+        .collect();
+    let config = serde_json::json!({ "voices": 2, "zones": zones });
+    let (mut instrument, _surface) = build_instrument(config);
+    let mut apply = |control, value: f32| {
+        instrument
+            .apply(index_of(control, ZONES), RtValue::F32(value))
+            .unwrap();
+    };
+    apply(C::NoteOn, 60.0);
+    // In the order written, between two renders: each zone sounds, glides
+    // and is stolen in turn, while zone 0 sounds on.
+    for zone in 1..ZONES {
+        let key = 60.0 + zone as f32;
+        apply(C::NoteOn, key);
+        apply(C::Level(zone), 0.0);
+        apply(C::NoteOff, key);
+    }
+    apply(C::Level(0), 0.0);
+    let ((), allocs, frees) = allocator_events(|| {
+        let _audio = AudioThreadScope::enter();
+        instrument.process(1);
+    });
+    assert_eq!((allocs, frees), (0, 0));
+    let level = instrument.get_output("audio_left").unwrap();
+    assert!(level > 0.4, "zone 0 glides rather than stepping: {level}");
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(silent);
+}

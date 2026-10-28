@@ -294,8 +294,8 @@ pub struct SampleInstrument {
     /// mixer's fader does: a level that stepped mid-note would click.
     level_ramps: Vec<LinearRamp>,
     /// The zones whose level glides while they sound, each once. Bounded
-    /// by the voice count, as only a sounding zone glides (doubled for a
-    /// zone a steal silenced before the next frame drops it); preallocated.
+    /// by the voice count once silent zones are dropped, as only a sounding
+    /// zone glides; preallocated.
     gliding: Vec<usize>,
     /// Release fade, in seconds.
     release: f32,
@@ -356,7 +356,7 @@ impl SampleInstrument {
                 .map(|&level| LinearRamp::new(level, glide))
                 .collect(),
             levels,
-            gliding: Vec::with_capacity(2 * MAX_VOICES),
+            gliding: Vec::with_capacity(MAX_VOICES),
             release,
             releasing: false,
             next_started: 0,
@@ -378,11 +378,37 @@ impl SampleInstrument {
     /// sounds, at once while it is silent, as nothing heard would step.
     fn set_level(&mut self, zone: usize, level: f32) {
         self.level_ramps[zone].set_target(level);
-        let listed = self.gliding.contains(&zone);
-        if !self.sounds(zone) || (!listed && self.gliding.len() == self.gliding.capacity()) {
+        if !self.sounds(zone) {
             self.settle_level(zone);
-        } else if !listed {
+            return;
+        }
+        if self.gliding.contains(&zone) {
+            return;
+        }
+        if self.gliding.len() == self.gliding.capacity() {
+            self.drop_silent_glides();
+        }
+        // Once silent zones are dropped, each entry has a voice of its own,
+        // so the list has room: a sounding zone never steps for want of it.
+        if self.gliding.len() < self.gliding.capacity() {
             self.gliding.push(zone);
+        } else {
+            self.settle_level(zone);
+        }
+    }
+
+    /// Lands every listed zone that no longer sounds on its target, and
+    /// drops it: notes stolen between renders can leave such entries.
+    fn drop_silent_glides(&mut self) {
+        let mut i = 0;
+        while i < self.gliding.len() {
+            let zone = self.gliding[i];
+            if self.sounds(zone) {
+                i += 1;
+            } else {
+                self.settle_level(zone);
+                self.gliding.swap_remove(i);
+            }
         }
     }
 
