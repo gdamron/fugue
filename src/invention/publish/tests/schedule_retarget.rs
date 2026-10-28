@@ -1,15 +1,17 @@
 //! A live `schedule` write that changes what a top-level scheduler writes
 //! publishes the topology recompiled with the new targets just ahead of it,
-//! so it plays as the same schedule loaded with it would (FUG-388). A write
+//! so it plays as the same schedule loaded with it would. A write
 //! that leaves the targets as compiled publishes nothing.
 
 use super::migrated::{block_while_held, write};
 use super::request_beats::render_counted;
+use super::requests::submit;
 use super::*;
+use crate::control_request::When;
 use crate::control_request::CURSOR_CAPACITY;
 use crate::invention::publish::timed::EditTime;
 use crate::modules::ControlSchedulerControls;
-use crate::test_support::dial::{DialFactory, DIAL};
+use crate::test_support::dial::{DialFactory, DIAL, LEVEL};
 
 const DOCUMENT: &str = r#"{
     "version": "1.0.0",
@@ -371,4 +373,77 @@ fn a_retarget_installing_on_a_step_plays_it_from_the_new_schedule() {
         heard.extend(render_counted(&mut live, BLOCKS - heard.len() / 64));
         assert_eq!(first_change(&heard, &loaded), None, "{fillers} fillers");
     }
+}
+
+/// Late writes to a module a recompile keeps, one queued before it and one
+/// behind it and due earlier, apply in their samples' order, as with no
+/// edit between them: the one due later is heard. The recompile hands the
+/// scheduler its schedule with the requests all the same.
+#[test]
+fn late_writes_on_either_side_of_a_recompile_apply_in_time_order() {
+    let play = |recompile: bool| {
+        let mut rig = rig(0, serde_json::json!([at(40, "dial", "level", 0.25)]));
+        render_counted(&mut rig, 1);
+        let start = rig.graph.current_sample;
+        submit(&rig, "dial", LEVEL.0, 0.5, When::AtSample(start - 2));
+        if recompile {
+            let onto_clock = serde_json::json!([at(40, "clock", "bpm", 97.0)]);
+            write(&rig, "sched", "schedule", onto_clock.to_string().into());
+        }
+        submit(&rig, "dial", LEVEL.0, 0.75, When::AtSample(start - 4));
+        let heard = render_counted(&mut rig, 4);
+        let sched = controls_of(&rig, "sched");
+        assert_eq!(sched.adopted(), sched.recorded(), "adopted");
+        heard
+    };
+    let (live, oracle) = (play(true), play(false));
+    assert_eq!(first_change(&live, &oracle), None);
+}
+
+/// A scheduler at 512 bpm writing the dial 0.5 on its ninth step, inside
+/// the block from sample 50_624; at that block's start a write of 0.2 due
+/// two samples before it, then `edit`. The scheduler's write, due after
+/// the late one, stands: the edit drops its table but not its write.
+fn a_dropped_tables_write_stands(edit: fn(&Rig)) {
+    let play = |with_edit: bool| {
+        let mut rig = rig_at(512.0, 0, serde_json::json!([at(9, "dial", "level", 0.5)]));
+        let mut out = render_counted(&mut rig, 50_624 / 64);
+        let start = rig.graph.current_sample;
+        submit(&rig, "dial", LEVEL.0, 0.2, When::AtSample(start - 2));
+        if with_edit {
+            edit(&rig);
+        }
+        out.extend(render_counted(&mut rig, 64));
+        out
+    };
+    let (edited, twin) = (play(true), play(false));
+    assert_eq!(edited.last(), Some(&0.5), "the scheduler's write is heard");
+    assert_eq!(first_change(&edited, &twin), None);
+}
+
+#[test]
+fn a_scheduler_an_edit_removes_keeps_its_drained_write() {
+    a_dropped_tables_write_stands(|rig| {
+        rig.live
+            .edit(|change| {
+                change.remove("sched");
+                Ok(())
+            })
+            .unwrap();
+    });
+}
+
+#[test]
+fn a_scheduler_an_edit_takes_off_its_clock_keeps_its_drained_write() {
+    a_dropped_tables_write_stands(|rig| {
+        let config = serde_json::json!({ "schedule": [at(9, "dial", "level", 0.5)] });
+        let sched = rig.build("sched", "control_scheduler", config);
+        rig.live
+            .edit(|change| {
+                change.upsert("sched", sched);
+                change.disconnect(edge("clock", "beat", "sched", "clock"));
+                Ok(())
+            })
+            .unwrap();
+    });
 }

@@ -503,8 +503,12 @@ impl SignalGraph {
                 break;
             };
             if is_edit {
-                if can_install {
-                    edit = drain.requests.pop();
+                match can_install {
+                    true => {
+                        edit = drain.requests.pop();
+                        drain.pending.outcomes.edit_installs();
+                    }
+                    false => drain.pending.outcomes.edit_held(now),
                 }
                 break;
             }
@@ -723,6 +727,11 @@ impl SignalGraph {
         }) {
             self.finish_events();
         }
+        // One may wait on a write staged before it started (in the pass
+        // before an edit installed): once the writes due with it are
+        // weighed against it, it applies before the condition is checked,
+        // as a watched write applies at once with no edit between them.
+        self.flush_watched(&mut drain.pending.outcomes);
         if let Some(publication) = self.installing.take() {
             let hand_over = |graph: &mut Self, publication: &mut Box<Publication>| {
                 graph.hand_over_with_requests(publication)
@@ -775,6 +784,9 @@ impl SignalGraph {
         let Some(mut next) = self.with_drain(apply_due) else {
             return remaining;
         };
+        if let Some(drain) = &mut self.requests {
+            drain.pending.outcomes.weighed();
+        }
         // A timed edit due now installs once what is due with it has
         // applied; what it maps may then be due too, and the tables it
         // keeps play on it (see `BeatHost::defers`).

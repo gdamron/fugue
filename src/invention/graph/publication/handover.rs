@@ -15,6 +15,7 @@
 
 use super::{Publication, SignalGraph};
 use crate::control_request::ControlIndex;
+use crate::invention::runtime::ModuleInstance;
 use crate::payload::{Payload, Retired};
 
 /// A payload for a surviving module's declared payload control, applied
@@ -85,6 +86,7 @@ impl SignalGraph {
             let (Some(instance), Some(payload)) = (running, handover.payload.take()) else {
                 continue;
             };
+            debug_assert!(nothing_staged(instance), "handed over past a staged write");
             match instance
                 .module_mut()
                 .apply_payload(handover.control, payload)
@@ -110,6 +112,7 @@ impl SignalGraph {
             let Some(payload) = handover.payload.take() else {
                 continue;
             };
+            debug_assert!(nothing_staged(instance), "handed over past a staged write");
             match instance
                 .module_mut()
                 .apply_payload(handover.control, payload)
@@ -119,4 +122,13 @@ impl SignalGraph {
             }
         }
     }
+}
+
+/// Whether nothing is staged on `instance`. A handover goes to a scheduler,
+/// whose only declared control is its payload, which never stages: so a
+/// payload handed over applies after the requests before the edit and
+/// before those behind it, whatever survivors keep staged across it.
+fn nothing_staged(instance: &ModuleInstance) -> bool {
+    let declared = instance.module().declared();
+    declared.is_none_or(|(_, cells)| cells.staged.is_empty())
 }

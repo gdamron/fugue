@@ -303,31 +303,36 @@ fn a_span_counts_from_before_a_reset_that_applies_ahead_of_an_edit() {
     assert_eq!(outcomes_of(&mut rig, id), [(id, applied)]);
 }
 
+/// Late too: a late request on a clock never holds it for the install
+/// (see `SignalGraph::hold_for_install`), so the reset still lands first.
 #[test]
 fn an_edit_between_a_reset_and_a_span_lets_the_reset_apply_first() {
-    let mut rig = beat_rig(120.0);
-    // Half a beat in, once the next block starts.
-    rig.render(187);
-    let now = rig.graph.current_sample;
-    submit_clock_at(&rig, RESET, RtValue::Bool(true), now);
-    let pad = rig.build("pad", DIAL, serde_json::json!({}));
-    rig.live
-        .edit(|change| {
-            change.upsert("pad", pad);
-            Ok(())
-        })
-        .unwrap();
-    // Submitted after the edit, so taken after the reset applied on the
-    // graph the edit replaced: it counts from the clock's new beat 0.
-    let id = submit_level(&rig, 0.5, BeatSpec::After(0.25));
-    render_counted(&mut rig, blocks_for(120.0, 0.5));
+    for late in [0, 1] {
+        let mut rig = beat_rig(120.0);
+        // Half a beat in, once the next block starts.
+        rig.render(187);
+        let now = rig.graph.current_sample;
+        submit_clock_at(&rig, RESET, RtValue::Bool(true), now - late);
+        let pad = rig.build("pad", DIAL, serde_json::json!({}));
+        rig.live
+            .edit(|change| {
+                change.upsert("pad", pad);
+                Ok(())
+            })
+            .unwrap();
+        // Submitted after the edit, so taken after the reset applied on the
+        // graph the edit replaced: it counts from the clock's new beat 0.
+        let id = submit_level(&rig, 0.5, BeatSpec::After(0.25));
+        render_counted(&mut rig, blocks_for(120.0, 0.5));
 
-    let mut twin = Twin::new(120.0);
-    twin.writes.push((now, RESET, RtValue::Bool(true)));
-    twin.run_to(now);
-    let at = twin.until(|clock| clock.position() >= 0.25);
-    assert!(at > now);
-    assert_eq!(outcomes_of(&mut rig, id), [(id, Outcome::Applied { at })]);
+        let mut twin = Twin::new(120.0);
+        twin.writes.push((now, RESET, RtValue::Bool(true)));
+        twin.run_to(now);
+        let at = twin.until(|clock| clock.position() >= 0.25);
+        assert!(at > now);
+        let applied = [(id, Outcome::Applied { at })];
+        assert_eq!(outcomes_of(&mut rig, id), applied, "{late} late");
+    }
 }
 
 #[test]

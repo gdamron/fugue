@@ -8,6 +8,8 @@
 //! One write stands on a control at a sample ([`contest`]): of the requests
 //! reaching it there, staged or applied at once, the one due last, then of
 //! the higher rank, then received last, as if each had applied on time.
+//! Behind an edit held to a later block, a write is weighed so against one
+//! applied since the edit was first due too ([`Outcomes::edit_held`]).
 //! One that loses reports so at once, and a staged one's setter never runs.
 //! A write applied at once runs after the weaker writes staged on its
 //! module and before the stronger ([`flush_staged_before`]).
@@ -16,6 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering:
 
 use super::automation::take_automation;
 use super::cells::{apply_declared, decode, encode, ControlCells};
+use super::chains::Chains;
 use super::declare::{ControlDecl, DeclKind};
 use super::hold::{admits_hold, rank_of, Rank, Standing};
 use super::pending::{Outcome, Outcomes};
@@ -36,12 +39,15 @@ pub(crate) struct Applying {
     pub(crate) at: u64,
 }
 
-/// The request applying, whether its write was just staged, and how many wait.
+/// The request applying, whether its write was just staged, how many wait,
+/// and since when an edit held to a later block waited.
 #[derive(Debug, Default)]
 pub(crate) struct Staging {
     applying: Option<Applying>,
     parked: bool,
     staged: usize,
+    held: Option<u64>,
+    since: Option<u64>,
 }
 
 impl Staging {
@@ -61,6 +67,29 @@ impl Outcomes {
     /// The request [`Self::applying`] named, once.
     pub(crate) fn take_applying(&mut self) -> Option<Applying> {
         self.staging.applying.take()
+    }
+
+    /// Notes that an edit due at `now` waits to install, from the first
+    /// such sample: an edit held behind ones installing now (past the
+    /// installs a block takes) waits from when the first did.
+    pub(crate) fn edit_held(&mut self, now: u64) {
+        let first = self.staging.since.unwrap_or(now);
+        self.staging.held.get_or_insert(first);
+    }
+
+    /// As the edit installs: until [`Self::weighed`], the requests queued
+    /// behind it are weighed as if it had installed when first due, against
+    /// the writes standing since ([`contest`]). Only the first edit to
+    /// install was held; one installing behind it keeps that sample.
+    pub(crate) fn edit_installs(&mut self) {
+        if let Some(held) = self.staging.held.take() {
+            self.staging.since = Some(held);
+        }
+    }
+
+    /// Ends what [`Self::edit_installs`] began, once those requests applied.
+    pub(crate) fn weighed(&mut self) {
+        self.staging.since = None;
     }
 
     /// How many writes are staged, across the graph.
@@ -104,6 +133,14 @@ impl Slot {
         let rank = rank_of(self.hold.load(Relaxed))?;
         let due = self.due.load(Relaxed);
         (self.at.load(Relaxed) == at).then(|| (due, rank, self.id.load(Relaxed)))
+    }
+
+    /// The write standing here since sample `since`, by what decides
+    /// between two: its due sample, rank and receipt.
+    fn standing_since(&self, since: u64) -> Option<(u64, Rank, u64)> {
+        let rank = rank_of(self.hold.load(Relaxed))?;
+        let due = self.due.load(Relaxed);
+        (self.at.load(Relaxed) >= since).then(|| (due, rank, self.id.load(Relaxed)))
     }
 
     /// Settles the write staged here at `at` as losing to one of
@@ -168,6 +205,18 @@ impl Staged {
             let slot = self.slots.get(usize::from(control.load(Relaxed)));
             slot.is_none_or(|slot| {
                 slot.held.load(Relaxed) == EMPTY || Some(slot.at.load(Relaxed)) == at
+            })
+        })
+    }
+
+    /// Whether a condition waits on a write staged here.
+    fn watched(&self, chains: &Chains) -> bool {
+        let len = self.len.load(Relaxed);
+        self.order.iter().take(len).any(|control| {
+            let slot = self.slots.get(usize::from(control.load(Relaxed)));
+            slot.is_some_and(|slot| {
+                slot.held.load(Relaxed) != EMPTY
+                    && chains.watching(RequestId(slot.id.load(Relaxed)))
             })
         })
     }
@@ -272,10 +321,12 @@ pub(crate) fn contest<M: Module + ?Sized>(
         return Ok(false);
     };
     let mine = (standing.due, standing.rank, applying.id.0);
-    if let Some(theirs) = slot
-        .standing_at(applying.at)
-        .filter(|theirs| mine < *theirs)
-    {
+    let since = outcomes
+        .staging
+        .since
+        .unwrap_or(applying.at)
+        .min(applying.at);
+    if let Some(theirs) = slot.standing_since(since).filter(|theirs| mine < *theirs) {
         return Err(standing.rank.loses_to(theirs.1));
     }
     admits_hold(module, control, standing)?;
@@ -378,6 +429,20 @@ pub(crate) fn stage_write<M: Module + ?Sized>(
 #[inline]
 pub(crate) fn flush_staged<M: Module + ?Sized>(module: &mut M, outcomes: &mut Outcomes) {
     flush_staged_before(module, None, outcomes);
+}
+
+/// [`flush_staged`], once a condition waits on a write staged on `module`
+/// (one staged before the condition started): it learns the write applied
+/// at its sample, as a write it waits on applies at once. Allocation- and
+/// lock-free.
+pub(crate) fn flush_watched<M: Module + ?Sized>(module: &mut M, outcomes: &mut Outcomes) {
+    let watched = match module.declared() {
+        Some((_, cells)) => cells.staged.watched(&outcomes.chains),
+        None => false,
+    };
+    if watched {
+        flush_staged(module, outcomes);
+    }
 }
 
 /// [`flush_staged`], but a write staged at `applying`'s sample stronger

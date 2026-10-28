@@ -67,6 +67,7 @@ mod timed_swap;
 mod timed_writes;
 mod timelines;
 mod unwind;
+mod values_across_edits;
 mod writes;
 
 thread_local! {
