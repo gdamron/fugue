@@ -312,3 +312,30 @@ fn a_full_table_stages_and_flushes_without_allocating() {
     assert!(widest > 8, "a table of {widest}");
     eprintln!("widest table staged: {widest} controls; slowest stage and flush: {slowest:?}");
 }
+
+#[test]
+fn only_an_event_due_between_two_writes_reads_the_one_replaced() {
+    let mut dial = dial();
+    let (mut store, _received) = store();
+    let outcomes = &mut store.outcomes;
+    stage(&mut *dial, outcomes, (LEVEL, RtValue::F32(0.5)), 1, (6, 10));
+    stage(
+        &mut *dial,
+        outcomes,
+        (LEVEL, RtValue::F32(0.75)),
+        2,
+        (8, 10),
+    );
+    let between = Applying {
+        due: 7,
+        ..applying(3, 10)
+    };
+    // A write applied at once runs no replaced setter: one runs a sample.
+    flush_staged_before(&mut *dial, Some(Before::write(user(7), between)), outcomes);
+    assert_eq!(cells(&*dial).load(LEVEL), Some(RtValue::F32(0.25)));
+    // An event due between them reads the value in force then.
+    flush_staged_before(&mut *dial, Some(Before::event(between)), outcomes);
+    assert_eq!(cells(&*dial).load(LEVEL), Some(RtValue::F32(0.5)));
+    flush_staged(&mut *dial, outcomes);
+    assert_eq!(cells(&*dial).load(LEVEL), Some(RtValue::F32(0.75)));
+}
