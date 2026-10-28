@@ -17,8 +17,13 @@
 //!
 //! Every timed write's outcome comes back: the outcome queue keeps room
 //! for them (`publisher::TIMED_OUTCOME_RESERVE`) that untimed ones cannot
-//! take, as long as the front doors keep at most [`TIMED_WRITE_CAPACITY`]
-//! waiting. So a timed write stays listed until its own outcome settles
+//! take, as long as the front doors keep at most [`TIMED_WRITE_ROOM`]
+//! waiting.
+//!
+//! A reserved write (a note off) may wait past each limit by
+//! [`TIMED_RESERVE`], as it may take the watches' and the condition
+//! table's reserves, so other writes waiting never shut out the end of a
+//! note. So a timed write stays listed until its own outcome settles
 //! it, even when the audio thread drops untimed ones.
 
 use super::publisher::{BEAT_WATCH_CAPACITY, PENDING_REQUEST_CAPACITY};
@@ -26,6 +31,7 @@ use super::timed_status::EditState;
 use super::{PendingLog, Publisher};
 use crate::control_request::{
     BeatSpec, BeatTime, Condition, Outcome, Predicate, RequestId, When, CONDITION_CAPACITY,
+    WAITING_RESERVE,
 };
 use crate::invention::request_log::LoggedBeat;
 
@@ -38,6 +44,14 @@ pub(crate) const SAMPLE_TIMED_CAPACITY: usize = PENDING_REQUEST_CAPACITY / 2;
 /// hold.
 pub(crate) const TIMED_WRITE_CAPACITY: usize =
     SAMPLE_TIMED_CAPACITY + BEAT_WATCH_CAPACITY + CONDITION_CAPACITY;
+
+/// How many more reserved writes may wait past each limit: as many as the
+/// watches' and the condition table's reserves hold.
+pub(crate) const TIMED_RESERVE: usize = 2 * WAITING_RESERVE;
+
+/// The most timed control writes kept waiting at once, reserved ones
+/// included.
+pub(crate) const TIMED_WRITE_ROOM: usize = TIMED_WRITE_CAPACITY + TIMED_RESERVE;
 
 /// When a timed control write applies.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -67,22 +81,24 @@ pub(crate) struct Timed {
 /// received. `conditions` says whether a condition can be submitted (room
 /// among the watches, a value rather than a payload). One on a sample is
 /// refused while [`SAMPLE_TIMED_CAPACITY`] such writes wait, and any while
-/// [`TIMED_WRITE_CAPACITY`] timed writes do.
+/// [`TIMED_WRITE_CAPACITY`] timed writes do: each [`TIMED_RESERVE`] more
+/// for a `reserved` one.
 pub(crate) fn resolve(
     time: WriteTime<'_>,
     module_id: &str,
     (publisher, pending): (&mut Publisher, &mut PendingLog),
-    conditions: Result<(), &str>,
+    (conditions, reserved): (Result<(), &str>, bool),
 ) -> Result<Timed, String> {
     let timed = time_of(time, module_id, (publisher, pending), conditions)?;
     let on_sample = matches!(timed.when, When::AtSample(_) | When::AfterSamples(_));
-    if on_sample && pending.on_sample() >= SAMPLE_TIMED_CAPACITY {
+    let reserve = if reserved { TIMED_RESERVE } else { 0 };
+    if on_sample && pending.on_sample() >= SAMPLE_TIMED_CAPACITY + reserve {
         return Err(format!(
             "{SAMPLE_TIMED_CAPACITY} writes already wait on a sample, as many as may at once; \
              write it once some have applied"
         ));
     }
-    if pending.timed_waiting() >= TIMED_WRITE_CAPACITY {
+    if pending.timed_waiting() >= TIMED_WRITE_CAPACITY + reserve {
         return Err(format!(
             "{TIMED_WRITE_CAPACITY} timed writes already wait, as many as may at once; \
              write it once some have applied"

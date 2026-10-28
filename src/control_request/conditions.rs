@@ -50,8 +50,28 @@ use super::pending::{expired, Outcome, Outcomes, Refusal};
 use super::request::{ControlIndex, ControlTarget, Request, RequestId, RequestValue, When};
 use crate::payload::Retirer;
 
-/// The most requests timed by a condition one graph keeps waiting.
+/// The most requests timed by a condition one graph keeps waiting, but
+/// for the [`WAITING_RESERVE`] reserved ones may take too.
 pub(crate) const CONDITION_CAPACITY: usize = 64;
+
+/// Room beyond what a condition table or the beat watches hold that only
+/// reserved requests (`Request::reserved`: note offs) may take, so a note
+/// off timed by a condition or a beat is never shut out by other requests
+/// waiting, which may never apply.
+pub(crate) const WAITING_RESERVE: usize = 16;
+
+/// Requests timed by a condition one graph keeps waiting, reserved ones
+/// included.
+pub(crate) const CONDITION_ROOM: usize = CONDITION_CAPACITY + WAITING_RESERVE;
+
+/// A table's `capacity`, and its [`WAITING_RESERVE`] for a `reserved`
+/// request.
+pub(crate) const fn limit(capacity: usize, reserved: bool) -> usize {
+    match reserved {
+        true => capacity + WAITING_RESERVE,
+        false => capacity,
+    }
+}
 
 /// How many of the latest timed edits cancelled [`WatchSlots`] remembers.
 const CANCELLED: usize = 4;
@@ -90,9 +110,10 @@ impl WatchSlots {
         debug_assert!(released.is_ok(), "released a slot never taken");
     }
 
-    /// Whether [`CONDITION_CAPACITY`] requests are in flight.
-    pub(crate) fn full(&self) -> bool {
-        self.taken.load(Ordering::Relaxed) >= CONDITION_CAPACITY
+    /// Whether [`CONDITION_CAPACITY`] requests are in flight, or
+    /// [`CONDITION_ROOM`] for a `reserved` one.
+    pub(crate) fn full(&self, reserved: bool) -> bool {
+        self.taken.load(Ordering::Relaxed) >= limit(CONDITION_CAPACITY, reserved)
     }
 
     pub(crate) fn taken(&self) -> usize {
@@ -202,11 +223,12 @@ pub(crate) struct Conditions {
 }
 
 impl Conditions {
-    /// Room for `capacity` requests, releasing each one's slot in `slots`
-    /// as it settles. Allocates: control thread.
+    /// Room for `capacity` requests, and [`WAITING_RESERVE`] more reserved
+    /// ones, releasing each one's slot in `slots` as it settles.
+    /// Allocates: control thread.
     pub(crate) fn new(capacity: usize, slots: Arc<WatchSlots>) -> Self {
         Self {
-            entries: Vec::with_capacity(capacity),
+            entries: Vec::with_capacity(capacity + WAITING_RESERVE),
             limit: capacity,
             slots,
         }
@@ -231,8 +253,9 @@ impl Conditions {
         self.entries.is_empty()
     }
 
-    pub(crate) fn is_full(&self) -> bool {
-        self.entries.len() >= self.limit
+    /// Whether a request, `reserved` or not, finds no room.
+    pub(crate) fn is_full(&self, reserved: bool) -> bool {
+        self.entries.len() >= limit(self.limit, reserved)
     }
 
     /// Refuses a condition nothing can meet. An edit timed by one lands
@@ -262,7 +285,7 @@ impl Conditions {
         let Some(request) = self.coalesce(request, condition, outcomes) else {
             return;
         };
-        if self.is_full() {
+        if self.is_full(request.reserved) {
             return self.settle(request, Refusal::PendingFull.into(), outcomes);
         }
         self.entries.push(Entry {

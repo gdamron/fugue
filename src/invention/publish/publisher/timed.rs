@@ -336,7 +336,7 @@ impl Publisher {
         }
         // Room for the write itself after it, through the same sender (and
         // its reserve), so a kept write is always made.
-        if requests.watchers_full() || !requests.has_room_for(2) {
+        if requests.watchers_full(false) || !requests.has_room_for(2) {
             return None;
         }
         let id = waiting.id;

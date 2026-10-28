@@ -261,7 +261,7 @@ fn a_write_that_cannot_be_kept_cancels_the_edit() {
     let id = queue_writing(&rig, 440.0);
     let target = frequency_target(&rig, "osc1");
     let never = Condition::all(&[Predicate::Applied(RequestId(u64::MAX))]).unwrap();
-    while !rig.live.requests.watch_slots().full() {
+    while !rig.live.requests.watch_slots().full(false) {
         let mut request = Request::new(target, RequestValue::Value(RtValue::F32(300.0)));
         request.when = When::Condition(never);
         rig.live.requests.submit(request).unwrap();

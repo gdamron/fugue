@@ -286,7 +286,7 @@ impl LiveGraph {
             EditTime::BeatOf { module, spec } => beat(publisher.beat_clock(module, None)?, spec),
             EditTime::FirstClock(spec) => beat(publisher.first_clock()?, spec),
             EditTime::Condition(parts) => {
-                if self.requests.watchers_full() {
+                if self.requests.watchers_full(false) {
                     let full = "Too many requests wait on a condition; try again once some apply";
                     return Err(control(full.into()));
                 }

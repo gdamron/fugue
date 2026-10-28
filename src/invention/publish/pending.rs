@@ -441,7 +441,7 @@ impl PendingLog {
     }
 
     /// How many timed writes wait (see
-    /// `timed_write::TIMED_WRITE_CAPACITY`).
+    /// `timed_write::TIMED_WRITE_ROOM`).
     pub(crate) fn timed_waiting(&self) -> usize {
         (self.writes.iter())
             .filter(|(_, write)| write.when != When::Now)
