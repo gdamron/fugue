@@ -72,8 +72,10 @@ use crate::control_request::{
     local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable, Refusal,
     RtValue,
 };
+use crate::dsp::LinearRamp;
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::module_config::{finite_f32, whole_number, whole_number_in, ConfigKey, ConfigReader};
+use crate::modules::mixer::gain_ramp_frames;
 use crate::modules::sample_loading::check_entry_fields;
 use crate::music::Note;
 use crate::payload::{Payload, Retired, Shared};
@@ -285,12 +287,14 @@ pub struct SampleInstrument {
     outputs: outputs::SampleInstrumentOutputs,
     zones: Vec<ZoneRuntime>,
     voices: Vec<Voice>,
-    /// Zone levels as the mix plays them: taken from `level_targets` as a
-    /// block begins, after its notes, so a note stealing a voice fades the
-    /// old note out at the level it was sounding at.
+    /// Zone levels as the mix plays them on this frame, so a note stealing
+    /// a voice fades the old note out at the level it was sounding at.
     levels: Vec<f32>,
-    /// Zone levels as last written.
-    level_targets: Vec<f32>,
+    /// Zone levels gliding to each write while the zone sounds, as a
+    /// mixer's fader does: a level that stepped mid-note would click.
+    level_ramps: Vec<LinearRamp>,
+    /// Whether any of `level_ramps` is still moving.
+    levels_gliding: bool,
     /// Release fade, in seconds.
     release: f32,
     /// Whether a note off written since the last block waits for its
@@ -335,6 +339,7 @@ impl SampleInstrument {
             .map(|zone| number(InstrumentControl::Level(zone), 1.0))
             .collect();
         let release = number(InstrumentControl::Release, DEFAULT_RELEASE);
+        let glide = gain_ramp_frames(sample_rate);
         Self {
             table,
             cells,
@@ -344,14 +349,48 @@ impl SampleInstrument {
             voices: (0..voices.clamp(1, MAX_VOICES))
                 .map(|_| Voice::new())
                 .collect(),
-            level_targets: levels.clone(),
+            level_ramps: levels
+                .iter()
+                .map(|&level| LinearRamp::new(level, glide))
+                .collect(),
             levels,
+            levels_gliding: false,
             release,
             releasing: false,
             next_started: 0,
             sample_rate: sample_rate as f32,
             declick_step: 1.0 / (DECLICK_SECONDS * sample_rate as f32).max(1.0),
             last_gate: 0.0,
+        }
+    }
+
+    /// Moves zone `zone`'s level to `level`: a glide while the zone
+    /// sounds, at once while it is silent, as nothing heard would step.
+    fn set_level(&mut self, zone: usize, level: f32) {
+        let ramp = &mut self.level_ramps[zone];
+        ramp.set_target(level);
+        if self
+            .voices
+            .iter()
+            .any(|voice| voice.active && voice.zone == zone)
+        {
+            self.levels_gliding = true;
+        } else {
+            ramp.settle();
+            self.levels[zone] = level;
+        }
+    }
+
+    /// Every zone's level for the next frame.
+    #[inline]
+    fn next_levels(&mut self) {
+        if self.levels_gliding {
+            let mut gliding = false;
+            for (level, ramp) in self.levels.iter_mut().zip(&mut self.level_ramps) {
+                *level = ramp.next_value();
+                gliding |= ramp.is_gliding();
+            }
+            self.levels_gliding = gliding;
         }
     }
 
@@ -467,11 +506,8 @@ impl Module for SampleInstrument {
         // came first, and one written later never reaches back.
         self.finish_events();
 
-        // Levels are control-rate: taken once per block, after the notes
-        // the block's writes played.
-        self.levels.copy_from_slice(&self.level_targets);
-
         for i in 0..frames {
+            self.next_levels();
             let gate = self.inputs.gate(i);
             if gate > 0.5 && self.last_gate <= 0.5 {
                 self.note_on(self.inputs.frequency(i), self.inputs.velocity(i));
@@ -576,8 +612,9 @@ impl Module for SampleInstrument {
                 Ok(RtValue::F32(0.0))
             }
             Some(InstrumentControl::Level(zone)) => {
-                self.level_targets[zone] = number.clamp(0.0, 2.0);
-                Ok(RtValue::F32(self.level_targets[zone]))
+                let level = number.clamp(0.0, 2.0);
+                self.set_level(zone, level);
+                Ok(RtValue::F32(level))
             }
             _ => Err(Refusal::Unsupported),
         }
