@@ -282,3 +282,58 @@ fn nothing_overtakes_a_held_note_off() {
     assert_eq!(applied.len(), offs, "every note off");
     assert!(applied.is_sorted(), "in the order sent");
 }
+
+/// A note off held while a timed edit waits to land is tagged with the
+/// graph the edit replaces. The edit lands and is adopted, and the queue
+/// drains, before anything queues what is held: the note off still
+/// reaches the instrument the edit keeps, and its note ends.
+#[test]
+fn a_note_off_held_across_a_timed_edit_still_ends_its_note() {
+    use crate::invention::publish::timed::EditTime;
+    let dir = tempfile::tempdir().unwrap();
+    let mut rig = sounding(dir.path());
+    let spare = rig.build("spare", "oscillator", json!({}));
+    let mut change = rig.live.begin();
+    change.upsert("spare", spare);
+    let at = EditTime::AtSample(rig.graph.current_sample + 64);
+    let edit = (rig.live)
+        .commit_when(change.prepare().unwrap(), at, None, |state| {
+            state.document = None;
+        })
+        .unwrap();
+    let far = rig.graph.current_sample + 10_000_000;
+    let mut next = 0;
+    while note_on(&rig, far + next).is_some() {
+        next += 1;
+    }
+    // Note offs for a note not sounding, until one is held.
+    let holding = rig.live.requests.holding();
+    while !holding.load(Ordering::Acquire) {
+        set(&rig, "note_off", 61.0.into()).unwrap();
+    }
+    set(&rig, "note_off", 60.0.into()).unwrap();
+    for _ in 0..8 {
+        rig.render(1);
+        rig.live.adopt_landed();
+    }
+    assert!(rig.module_ids().contains(&"spare".to_string()), "landed");
+    let landed = outcomes(&mut rig).into_iter().find(|(id, _)| *id == edit);
+    assert!(
+        matches!(landed, Some((_, Outcome::Applied { .. }))),
+        "{landed:?}"
+    );
+    assert!(
+        holding.load(Ordering::Acquire),
+        "nothing queued what is held"
+    );
+    rig.live.held_flush().tick();
+    let heard = rig.render(2);
+    assert!(
+        heard[64..].iter().all(|level| level.abs() < TOL),
+        "{heard:?}"
+    );
+    let gone = Outcome::Refused(Refusal::TargetGone);
+    assert!(!outcomes(&mut rig)
+        .iter()
+        .any(|(_, outcome)| *outcome == gone));
+}

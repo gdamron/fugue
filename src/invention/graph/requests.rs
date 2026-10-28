@@ -319,9 +319,16 @@ impl RequestDrain {
         self.pending.outcomes.end();
     }
 
-    /// Whether nothing tagged `generation` or older waits in the queue.
-    /// Tags never decrease along the queue, so the head tells.
+    /// Whether nothing tagged `generation` or older waits in the queue, or
+    /// on the control side for room: a request held there (see
+    /// `control_request::backlog`) may be tagged that old, and is queued
+    /// later, ahead of anything newer. Tags never decrease along the
+    /// queue, so then the head tells. The flag is read first: it clears
+    /// only once what was held is queued.
     pub(super) fn drained_through(&mut self, generation: u64) -> bool {
+        if self.reserved.held() {
+            return false;
+        }
         let head = self.requests.peek(|head| head.target.generation);
         head.is_none_or(|head| head > generation)
     }

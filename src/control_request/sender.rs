@@ -19,13 +19,14 @@ pub(crate) fn request_channel(
 ) -> (RequestSender, QueueConsumer<Request>) {
     debug_assert_control_thread("request_channel");
     let (queue, consumer) = bounded(capacity);
+    let backlog = Backlog::default();
     let shared = Arc::new(SenderShared {
         next_id: AtomicU64::new(1),
         overflows: EventCounter::new(),
         transport,
         watches: Arc::new(WatchSlots::default()),
-        reserved: Arc::new(ReservedQueued::default()),
-        backlog: Backlog::default(),
+        reserved: Arc::new(ReservedQueued::holding(backlog.flag())),
+        backlog,
     });
     let sender = RequestSender {
         queue,
@@ -76,9 +77,26 @@ pub(crate) struct ReservedQueued {
     queued: AtomicU64,
     /// Written by the drain alone.
     taken: AtomicU64,
+    /// Whether the channel holds any for want of room (see `backlog`).
+    held: Arc<AtomicBool>,
 }
 
 impl ReservedQueued {
+    /// Counts for a channel whose backlog sets `held`.
+    fn holding(held: Arc<AtomicBool>) -> Self {
+        Self {
+            held,
+            ..Self::default()
+        }
+    }
+
+    /// Whether the channel holds any on the control side, to queue once
+    /// there is room: they may be tagged with a generation the queue has
+    /// drained, so the drain keeps that generation's bridge for them.
+    pub(crate) fn held(&self) -> bool {
+        self.held.load(Ordering::Acquire)
+    }
+
     /// The drain took one.
     pub(crate) fn took(&self) {
         let taken = self.taken.load(Ordering::Relaxed);
@@ -108,10 +126,11 @@ impl RequestSender {
 
     /// Assigns `request` the channel's next id, resolves its relative times
     /// and queues it. Lock-free and allocation-free from any thread,
-    /// including the audio thread, while the queue has room. A reserved
-    /// request that finds none is held on a control thread (see
-    /// `backlog`), which takes a control lock, and allocates the backlog
-    /// once; on the audio thread it is refused.
+    /// including the audio thread, while the queue has room and nothing is
+    /// held. A reserved request that finds none is held (see `backlog`),
+    /// which takes a control lock and allocates the backlog once, so only
+    /// control threads may submit one that could be: nothing submits from
+    /// the audio thread, and in debug builds one is refused there.
     ///
     /// [`When::AfterSamples`] and the `ttl` count from the transport's
     /// published count ([`Transport::rendered`]) as of this call: they
