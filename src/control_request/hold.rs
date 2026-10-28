@@ -249,8 +249,7 @@ impl Holds {
         self.set(index, encode(standing.rank, standing.due));
     }
 
-    /// [`Self::take`], returning the word the write took and the one it
-    /// replaced, for [`Self::restore`].
+    /// [`Self::take`], returning the word taken and the one replaced.
     pub(super) fn swap(&self, index: ControlIndex, standing: Standing) -> (u64, u64) {
         let prev = self.word(index);
         let taken = encode(standing.rank, standing.due);
@@ -258,9 +257,7 @@ impl Holds {
         (taken, prev)
     }
 
-    /// Gives `index` back the word `prev` a write that took `taken` replaced
-    /// (see [`Self::swap`]), unless something took or freed it since: the
-    /// write was refused after all.
+    /// Undoes a [`Self::swap`] unless something took or freed `index` since.
     pub(super) fn restore(&self, index: ControlIndex, taken: u64, prev: u64) {
         if self.word(index) == taken {
             self.set(index, prev);

@@ -1,17 +1,9 @@
-//! Plain writes staged per control, applied as their module processes.
-//!
-//! A request's plain value write is weighed against the holds, and takes
-//! its hold, as it falls due, but its setter runs only at a flush: as its
-//! module is about to process, or sooner where something needs it applied
-//! ([`flush_staged`]). Modules observe controls only as they process, so
-//! the heard result is the same; audio-thread readers before then (a
-//! ramp's start, a condition's control part) read the staged write
-//! ([`ControlCells::current`]). A slot per declared control and a list of
-//! the staged ones, in order, are allocated with the module. A second
-//! write to a staged control flushes the module first, so every setter
-//! runs in due order. Outcomes report at the flush, `Refused` (the hold
-//! given back) when the module refuses the write there. Only the thread
-//! running the module touches the slots, so `Relaxed` is enough.
+//! Plain writes staged per control: a request's write takes its hold as it
+//! falls due, and its setter runs at a flush ([`flush_staged`]), as its
+//! module is about to process or before something needs it applied. The
+//! heard result is the same; a ramp starting from the control reads the
+//! staged value ([`ControlCells::current`]). Slots are allocated with the
+//! module, and only the thread running it touches them (`Relaxed`).
 
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering::Relaxed};
 
@@ -26,9 +18,7 @@ use crate::Module;
 /// No write staged: no tag [`encode`] makes.
 const EMPTY: u64 = u64::MAX;
 
-/// The request about to apply, as the one recording its outcome tells the
-/// graph (see [`Outcomes::applying`]): what a write staged for it reports
-/// once flushed.
+/// The request about to apply (see [`Outcomes::applying`]).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Applying {
     pub(crate) id: RequestId,
@@ -38,8 +28,7 @@ pub(crate) struct Applying {
     pub(crate) at: u64,
 }
 
-/// What a drain's [`Outcomes`] knows of staging: the request about to
-/// apply, whether its write was just staged, and how many writes wait.
+/// The request applying, whether its write was just staged, and how many wait.
 #[derive(Debug, Default)]
 pub(crate) struct Staging {
     applying: Option<Applying>,
@@ -48,8 +37,7 @@ pub(crate) struct Staging {
 }
 
 impl Staging {
-    /// Whether the settle being recorded is that of a write just staged,
-    /// which reports at its flush instead. Ends the request's apply.
+    /// Whether the settle being recorded is a staged write's, sent at its flush.
     pub(super) fn settled(&mut self) -> bool {
         self.applying = None;
         std::mem::take(&mut self.parked)
@@ -57,9 +45,7 @@ impl Staging {
 }
 
 impl Outcomes {
-    /// Tells the graph which request applies next, so it may stage the
-    /// write: the caller then records its outcome, as always, before any
-    /// other.
+    /// Names the request applying next, so the graph may stage its write.
     pub(crate) fn applying(&mut self, applying: Applying) {
         self.staging.applying = Some(applying);
     }
@@ -175,17 +161,14 @@ impl Staged {
 }
 
 impl ControlCells {
-    /// The value `index` holds, or the write staged on it: what it will
-    /// hold as its module processes. `None` past the table.
+    /// The write staged on `index`, else the value it holds.
     #[inline]
     pub(crate) fn current(&self, index: ControlIndex) -> Option<RtValue> {
         self.staged.held(index).or_else(|| self.load(index))
     }
 }
 
-/// `value` as a module holding `decl` keeps it: clamped, a whole number
-/// truncated, as automation holds its writes (see
-/// [`super::Automation::write_number`]).
+/// `value` clamped (and truncated) as `decl`'s module keeps it.
 fn held(decl: &ControlDecl, value: RtValue) -> RtValue {
     match (decl.kind, value) {
         (DeclKind::Number { .. }, RtValue::F32(value)) => {
@@ -202,12 +185,9 @@ fn held(decl: &ControlDecl, value: RtValue) -> RtValue {
     }
 }
 
-/// Stages `value`, a plain write of `standing` to `control` of `module`,
-/// for `applying`: weighed against the holds, and taking its hold, now,
-/// its setter left to [`flush_staged`]. `Ok(false)` when it cannot stage
-/// (a control past the table, or one that rewrites others), to apply at
-/// once; `Err` is what it lost as. A write to a control already staged
-/// flushes the module first. Allocation-, free- and lock-free.
+/// Stages a plain write, taking its hold now: `Ok(false)` when it must apply
+/// at once (an event, or a control that rewrites others), `Err` what it
+/// lost as. A staged control flushes first. Allocation- and lock-free.
 pub(crate) fn stage_write<M: Module + ?Sized>(
     module: &mut M,
     control: ControlIndex,
@@ -257,12 +237,8 @@ pub(crate) fn stage_write<M: Module + ?Sized>(
     Ok(true)
 }
 
-/// Runs the setter of every write staged on `module`, in the order staged,
-/// and reports each: as it fell due, or `Refused` when the module refuses
-/// it, giving back the hold it took. Call it on the thread running the
-/// module before it processes, or before anything else applies to it.
-/// Allocation-, free- and lock-free; nothing to do when nothing is staged
-/// anywhere.
+/// Runs every setter staged on `module`, in order, and reports each; one
+/// refused gives back its hold. Allocation- and lock-free.
 #[inline]
 pub(crate) fn flush_staged<M: Module + ?Sized>(module: &mut M, outcomes: &mut Outcomes) {
     if outcomes.staged() == 0 {

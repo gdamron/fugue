@@ -1,6 +1,5 @@
-//! Plain writes staged until their module processes (see
-//! [`crate::control_request::stage_write`]): where the graph stages a
-//! request's write, and where it flushes what is staged.
+//! Where the graph stages a request's write, and flushes what is staged
+//! (see [`crate::control_request::stage_write`]).
 
 use super::SignalGraph;
 use crate::control_request::{
@@ -8,13 +7,8 @@ use crate::control_request::{
 };
 
 impl SignalGraph {
-    /// Applies a request as [`Self::apply_ranked`] does, staging a plain
-    /// write of a rank for the request [`Outcomes::applying`] named: its
-    /// setter runs as its module processes, or at a flush before. Anything
-    /// else applies at once, after what is staged on its module. A write a
-    /// condition waits on applies at once too, so the condition learns of
-    /// it as it applies (see `Chains::watching`). Allocation-, free- and
-    /// lock-free.
+    /// [`Self::apply_ranked`], staging a plain write: anything else, or a
+    /// write a condition waits on (`Chains::watching`), applies at once.
     pub(super) fn stage(
         &mut self,
         target: &ControlTarget,
@@ -39,8 +33,7 @@ impl SignalGraph {
         self.apply_ranked(target, standing, value, &mut outcomes.retirer)
     }
 
-    /// Whether a write for request `id` may stage: a test's request hook
-    /// applies every write as it comes.
+    /// Whether `id`'s write may stage (never under a test's request hook).
     fn stages(&self, id: crate::control_request::RequestId, outcomes: &Outcomes) -> bool {
         #[cfg(test)]
         if self.request_hook.is_some() {
@@ -56,8 +49,7 @@ impl SignalGraph {
         }
     }
 
-    /// Flushes what is staged on every module: before anything reads them
-    /// as a whole (a clock's timeline), or an edit replaces them.
+    /// Flushes every module's staged writes.
     pub(super) fn flush_all(&mut self, outcomes: &mut Outcomes) {
         if outcomes.staged() == 0 {
             return;
@@ -72,9 +64,7 @@ impl SignalGraph {
         self.with_drain(|graph, drain| graph.flush_all(&mut drain.pending.outcomes));
     }
 
-    /// [`Self::flush_module`] through the graph's own drain, as the module
-    /// is about to process; nothing when the drain is out (its holder
-    /// flushes).
+    /// [`Self::flush_module`] through the graph's drain, when it holds it.
     pub(super) fn flush_staged_on(&mut self, module_idx: usize) {
         let (Some(drain), Some((_, instance))) = (
             self.requests.as_mut(),

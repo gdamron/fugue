@@ -34,7 +34,7 @@ impl BeatHost for SignalGraph {
         // scheduler's ramp does (`Automation::current`).
         let value = match module.alias_value(target.control) {
             Some(value) => value,
-            None => module.declared()?.1.current(target.control)?,
+            None => module.declared()?.1.load(target.control)?,
         };
         match value {
             RtValue::F32(value) => Some(value),

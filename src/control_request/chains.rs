@@ -90,8 +90,7 @@ impl Chains {
         }
     }
 
-    /// Whether a condition waits on `id`: then it must settle as it
-    /// applies, not at a later flush (see [`super::staged`]).
+    /// Whether a condition waits on `id` (which then settles at once).
     pub(crate) fn watching(&self, id: RequestId) -> bool {
         self.watched.iter().any(|watched| watched.id == id)
     }
