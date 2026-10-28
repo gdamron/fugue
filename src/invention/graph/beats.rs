@@ -149,6 +149,9 @@ impl SignalGraph {
         if watches.is_empty() {
             return None;
         }
+        // A clock's timeline settles what was written to it before the
+        // beats are placed on it.
+        self.flush_all(outcomes);
         // A clock's position counts its automation from here, as its
         // requests do (written before this sample, taken before it plays).
         // So a request timed in beats applies after automation written for

@@ -247,3 +247,37 @@ fn a_write_chained_to_a_ramp_at_its_rank_replaces_it() {
     assert_eq!(at as usize, beat_one());
     assert!(out[at as usize..].iter().all(|&level| level == 0.1));
 }
+
+/// Submits a write the dial refuses as it applies (a level must be a
+/// number), at automation's rank, at `when`.
+fn submit_refused(rig: &Rig, when: When) -> RequestId {
+    let publisher = rig.live.publisher().lock().unwrap();
+    let target = publisher.control_target("dial", LEVEL).unwrap();
+    let mut request = Request::new(target, RequestValue::Value(RtValue::Bool(true)));
+    request.when = when;
+    request.source = Source::Automation;
+    rig.live.requests.submit(request).unwrap()
+}
+
+/// A write the module refuses changes nothing: a ramp on its control
+/// still reaches its end, whether the write was timed for a sample or on
+/// a condition.
+#[test]
+fn a_refused_write_leaves_a_ramp_running() {
+    use crate::control_request::{Condition, Predicate};
+    for chained in [false, true] {
+        let mut rig = ramp_rig();
+        let when = on_beat(&rig, 4.0, 1.0);
+        let ramp = submit_level(&rig, Source::Automation, 0.75, when, Some(2.0));
+        let when = match chained {
+            false => When::AtSample(2048),
+            true => When::Condition(Condition::all(&[Predicate::Applied(ramp)]).unwrap()),
+        };
+        let refused = submit_refused(&rig, when);
+        let out = render_counted(&mut rig, 64);
+        let unsupported = Outcome::Refused(Refusal::Unsupported);
+        assert_eq!(outcomes_of(&mut rig, refused), [(refused, unsupported)]);
+        let end = beat_one() + 2 * BEAT;
+        assert!(out[end..].iter().all(|&level| level == 0.75), "{chained}");
+    }
+}

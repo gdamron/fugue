@@ -57,6 +57,7 @@ mod process;
 mod publication;
 mod requests;
 mod scc;
+mod staging;
 mod unwind;
 
 pub(crate) use compile::{compile_topology, CompiledTopology, TopologyFacts};

@@ -5,6 +5,7 @@ use super::chains::{Chains, RECENT};
 use super::hold::{Rank, Standing};
 use super::outcome::OutcomeSender;
 use super::request::{ControlTarget, Request, RequestId, RequestValue, When};
+use super::staged::{Applying, Staging};
 use crate::payload::{Retirer, MAX_RETIRES_PER_REQUEST};
 
 /// Why a request was not applied.
@@ -92,6 +93,8 @@ pub(crate) struct Outcomes {
     sender: OutcomeSender,
     /// Every settle, for the conditions waiting on one.
     pub(crate) chains: Chains,
+    /// What is staged, and for which request (see [`super::staged`]).
+    pub(super) staging: Staging,
 }
 
 impl Outcomes {
@@ -101,6 +104,7 @@ impl Outcomes {
             reserved: 0,
             sender,
             chains: Chains::new(RECENT),
+            staging: Staging::default(),
         }
     }
 
@@ -167,6 +171,23 @@ impl Outcomes {
     /// [`Self::record`] for a request timed in beats, with the sample it
     /// latched its clock on, if it did and then did not apply.
     pub(super) fn record_on_beat(
+        &mut self,
+        id: super::RequestId,
+        payload: bool,
+        outcome: Outcome,
+        latched: Option<u64>,
+        timed: bool,
+    ) {
+        // A write just staged reports as it flushes.
+        if self.staging.settled() {
+            debug_assert!(!payload, "a payload is never staged");
+            return;
+        }
+        self.send(id, payload, outcome, latched, timed);
+    }
+
+    /// Sends a settle, as [`Self::record_on_beat`] does.
+    pub(super) fn send(
         &mut self,
         id: super::RequestId,
         payload: bool,
@@ -357,7 +378,7 @@ impl PendingStore {
             &ControlTarget,
             Option<Standing>,
             RequestValue,
-            &mut Retirer,
+            &mut Outcomes,
         ) -> Result<(), Outcome>,
     ) -> bool {
         self.apply_until(now, installed, Until::Through(now), apply)
@@ -373,7 +394,7 @@ impl PendingStore {
             &ControlTarget,
             Option<Standing>,
             RequestValue,
-            &mut Retirer,
+            &mut Outcomes,
         ) -> Result<(), Outcome>,
     ) -> bool {
         let mut from = 0;
@@ -419,7 +440,7 @@ impl PendingStore {
             &ControlTarget,
             Option<Standing>,
             RequestValue,
-            &mut Retirer,
+            &mut Outcomes,
         ) -> Result<(), Outcome>,
     ) -> bool {
         let mut applied_any = false;
@@ -437,14 +458,16 @@ impl PendingStore {
                 ..
             } = request;
             let payload = value.is_payload();
-            let outcome = match apply(&target, standing, value, &mut outcomes.retirer) {
+            let timed = when != When::Now;
+            outcomes.applying(Applying { id, timed, at: now });
+            let outcome = match apply(&target, standing, value, outcomes) {
                 Ok(()) if due < now => Outcome::AppliedLate { at: now, due },
                 Ok(()) => Outcome::Applied { at: now },
                 Err(outcome) => outcome,
             };
             applied_any |= matches!(outcome, Outcome::Applied { .. })
                 || matches!(outcome, Outcome::AppliedLate { .. });
-            outcomes.record(id, payload, outcome, when != When::Now);
+            outcomes.record(id, payload, outcome, timed);
             if one && applied_any {
                 break;
             }

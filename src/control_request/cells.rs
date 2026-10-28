@@ -6,6 +6,7 @@ use super::automation::{AutomationSlots, EventQueue, EventReserve};
 use super::hold::Holds;
 use super::pending::Refusal;
 use super::request::{ControlIndex, RtValue};
+use super::staged::Staged;
 use crate::Module;
 
 /// The value each of a module's declared controls holds, published for
@@ -41,6 +42,9 @@ pub(crate) struct ControlCells {
     /// Which tier holds each control against lower ones (see
     /// [`super::hold`]).
     pub(crate) holds: Holds,
+    /// Plain writes waiting for the module to process (see
+    /// [`super::staged`]).
+    pub(crate) staged: Staged,
 }
 
 impl ControlCells {
@@ -71,10 +75,12 @@ impl ControlCells {
             .collect();
         let automation = AutomationSlots::new(cells.len(), events);
         let holds = Holds::new(cells.len());
+        let staged = Staged::new(cells.len());
         Self {
             cells,
             automation,
             holds,
+            staged,
         }
     }
 

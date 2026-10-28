@@ -54,6 +54,7 @@ mod schedule_rebind;
 mod schedule_retarget;
 mod scheduler_beats;
 mod scheduler_edges;
+mod staged_writes;
 mod step_pattern;
 mod timed_chain;
 mod timed_edits;

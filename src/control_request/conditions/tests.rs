@@ -91,7 +91,7 @@ impl ConditionHost for Host {
         target: &ControlTarget,
         standing: Option<Standing>,
         _value: RequestValue,
-        _retirer: &mut Retirer,
+        _outcomes: &mut Outcomes,
     ) -> Result<(), Outcome> {
         if let (Some(holds), Some(standing)) = (&self.holds, standing) {
             holds.admits(target.control, standing)?;

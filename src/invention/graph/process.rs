@@ -62,6 +62,9 @@ impl SignalGraph {
             }
             start = end;
         }
+        // Every module has processed; what a zero-length block, or a module
+        // that did not, left staged applies before the block is read back.
+        self.flush_all_staged();
         self.transport.publish(self.current_sample);
     }
 
@@ -170,6 +173,8 @@ impl SignalGraph {
             }
         }
 
+        // Its requests' writes, then the automation written after them.
+        self.flush_staged_on(module_idx);
         if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
             // A span after the first starts at its own frame 0.
             let _frame_zero = (from > 0).then(|| FrameScope::frame(from));
@@ -223,6 +228,7 @@ impl SignalGraph {
                     }
                 }
 
+                self.flush_staged_on(module_idx);
                 if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
                     take_automation(inst.module_mut());
                     inst.module_mut().process(1);
