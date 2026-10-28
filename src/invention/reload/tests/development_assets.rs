@@ -109,7 +109,7 @@ fn saving_elsewhere_leaves_an_exposed_asset_that_names_no_audio_as_written() {
 }
 
 #[test]
-fn saving_elsewhere_is_refused_when_an_instances_declaration_does_not_load() {
+fn only_saving_elsewhere_is_refused_when_an_instances_declaration_does_not_load() {
     let dir = tempfile::tempdir().unwrap();
     let tone = json!({ "id": "a", "type": "oscillator", "config": {} });
     let shaped = json!({ "asset": "square" });
@@ -123,4 +123,10 @@ fn saving_elsewhere_is_refused_when_an_instances_declaration_does_not_load() {
     let error = document.save_to_file(&target).unwrap_err().to_string();
     assert!(error.contains("does not load"), "{error}");
     assert!(!target.exists());
+    let beside = dir.path().join("piece.json");
+    document
+        .save_to_file(&beside)
+        .expect("saving beside the source applies");
+    let saved = Invention::from_file(&beside.to_string_lossy()).unwrap();
+    assert_eq!(saved.modules[0].config["asset"], "square");
 }

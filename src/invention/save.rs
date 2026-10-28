@@ -62,11 +62,15 @@ impl Invention {
         // `{ "path": ... }` object. Package refs and URLs are left alone, as
         // is a development instance's key its development exposes as no
         // asset. When the declarations no longer load, which of an
-        // instance's keys name audio is unknown: the save is refused rather
-        // than rebasing one that does not.
+        // instance's keys name audio is unknown: a save into another
+        // directory is refused rather than rebasing one that does not, and a
+        // save beside the source keeps every module's paths as authored.
         let developments = match LoadedDevelopments::load(self) {
             Ok(developments) => developments,
             Err(error) if self.modules.iter().any(|module| self.holds_slots(module)) => {
+                if std::path::absolute(source_dir)? == target_dir {
+                    return Ok(document);
+                }
                 let reason = format!(
                     "cannot save into another directory: a development instance's asset keys \
                      are read as its development declares them, which does not load: {error}"
