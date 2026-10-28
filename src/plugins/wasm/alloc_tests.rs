@@ -1,4 +1,4 @@
-//! The host side of the input path makes no allocation per call.
+//! The host side of the input and output paths makes no allocation per call.
 
 use std::fs;
 use std::path::PathBuf;
@@ -95,4 +95,24 @@ fn set_input_block_lowers_the_input_block_without_a_host_allocation() {
 
     assert!(matches!(result, Ok(Ok(()))));
     assert_eq!((allocs, frees), (0, 0));
+}
+
+#[test]
+fn process_copies_the_emitted_output_without_a_host_allocation() {
+    let (_temp, path) = fixture_component();
+    let mut graph_module =
+        super::load_component_module(&path, 48_000, "{}", &fixture_manifest()).expect("load");
+    let module = graph_module.module_mut();
+    module.set_input_connected(0, true);
+    module.input_block_mut(0)[..64].fill(12_000.0);
+    // Warm up: the first block may set up guest state.
+    assert!(module.process(64));
+
+    let (active, allocs, frees) = allocator_events(|| module.process(64));
+
+    assert!(active);
+    assert_eq!((allocs, frees), (0, 0));
+    // The fixture's phase ramps by a quarter per sample, from where the
+    // warm-up block left it.
+    assert_eq!(&module.output_block(0)[..4], &[0.0, 0.25, 0.5, 0.75]);
 }

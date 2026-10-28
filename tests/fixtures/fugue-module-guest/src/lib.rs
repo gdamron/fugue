@@ -12,7 +12,6 @@ struct State {
     frequency: f32,
     phase: f32,
     output: [f32; 1024],
-    last_frames: usize,
 }
 
 impl Default for State {
@@ -22,7 +21,6 @@ impl Default for State {
             frequency: 440.0,
             phase: 0.0,
             output: [0.0; 1024],
-            last_frames: 0,
         }
     }
 }
@@ -31,7 +29,7 @@ thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
 }
 
-impl Guest for TestModule {
+impl exports::fugue::module::guest::Guest for TestModule {
     fn init(sample_rate: u32, _config_json: String) -> Result<(), String> {
         STATE.with_borrow_mut(|state| {
             state.sample_rate = sample_rate as f32;
@@ -77,33 +75,14 @@ impl Guest for TestModule {
     fn process(frames: u32) -> bool {
         STATE.with_borrow_mut(|state| {
             let frames = (frames as usize).min(state.output.len());
-            state.last_frames = frames;
             for i in 0..frames {
                 state.output[i] = state.phase;
                 state.phase += state.frequency / state.sample_rate;
-                state.phase %= 1.0;
+                state.phase -= state.phase.floor();
             }
+            fugue::module::host::emit_output(0, &state.output[..frames]);
         });
         true
-    }
-
-    fn process_output_block(frames: u32) -> Result<(bool, Vec<f32>), String> {
-        let active = Self::process(frames);
-        Ok((active, Self::output_block(0)?))
-    }
-
-    fn output_block(index: u32) -> Result<Vec<f32>, String> {
-        if index != 0 {
-            return Err(format!("unknown output index: {index}"));
-        }
-        STATE.with_borrow(|state| Ok(state.output[..state.last_frames].to_vec()))
-    }
-
-    fn get_output(port: String) -> Result<f32, String> {
-        if port != "audio" {
-            return Err(format!("unknown output: {port}"));
-        }
-        STATE.with_borrow(|state| Ok(state.output[0]))
     }
 
     fn set_control(key: String, value: f32) -> Result<(), String> {

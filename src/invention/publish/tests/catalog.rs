@@ -24,15 +24,9 @@ use crate::{ControlKind, ControlMeta, ControlSurface, ControlValue};
 const NOT_COVERED: &[(&str, &str)] = &[];
 
 /// Types whose blocks may allocate and free, though never lock: (type,
-/// why). Each entry is a known bug, and must still allocate, so a fix
-/// removes it.
-const ALLOCATES: &[(&str, &str)] = &[(
-    "wasm_module",
-    "lifts its list<f32> output into a fresh Vec each block; reading the \
-     list in place is unsound, since wasmtime runs the guest's post-return \
-     cleanup before the host can read it, so a fix needs an ABI that hands \
-     the samples over while the guest still owns them",
-)];
+/// why). Empty: each entry would be a known bug, and must still allocate,
+/// so a fix removes it.
+const ALLOCATES: &[(&str, &str)] = &[];
 
 const DAC_ONLY: &str = r#"{
     "version": "1.0.0",
