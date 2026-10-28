@@ -15,6 +15,7 @@ use crate::control_request::{
 };
 use crate::invention::publish::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
 use serde_json::json;
+use std::sync::atomic::Ordering;
 
 const NOTE_ON: ControlIndex = ControlIndex(1);
 
@@ -182,8 +183,11 @@ fn stalled(dir: &std::path::Path) -> Rig {
 fn applied_after_stall(rig: &mut Rig) -> (Vec<f32>, usize) {
     let mut heard = Vec::new();
     let mut applied = 0;
+    let held = rig.live.held_flush();
     for _ in 0..64 {
         rig.live.reclaim();
+        // As the reclaimer's thread would, between blocks.
+        held.tick();
         heard = rig.render(1);
         applied += (outcomes(rig).into_iter())
             .filter(|(_, outcome)| matches!(outcome, Outcome::Applied { .. }))
@@ -217,4 +221,64 @@ fn every_voice_of_many_instruments_ends_behind_stalled_edits() {
     let (heard, applied) = applied_after_stall(&mut rig);
     assert!(heard.iter().all(|level| level.abs() < TOL), "{heard:?}");
     assert_eq!(applied, VOICES, "every note off");
+}
+
+/// More note offs than the queue has room for, behind stalled edits: those
+/// past the room are held until it frees, and every one applies. Past the
+/// backlog too, one is refused.
+#[test]
+fn note_offs_past_the_queue_wait_for_room_and_all_end() {
+    use crate::control_request::BACKLOG_CAPACITY;
+    use crate::invention::publish::publisher::RESERVED_ROOM;
+    let dir = tempfile::tempdir().unwrap();
+    let mut rig = stalled(dir.path());
+    let offs = RESERVED_ROOM + BACKLOG_CAPACITY;
+    for n in 0..offs {
+        let note = (60 + n) % 128;
+        set(&rig, "note_off", (note as f32).into()).unwrap();
+    }
+    assert!(
+        set(&rig, "note_off", 60.0.into()).is_err(),
+        "past the backlog"
+    );
+    let (heard, applied) = applied_after_stall(&mut rig);
+    assert!(heard.iter().all(|level| level.abs() < TOL), "{heard:?}");
+    assert_eq!(applied, offs, "every note off");
+}
+
+/// While note offs are held, one submitted after them never overtakes
+/// them, though the audio thread has freed room since: what is held is
+/// queued first, so every note off applies in the order it was sent.
+#[test]
+fn nothing_overtakes_a_held_note_off() {
+    use crate::invention::publish::publisher::RESERVED_ROOM;
+    let dir = tempfile::tempdir().unwrap();
+    let mut rig = stalled(dir.path());
+    let offs = RESERVED_ROOM + 2;
+    for n in 0..offs - 1 {
+        set(&rig, "note_off", (((60 + n) % 128) as f32).into()).unwrap();
+    }
+    assert!(rig.live.requests.holding().load(Ordering::Acquire), "held");
+    // The audio thread frees room, which nothing has filled from the
+    // backlog yet.
+    rig.live.reclaim();
+    rig.render(1);
+    assert!(rig.live.requests.holding().load(Ordering::Acquire));
+    set(&rig, "note_off", 61.0.into()).unwrap();
+    assert!(
+        !rig.live.requests.holding().load(Ordering::Acquire),
+        "queued"
+    );
+    let mut applied = Vec::new();
+    for _ in 0..64 {
+        rig.live.reclaim();
+        rig.render(1);
+        applied.extend(
+            (outcomes(&mut rig).into_iter())
+                .filter(|(_, outcome)| matches!(outcome, Outcome::Applied { .. }))
+                .map(|(id, _)| id),
+        );
+    }
+    assert_eq!(applied.len(), offs, "every note off");
+    assert!(applied.is_sorted(), "in the order sent");
 }
