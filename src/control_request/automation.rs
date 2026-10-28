@@ -44,6 +44,8 @@ use crate::Module;
 
 mod events;
 #[cfg(test)]
+mod late_tests;
+#[cfg(test)]
 mod order_tests;
 
 use events::NO_SAMPLE;
@@ -102,8 +104,12 @@ impl AutomationSlots {
             }
         } else if event || self.events.insert_value(index, value, at) != Some(true) {
             // In its slot: before every event, as one written on time for
-            // its sample would be (with no room behind the events it
-            // follows, still kept rather than lost).
+            // its sample would be. With no room behind the events it
+            // follows, it is still kept there rather than lost, the latest
+            // write to its control.
+            if !event {
+                self.events.remove_values(index);
+            }
             self.slots[usize::from(index.0)].store(encode(value), Ordering::Relaxed);
         }
         self.pending.store(true, Ordering::Relaxed);
@@ -141,9 +147,10 @@ impl AutomationSlots {
 
 /// Applies every automation write waiting for `module`: its values in
 /// control order, then its events' slots, then its queued events in the
-/// order written, counting refusals. Everything waiting falls due at one
-/// sample, so an event reads the values written for it, whichever came
-/// first. Call it on the audio thread just before the module processes.
+/// order written, counting refusals. Everything waiting at one sample
+/// falls due together, so an event reads the values written for it,
+/// whichever came first; taken late, the queue's events of one sample
+/// finish ([`Module::finish_events`]) before the writes of a later one. Call it on the audio thread just before the module processes.
 /// Allocation-, free- and lock-free; one `Relaxed` load when nothing is
 /// waiting.
 #[inline]
@@ -179,13 +186,23 @@ pub(crate) fn take_automation<M: Module + ?Sized>(module: &mut M) {
         Some((_, cells)) => cells.automation.events.len(),
         None => return,
     };
+    // Taken late, the queue spans samples: the events of each finish
+    // before a later sample's writes apply, as on time.
+    let mut unfinished = None::<u64>;
     for position in 0..queued {
-        let Some((index, value)) = module
-            .declared()
-            .and_then(|(_, cells)| cells.automation.events.get(position))
-        else {
+        let Some(((index, value), (at, event))) = module.declared().and_then(|(_, cells)| {
+            let events = &cells.automation.events;
+            events.get(position).zip(events.sample(position))
+        }) else {
             break;
         };
+        if unfinished.is_some_and(|sounded| at != NO_SAMPLE && at > sounded) {
+            module.finish_events();
+            unfinished = None;
+        }
+        if event && at != NO_SAMPLE {
+            unfinished = Some(at);
+        }
         if apply_declared(module, index, value).is_err() {
             if let Some((_, cells)) = module.declared() {
                 cells.automation.refused.record();

@@ -145,6 +145,35 @@ impl EventQueue {
         Some(true)
     }
 
+    /// Drops every value queued for `index`: a later one, finding no room
+    /// behind the events, goes in its slot, and an older one queued must
+    /// not overwrite it there.
+    #[inline]
+    pub(crate) fn remove_values(&self, index: ControlIndex) {
+        let len = self.len.load(Ordering::Relaxed);
+        let mut kept = 0;
+        for position in 0..len {
+            let word = self.words[position].load(Ordering::Relaxed);
+            let sample = self.samples[position].load(Ordering::Relaxed);
+            let value_of = sample & EVENT_BIT == 0 && (word >> INDEX_SHIFT) as u16 == index.0;
+            if value_of {
+                continue;
+            }
+            self.words[kept].store(word, Ordering::Relaxed);
+            self.samples[kept].store(sample, Ordering::Relaxed);
+            kept += 1;
+        }
+        self.len.store(kept, Ordering::Relaxed);
+    }
+
+    /// The sample the `position`th write was made for ([`NO_SAMPLE`] when
+    /// unknown), and whether it is an event.
+    #[inline]
+    pub(crate) fn sample(&self, position: usize) -> Option<(u64, bool)> {
+        let word = self.samples.get(position)?.load(Ordering::Relaxed);
+        Some((word & NO_SAMPLE, word & EVENT_BIT != 0))
+    }
+
     /// Whether a write to `index` finds room among `len` queued.
     fn has_room(&self, index: ControlIndex, len: usize) -> bool {
         let kept = match self.reserve {

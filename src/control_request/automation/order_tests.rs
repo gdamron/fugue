@@ -76,7 +76,13 @@ impl Module for Recorder {
         self.applied.push(control.0);
         Ok(value)
     }
+    fn finish_events(&mut self) {
+        self.applied.push(FINISHED);
+    }
 }
+
+/// Recorded as the events applied so far finish.
+const FINISHED: u16 = u16::MAX;
 
 fn recorder(cells: ControlCells) -> Recorder {
     Recorder {
@@ -128,7 +134,8 @@ fn a_value_written_after_a_queued_events_sample_applies_after_it() {
         slots.write(LEVEL, RtValue::F32(0.5), false);
     }
     take_automation(&mut module);
-    assert_eq!(module.applied, [LEVEL.0, NOTE.0, LEVEL.0, NOTE.0]);
+    let applied = [LEVEL.0, NOTE.0, FINISHED, LEVEL.0, NOTE.0];
+    assert_eq!(module.applied, applied, "sample 10's note finished first");
     assert_eq!(module.cells.load(LEVEL), Some(RtValue::F32(0.5)));
 }
 
@@ -164,4 +171,24 @@ fn a_value_finding_no_room_behind_the_events_is_kept_in_its_slot() {
     drop(_at);
     take_automation(&mut module);
     assert_eq!(module.applied, [LEVEL.0, NOTE.0]);
+}
+
+/// A value finding no room behind the events goes in its slot, and one
+/// queued before it for its control is dropped: the latest write stands.
+#[test]
+fn a_value_put_in_its_slot_for_want_of_room_stays_the_latest() {
+    let cells = ControlCells::queuing_events(DECLS.iter().map(|d| d.default), 2, None);
+    let mut module = recorder(cells);
+    let slots = &module.cells.automation;
+    for (sample, write) in [(10, None), (11, Some(0.25)), (12, Some(0.5))] {
+        let _at = FrameScope::enter(sample);
+        match write {
+            None => slots.write(NOTE, RtValue::F32(60.0), true),
+            Some(level) => slots.write(LEVEL, RtValue::F32(level), false),
+        }
+    }
+    assert_eq!(slots.written(LEVEL), Some(RtValue::F32(0.5)));
+    take_automation(&mut module);
+    assert_eq!(module.applied, [LEVEL.0, NOTE.0]);
+    assert_eq!(module.cells.load(LEVEL), Some(RtValue::F32(0.5)));
 }
