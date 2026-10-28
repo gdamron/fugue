@@ -210,6 +210,7 @@ fn voiced(freq: &str) -> String {
 
 #[test]
 fn a_declared_control_compares_by_value_even_where_its_type_declares_no_config_key() {
+    let _ungoverned = crate::pkg::lock::ungoverned_here();
     // A development's config keys are its exposed controls, which its type
     // does not list as config keys: the running control's kind reads them.
     let mut running = start(&voiced("440"));

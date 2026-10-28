@@ -44,6 +44,7 @@ fn at(running: &RunningInvention) -> ControlValue {
 
 #[test]
 fn a_saved_event_fires_neither_as_its_development_runs_nor_on_reload() {
+    let _ungoverned = crate::pkg::lock::ungoverned_here();
     let (runtime, _) = InventionBuilder::new(SAMPLE_RATE)
         .build(sequence(r#"{ "advance": 1 }"#, true))
         .unwrap();

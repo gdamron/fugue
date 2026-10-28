@@ -322,6 +322,7 @@ const PAIR: &str = r#"{
 
 #[test]
 fn a_developments_implicit_key_is_not_restored_by_one_write() {
+    let _ungoverned = crate::pkg::lock::ungoverned_here();
     // One write cannot put back two inner values, and a development's
     // config applies after a validation build reads it: reloading keeps
     // what was written rather than restoring a value the file never plays.
@@ -368,4 +369,31 @@ fn a_count_of_an_empty_scale_returns_by_the_scale() {
     assert_nothing_rebuilt(&report);
     let count = running.get_control("tune", "degree_count").unwrap();
     assert_eq!(count, number(0.0));
+}
+
+#[test]
+fn a_fresh_value_no_write_reaches_is_not_restored() {
+    // A dial at rest builds no steps, below the one its writes start at: no
+    // write restores it, so none is made, and the written count plays on.
+    let mut registry = crate::ModuleRegistry::default();
+    registry.register(crate::test_support::dial::DialFactory);
+    let resting = json!({
+        "version": "1.0.0",
+        "modules": [{ "id": "d", "type": "dial", "config": { "rest": true } }],
+        "connections": []
+    })
+    .to_string();
+    let (runtime, _) = InventionBuilder::with_registry(SAMPLE_RATE, registry)
+        .build(doc(&resting))
+        .unwrap();
+    let (mut running, pump) = start_manual(runtime);
+    assert_eq!(running.get_control("d", "steps").unwrap(), number(0.0));
+    running.set_control("d", "steps", number(2.0)).unwrap();
+    pump.render(1);
+
+    let report = running.reload(doc(&resting)).expect("diff applies");
+
+    assert!(report.controls_updated.is_empty(), "{report:?}");
+    assert_nothing_rebuilt(&report);
+    assert_eq!(running.get_control("d", "steps").unwrap(), number(2.0));
 }
