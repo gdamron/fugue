@@ -1,5 +1,7 @@
 use super::*;
 
+mod mix_glide;
+
 #[test]
 fn test_silence_in_silence_out() {
     let mut reverb = Reverb::new(44100);
@@ -44,6 +46,10 @@ fn test_dry_passthrough() {
     let mut reverb = Reverb::new(44100);
     reverb.set_control("wet", 0.0).unwrap();
     reverb.set_control("dry", 1.0).unwrap();
+    // Silence while the mix glides to the writes.
+    for _ in 0..gain_ramp_frames(44100) {
+        reverb.process(1);
+    }
 
     reverb.set_input("audio_left", 0.75).unwrap();
     reverb.set_input("audio_right", -0.5).unwrap();
