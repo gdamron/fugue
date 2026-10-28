@@ -15,7 +15,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
-use super::publisher::{OUTCOME_QUEUE_CAPACITY, REQUEST_QUEUE_CAPACITY, WAITING_CAPACITY};
+use super::publisher::{OUTCOME_QUEUE_CAPACITY, QUEUE_SLOTS, WAITING_CAPACITY};
 use crate::control_request::{
     EventCursor, Outcome, OutcomeReceiver, Refusal, RequestId, RtValue, Source, When,
 };
@@ -27,8 +27,8 @@ use crate::ControlValue;
 mod authored;
 
 /// The most writes the log remembers: every request the queue, the
-/// pending store and the watches can hold at once.
-const LOG_CAPACITY: usize = REQUEST_QUEUE_CAPACITY + WAITING_CAPACITY;
+/// pending store and the watches can hold at once, reserved ones included.
+const LOG_CAPACITY: usize = QUEUE_SLOTS + WAITING_CAPACITY;
 
 /// Timed edits whose outcomes the log awaits. One waits at a time, so a
 /// few more cover those adopted before reporting; past that, the oldest is

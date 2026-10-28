@@ -45,9 +45,15 @@ pub(crate) const SAMPLE_TIMED_CAPACITY: usize = PENDING_REQUEST_CAPACITY / 2;
 pub(crate) const TIMED_WRITE_CAPACITY: usize =
     SAMPLE_TIMED_CAPACITY + BEAT_WATCH_CAPACITY + CONDITION_CAPACITY;
 
-/// How many more reserved writes may wait past each limit: as many as the
-/// watches' and the condition table's reserves hold.
-pub(crate) const TIMED_RESERVE: usize = 2 * WAITING_RESERVE;
+/// How many more reserved writes may wait on a sample past
+/// [`SAMPLE_TIMED_CAPACITY`].
+pub(crate) const SAMPLE_TIMED_RESERVE: usize = 2 * WAITING_RESERVE;
+
+/// How many more reserved writes may wait in all past
+/// [`TIMED_WRITE_CAPACITY`]: those on a sample, and as many as the watches'
+/// and the condition table's reserves hold, so no one kind shuts out the
+/// others.
+pub(crate) const TIMED_RESERVE: usize = SAMPLE_TIMED_RESERVE + 2 * WAITING_RESERVE;
 
 /// The most timed control writes kept waiting at once, reserved ones
 /// included.
@@ -81,8 +87,8 @@ pub(crate) struct Timed {
 /// received. `conditions` says whether a condition can be submitted (room
 /// among the watches, a value rather than a payload). One on a sample is
 /// refused while [`SAMPLE_TIMED_CAPACITY`] such writes wait, and any while
-/// [`TIMED_WRITE_CAPACITY`] timed writes do: each [`TIMED_RESERVE`] more
-/// for a `reserved` one.
+/// [`TIMED_WRITE_CAPACITY`] timed writes do; a `reserved` one while
+/// [`SAMPLE_TIMED_RESERVE`] and [`TIMED_RESERVE`] more do.
 pub(crate) fn resolve(
     time: WriteTime<'_>,
     module_id: &str,
@@ -91,16 +97,19 @@ pub(crate) fn resolve(
 ) -> Result<Timed, String> {
     let timed = time_of(time, module_id, (publisher, pending), conditions)?;
     let on_sample = matches!(timed.when, When::AtSample(_) | When::AfterSamples(_));
-    let reserve = if reserved { TIMED_RESERVE } else { 0 };
-    if on_sample && pending.on_sample() >= SAMPLE_TIMED_CAPACITY + reserve {
+    let (on_sample_room, room) = match reserved {
+        true => (SAMPLE_TIMED_CAPACITY + SAMPLE_TIMED_RESERVE, TIMED_WRITE_ROOM),
+        false => (SAMPLE_TIMED_CAPACITY, TIMED_WRITE_CAPACITY),
+    };
+    if on_sample && pending.on_sample() >= on_sample_room {
         return Err(format!(
-            "{SAMPLE_TIMED_CAPACITY} writes already wait on a sample, as many as may at once; \
+            "{on_sample_room} writes already wait on a sample, as many as may at once; \
              write it once some have applied"
         ));
     }
-    if pending.timed_waiting() >= TIMED_WRITE_CAPACITY + reserve {
+    if pending.timed_waiting() >= room {
         return Err(format!(
-            "{TIMED_WRITE_CAPACITY} timed writes already wait, as many as may at once; \
+            "{room} timed writes already wait, as many as may at once; \
              write it once some have applied"
         ));
     }

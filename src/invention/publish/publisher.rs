@@ -53,7 +53,7 @@ pub(crate) const EDIT_RESERVE: usize = 3 * REQUEST_QUEUE_CAPACITY;
 pub(crate) const RESERVED_ROOM: usize = 640;
 
 /// The request queue's size: control requests and the edits' reserve.
-const QUEUE_SLOTS: usize = REQUEST_QUEUE_CAPACITY + EDIT_RESERVE;
+pub(crate) const QUEUE_SLOTS: usize = REQUEST_QUEUE_CAPACITY + EDIT_RESERVE;
 
 // The queue rounds its size up to a power of two, and the reserve and the
 // drain's pop budget both assume it holds exactly these slots.
