@@ -30,6 +30,11 @@ impl DevelopmentDefinitions {
     pub(crate) fn of(loaded: Arc<LoadedDevelopments>) -> Self {
         Self { loaded }
     }
+
+    /// The developments the running document declares.
+    pub(crate) fn loaded(&self) -> &Arc<LoadedDevelopments> {
+        &self.loaded
+    }
 }
 
 /// The developments one document declares, each loaded with the ones its
