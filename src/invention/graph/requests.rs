@@ -718,10 +718,6 @@ impl SignalGraph {
         drain
             .conditions
             .start(now, drain.installed, &*self, outcomes);
-        // One may wait on a write staged before it started (in the pass
-        // before an edit installed): that applies first, as it would have
-        // with no edit between them.
-        self.flush_watched(&mut drain.pending.outcomes);
         self.apply_conditions(drain, None, now);
         let ramps = &mut drain.watches.ramps;
         // At a ramp's own rank and sample, a write leaves the hold as the
@@ -731,6 +727,11 @@ impl SignalGraph {
         }) {
             self.finish_events();
         }
+        // One may wait on a write staged before it started (in the pass
+        // before an edit installed): once the writes due with it are
+        // weighed against it, it applies before the condition is checked,
+        // as a watched write applies at once with no edit between them.
+        self.flush_watched(&mut drain.pending.outcomes);
         if let Some(publication) = self.installing.take() {
             let hand_over = |graph: &mut Self, publication: &mut Box<Publication>| {
                 graph.hand_over_with_requests(publication)

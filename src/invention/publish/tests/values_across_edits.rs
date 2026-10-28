@@ -276,31 +276,56 @@ fn a_crossing_written_before_an_edit_is_read_as_without_it() {
     assert_eq!(met(true), twin);
 }
 
-/// A write due now, an edit keeping its module, then one on the same
-/// control waiting for the first to apply: it applies with it, as with no
-/// edit (the first, staged before the condition started, is flushed for it).
+/// A write due now, an edit keeping its module, then (if `replaced`)
+/// another due now, and one on the same control waiting for the first to
+/// apply: played with and without the edit, with when it started and how
+/// each settled.
+fn waiting_on_a_write_staged_before_an_edit(
+    replaced: bool,
+    with_edit: bool,
+) -> (u64, Vec<f32>, Vec<Vec<Outcome>>) {
+    let mut rig = edit_rig();
+    let start = rig.graph.current_sample;
+    let mut ids = vec![submit_level(&rig, "dial", 0.75, Due::Now, start)];
+    if with_edit {
+        rebuild_spare(&rig);
+    }
+    if replaced {
+        ids.push(submit_level(&rig, "dial", 0.25, Due::Now, start));
+    }
+    let publisher = rig.live.publisher().lock().unwrap();
+    let target = publisher.control_target("dial", LEVEL).unwrap();
+    drop(publisher);
+    let mut request = Request::new(target, RequestValue::Value(RtValue::F32(0.5)));
+    let applied = Condition::all(&[Predicate::Applied(ids[0])]).unwrap();
+    request.when = When::Condition(applied);
+    ids.push(rig.live.requests.submit(request).unwrap());
+    let out = render_counted(&mut rig, 4);
+    (start, out, settled(&mut rig, ids))
+}
+
+/// The one waiting applies with the first, as with no edit (the first,
+/// staged before the condition started, is flushed for it).
 #[test]
 fn a_write_waiting_on_one_staged_before_an_edit_applies_with_it() {
-    let play = |with_edit: bool| {
-        let mut rig = edit_rig();
-        let start = rig.graph.current_sample;
-        let first = submit_level(&rig, "dial", 0.75, Due::Now, start);
-        if with_edit {
-            rebuild_spare(&rig);
-        }
-        let publisher = rig.live.publisher().lock().unwrap();
-        let target = publisher.control_target("dial", LEVEL).unwrap();
-        drop(publisher);
-        let mut request = Request::new(target, RequestValue::Value(RtValue::F32(0.5)));
-        let applied = Condition::all(&[Predicate::Applied(first)]).unwrap();
-        request.when = When::Condition(applied);
-        let then = rig.live.requests.submit(request).unwrap();
-        let out = render_counted(&mut rig, 4);
-        (start, out, settled(&mut rig, vec![first, then]))
-    };
-    let (start, twin, without) = play(false);
+    let (start, twin, without) = waiting_on_a_write_staged_before_an_edit(false, false);
     assert_eq!(without[1], [Outcome::Applied { at: start }]);
-    let (_, out, settled) = play(true);
+    let (_, out, settled) = waiting_on_a_write_staged_before_an_edit(false, true);
+    assert_eq!(out, twin);
+    assert_eq!(settled, without);
+}
+
+/// Replaced behind the edit, the first never applies, so the one waiting
+/// on it never does, as with no edit (it is weighed before it is flushed).
+#[test]
+fn a_write_waiting_on_one_replaced_behind_an_edit_never_applies() {
+    let (_, twin, without) = waiting_on_a_write_staged_before_an_edit(true, false);
+    assert_eq!(without[0], [Outcome::Superseded]);
+    assert!(
+        !matches!(without[2][..], [Outcome::Applied { .. }]),
+        "{without:?}"
+    );
+    let (_, out, settled) = waiting_on_a_write_staged_before_an_edit(true, true);
     assert_eq!(out, twin);
     assert_eq!(settled, without);
 }
@@ -357,4 +382,44 @@ fn a_late_write_behind_a_held_edit_does_not_reach_back() {
         [[Outcome::Superseded], [Outcome::Superseded]]
     );
     assert!(matches!(settled[4][..], [Outcome::AppliedLate { .. }]));
+}
+
+/// Nine edits behind one held two blocks, past the installs a block takes:
+/// a write due 20 samples on behind the ninth does not reach back over one
+/// due 70 samples on before them, which applied while the first waited.
+#[test]
+fn a_write_behind_edits_held_past_one_block_does_not_reach_back() {
+    let play = |with_edits: bool| {
+        let mut rig = edit_rig();
+        let (osc1, osc2) = (
+            rig.build("osc1", "oscillator", serde_json::json!({})),
+            rig.build("osc2", "oscillator", serde_json::json!({})),
+        );
+        rig.live
+            .edit(|change| {
+                change.upsert("osc1", osc1);
+                change.upsert("osc2", osc2);
+                Ok(())
+            })
+            .unwrap();
+        rig.render(1);
+        rig.hold_a_retirement();
+        let start = rig.graph.current_sample;
+        submit_level(&rig, "dial", 0.3, Due::Ahead(70), start);
+        for _ in 0..(with_edits as usize * (MAX_INSTALLS_PER_BLOCK + 1)) {
+            let spare = rig.build("spare", DIAL, serde_json::json!({}));
+            rig.publish_unreclaimed(|change| change.upsert("spare", spare));
+        }
+        let behind = submit_level(&rig, "dial", 0.15, Due::Ahead(20), start);
+        let mut out = render_counted(&mut rig, 2);
+        for _ in 0..3 {
+            rig.live.reclaim();
+            out.extend(render_counted(&mut rig, 1));
+        }
+        out.extend(render_counted(&mut rig, 4));
+        (out, settled(&mut rig, vec![behind]))
+    };
+    let (out, settled) = play(true);
+    assert_eq!(out[70..], play(false).0[70..]);
+    assert_eq!(settled, [[Outcome::Superseded]]);
 }

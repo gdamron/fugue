@@ -70,9 +70,11 @@ impl Outcomes {
     }
 
     /// Notes that an edit due at `now` waits to install, from the first
-    /// such sample.
+    /// such sample: an edit held behind ones installing now (past the
+    /// installs a block takes) waits from when the first did.
     pub(crate) fn edit_held(&mut self, now: u64) {
-        self.staging.held.get_or_insert(now);
+        let first = self.staging.since.unwrap_or(now);
+        self.staging.held.get_or_insert(first);
     }
 
     /// As the edit installs: until [`Self::weighed`], the requests queued
