@@ -1,7 +1,9 @@
 //! A test module with declared controls, built by [`DialFactory`] as type
 //! `dial`: it outputs its `level` (clamped to 0..=1 as it applies) plus one
 //! per `pulse` event, and holds a `shape` choice it refuses past its
-//! options, and integers: `steps` and `span` clamp, `index` does not.
+//! options, and integers: `steps` and `span` clamp, `index` does not. One
+//! configured `"rest": true` builds with no `steps`, below the one its
+//! writes start at.
 
 use std::sync::Arc;
 
@@ -91,12 +93,19 @@ impl ModuleFactory for DialFactory {
         DIAL
     }
 
+    fn config_keys(&self) -> &'static [crate::module_config::ConfigKey] {
+        const { &[crate::module_config::ConfigKey::boolean("rest")] }
+    }
+
     fn build(
         &self,
         _sample_rate: u32,
-        _config: &serde_json::Value,
+        config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let cells = Arc::new(ControlCells::new(DECLS.iter().map(|decl| decl.default)));
+        if config.get("rest").and_then(serde_json::Value::as_bool) == Some(true) {
+            cells.publish(STEPS, RtValue::I32(0));
+        }
         let surface = DeclaredSurface::new(TABLE.clone(), cells.clone());
         let dial = Dial {
             level: 0.25,
