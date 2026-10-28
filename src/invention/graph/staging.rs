@@ -87,6 +87,13 @@ impl SignalGraph {
         if let Some((_, instance)) = self.modules.get_index_mut(index) {
             let than = weighed.map(|(applying, standing)| (standing, applying));
             flush_staged_before(instance.module_mut(), than, outcomes);
+            // Only the stronger writes at its sample wait to run after it.
+            let at = weighed.map(|(applying, _)| applying.at);
+            debug_assert!(
+                (instance.module().declared())
+                    .is_none_or(|(_, cells)| cells.staged.waits_only_at(at)),
+                "applied past a write staged before it"
+            );
         }
         if let (Some((applying, standing)), Some((_, instance))) =
             (weighed, self.modules.get_index(index))

@@ -222,12 +222,13 @@ fn of_writes_on_one_control_at_a_beat_the_one_received_last_stands() {
             "{older:?} then {newer:?}"
         );
     }
-    let settled = heard_as(&[NOTES_ON_BEAT, GAIN_AT], &[NOTES_ON_BEAT, GAIN_AT], at);
-    assert_eq!(
-        settled,
-        [vec![applied], vec![applied]],
-        "the gain plays in the notes"
-    );
+    // On a beat, or on the gate as the tape computes.
+    let notes_on_gate = NOTES_ON_BEAT.timed(Timing::Edge(2));
+    for notes in [NOTES_ON_BEAT, notes_on_gate] {
+        let settled = heard_as(&[notes, GAIN_AT], &[notes, GAIN_AT], at);
+        let both = [vec![applied], vec![applied]];
+        assert_eq!(settled, both, "the gain plays in the {notes:?}");
+    }
 }
 
 /// A write a condition waits on applies at once, so the condition sees

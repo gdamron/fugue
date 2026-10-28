@@ -160,14 +160,15 @@ impl Staged {
         self.len.load(Relaxed) == 0
     }
 
-    /// Whether every write still staged is for sample `at` (as those
-    /// stronger than one applied at once there are, waiting to run after
-    /// it).
-    pub(crate) fn waits_only_at(&self, at: u64) -> bool {
+    /// Whether every write still staged is for sample `at` (none when
+    /// `at` is none).
+    pub(crate) fn waits_only_at(&self, at: Option<u64>) -> bool {
         let len = self.len.load(Relaxed);
         self.order.iter().take(len).all(|control| {
             let slot = self.slots.get(usize::from(control.load(Relaxed)));
-            slot.is_none_or(|slot| slot.held.load(Relaxed) == EMPTY || slot.at.load(Relaxed) == at)
+            slot.is_none_or(|slot| {
+                slot.held.load(Relaxed) == EMPTY || Some(slot.at.load(Relaxed)) == at
+            })
         })
     }
 
