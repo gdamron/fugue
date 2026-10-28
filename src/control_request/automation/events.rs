@@ -14,6 +14,9 @@
 //! earlier, so it applies after the events it followed and before those
 //! it was written for ([`EventQueue::insert_value`]).
 //!
+//! Events are queued in sample order, those of one sample in the order
+//! made, whatever order their writers ran in ([`EventQueue::push`]).
+//!
 //! The queue is bounded. A write finding it full is refused and counted,
 //! as any refused automation write is. A module may keep its last places
 //! for one control, its release, so a schedule crowding the queue with
@@ -48,7 +51,7 @@ pub(crate) struct EventReserve {
     pub(crate) places: usize,
 }
 
-/// A bounded queue of event writes, in the order made.
+/// A bounded queue of event writes, in sample order, then the order made.
 pub(crate) struct EventQueue {
     words: Box<[AtomicU64]>,
     /// Per place, the sample its write was made for ([`NO_SAMPLE`] when
@@ -87,17 +90,24 @@ impl EventQueue {
     }
 
     /// Queues an event write to `index` made for sample `at`
-    /// ([`NO_SAMPLE`] when unknown), returning false when there is no room
-    /// for it: the queue full, or, for any control but the reserve's,
-    /// only reserved places left.
+    /// ([`NO_SAMPLE`] when unknown), after every write made for `at` or
+    /// earlier, so the queue stays in sample order when writers do not (two
+    /// feedback groups each writing a whole segment), returning false when
+    /// there is no room for it: the queue full, or, for any control but
+    /// the reserve's, only reserved places left.
     #[inline]
     pub(crate) fn push(&self, index: ControlIndex, value: RtValue, at: u64) -> bool {
         let len = self.len.load(Ordering::Relaxed);
         if !self.has_room(index, len) {
             return false;
         }
-        self.place(len, index, value, (at & NO_SAMPLE) | EVENT_BIT);
-        self.len.store(len + 1, Ordering::Relaxed);
+        let at = at & NO_SAMPLE;
+        let later = |position: usize| {
+            let queued = self.samples[position].load(Ordering::Relaxed) & NO_SAMPLE;
+            queued != NO_SAMPLE && queued > at
+        };
+        let place = (0..len).find(|&position| later(position)).unwrap_or(len);
+        self.insert(place, len, index, value, at | EVENT_BIT);
         true
     }
 
@@ -135,14 +145,21 @@ impl EventQueue {
         let place = (0..len)
             .find(|&position| after(sample(position)))
             .unwrap_or(len);
+        self.insert(place, len, index, value, at);
+        Some(true)
+    }
+
+    /// Puts a write at `place` among `len` queued, shifting those from
+    /// `place` on one later. The caller found room.
+    fn insert(&self, place: usize, len: usize, index: ControlIndex, value: RtValue, sample: u64) {
         for position in (place..len).rev() {
             let word = self.words[position].load(Ordering::Relaxed);
+            let at = self.samples[position].load(Ordering::Relaxed);
             self.words[position + 1].store(word, Ordering::Relaxed);
-            self.samples[position + 1].store(sample(position), Ordering::Relaxed);
+            self.samples[position + 1].store(at, Ordering::Relaxed);
         }
-        self.place(place, index, value, at);
+        self.place(place, index, value, sample);
         self.len.store(len + 1, Ordering::Relaxed);
-        Some(true)
     }
 
     /// Drops every value queued for `index`: a later one, finding no room

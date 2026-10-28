@@ -139,6 +139,33 @@ fn a_value_written_after_a_queued_events_sample_applies_after_it() {
     assert_eq!(module.cells.load(LEVEL), Some(RtValue::F32(0.5)));
 }
 
+/// Writers running out of sample order (two feedback groups, each its
+/// whole segment): the events apply in sample order, each sample's
+/// finishing before a later sample's writes.
+#[test]
+fn events_written_out_of_sample_order_apply_in_it() {
+    let cells = ControlCells::queuing_events(DECLS.iter().map(|d| d.default), 8, None);
+    let mut module = recorder(cells);
+    let slots = &module.cells.automation;
+    let write = |at, index, value, event| {
+        let _at = FrameScope::enter(at);
+        slots.write(index, RtValue::F32(value), event);
+    };
+    write(10, NOTE, 60.0, true);
+    write(12, NOTE, 62.0, true);
+    write(10, NOTE, 64.0, true);
+    write(12, LEVEL, 0.5, false);
+    let events = &module.cells.automation.events;
+    let queued: Vec<_> = (0..events.len()).filter_map(|p| events.get(p)).collect();
+    let f32_of = |value: f32| RtValue::F32(value);
+    let order = [(NOTE, 60.0), (NOTE, 64.0), (LEVEL, 0.5), (NOTE, 62.0)];
+    let order: Vec<_> = order.iter().map(|&(i, v)| (i, f32_of(v))).collect();
+    assert_eq!(queued, order);
+    take_automation(&mut module);
+    let applied = [NOTE.0, NOTE.0, FINISHED, LEVEL.0, NOTE.0];
+    assert_eq!(module.applied, applied, "sample 10's notes finished first");
+}
+
 /// A value queued behind an event is the latest written, as a ramp
 /// starting from it reads.
 #[test]
