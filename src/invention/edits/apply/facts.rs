@@ -111,6 +111,16 @@ impl LiveFacts {
         self.provisional.into_iter().collect()
     }
 
+    /// Module `id`'s surface as `writable` finds it: a module the batch
+    /// added (perhaps replacing one written earlier) before a running
+    /// one's copy.
+    fn found(&self, id: &str) -> Option<&ControlSurfaceInstance> {
+        match self.described.get(id) {
+            Some(described) => described.as_ref(),
+            None => (self.provisional.get(id)).or_else(|| self.surfaces.get(id)),
+        }
+    }
+
     /// Keeps `module` beside its copy's declared surface, bound as it is
     /// built: the copy's writes stage until applied (see `apply_on_copy`).
     fn keep_copy(&mut self, id: &str, surface: &ControlSurfaceInstance, module: GraphModule) {
@@ -332,14 +342,12 @@ impl EditFacts for LiveFacts {
     }
 
     fn is_event(&self, id: &str, key: &str) -> bool {
-        // As `writable` finds it: a module the batch added (perhaps
-        // replacing one written earlier) before a running one's copy.
-        let surface = match self.described.get(id) {
-            Some(described) => described.as_ref(),
-            None => (self.provisional.get(id)).or_else(|| self.surfaces.get(id)),
-        };
-        (surface.and_then(|surface| surface.declaration(key)))
+        (self.found(id).and_then(|surface| surface.declaration(key)))
             .is_some_and(|declared| declared.decl.event)
+    }
+
+    fn is_whole(&self, id: &str, key: &str) -> bool {
+        self.found(id).is_some_and(|surface| surface.is_whole(key))
     }
 
     fn write_control(
@@ -403,13 +411,8 @@ fn restore_authored(surface: &dyn crate::ControlSurface, config: &serde_json::Va
     let mut keys: Vec<&String> = entries.keys().collect();
     keys.sort_by_key(|key| key.contains('.'));
     for key in keys {
-        let value = match &entries[key.as_str()] {
-            serde_json::Value::Number(number) => {
-                ControlValue::Number(number.as_f64().unwrap_or(0.0) as f32)
-            }
-            serde_json::Value::Bool(flag) => ControlValue::Bool(*flag),
-            serde_json::Value::String(text) => ControlValue::String(text.clone()),
-            _ => continue,
+        let Some(value) = crate::traits::exact_number::json_scalar(&entries[key.as_str()]) else {
+            continue;
         };
         if !surface.controls().iter().any(|meta| &meta.key == key) {
             continue;

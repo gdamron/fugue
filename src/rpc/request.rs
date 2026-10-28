@@ -130,6 +130,9 @@ pub enum RpcRequestPayload {
 pub struct ControlWrite {
     pub module_id: String,
     pub key: String,
+    // Read as written: a number an f32 would misread stays text, for a
+    // whole-number control's declaration (see `exact_number`).
+    #[serde(deserialize_with = "crate::traits::exact_number::deserialize")]
     pub value: ControlValue,
     /// Whether this write sets the module's new starting state or is a live
     /// gesture. Defaults to [`ControlWriteIntent::Author`] for wire
@@ -231,6 +234,7 @@ pub enum RpcCommand {
     SetControl {
         module_id: String,
         key: String,
+        #[serde(deserialize_with = "crate::traits::exact_number::deserialize")]
         value: ControlValue,
         /// Whether this write sets the module's new starting state (recorded
         /// in the retained document, advances the revision) or is a live

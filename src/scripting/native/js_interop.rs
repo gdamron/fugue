@@ -128,10 +128,7 @@ pub(super) fn control_from_js(
     let value = value.ok_or_else(|| js_err("missing control value"))?;
     match value.to_json(context)?.unwrap_or(serde_json::Value::Null) {
         serde_json::Value::Bool(value) => Ok(ControlValue::Bool(value)),
-        serde_json::Value::Number(value) => value
-            .as_f64()
-            .map(|value| ControlValue::Number(value as f32))
-            .ok_or_else(|| js_err("control number must fit in f32")),
+        serde_json::Value::Number(value) => Ok(crate::traits::exact_number::json_number(&value)),
         serde_json::Value::String(value) => Ok(ControlValue::String(value)),
         _ => Err(js_err("control value must be boolean, number, or string")),
     }

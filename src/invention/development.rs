@@ -24,6 +24,8 @@ mod control_surface;
 mod declared_controls;
 #[cfg(test)]
 mod declared_tests;
+#[cfg(test)]
+mod exact_tests;
 mod fan_out;
 #[cfg(test)]
 mod fan_out_tests;
@@ -181,13 +183,15 @@ fn apply_development_config(
         {
             continue;
         }
-        let value = crate::invention::reload::scalar_control_value(value).ok_or_else(|| {
+        let value = crate::traits::exact_number::json_scalar(value).ok_or_else(|| {
             format!(
                 "Development '{}' config key '{}' must be a number, bool, or string",
                 name, key
             )
         })?;
-        pending.push((key, value));
+        // Number text an f32 misreads stays text only for a whole-number
+        // control; any other number control is handed a number.
+        pending.push((key, surface.coerce_value(key, value)));
     }
     // A payload (a melody's whole scale) applies before the scalars, which
     // may write within it.

@@ -185,10 +185,12 @@ pub(crate) fn apply_control_keys(
     keys.sort_by_key(|key| key.contains('.'));
     for key in keys {
         let value = match &entries[key.as_str()] {
-            number @ serde_json::Value::Number(_) => crate::ControlValue::Number(
-                crate::module_config::finite_f32(number)
-                    .map_err(|refusal| format!("config '{key}' {refusal}"))?,
-            ),
+            serde_json::Value::Number(number) => {
+                let json = &entries[key.as_str()];
+                crate::module_config::finite_f32(json)
+                    .map_err(|refusal| format!("config '{key}' {refusal}"))?;
+                crate::traits::exact_number::json_number(number)
+            }
             serde_json::Value::Bool(flag) => crate::ControlValue::Bool(*flag),
             serde_json::Value::String(text) => crate::ControlValue::String(text.clone()),
             _ => return Err(format!("config '{key}' must be a number, boolean or text").into()),
