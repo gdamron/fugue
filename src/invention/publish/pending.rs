@@ -22,7 +22,7 @@ use crate::control_request::{
     EventCursor, Outcome, OutcomeReceiver, Refusal, RequestId, RtValue, Source, Transport, When,
 };
 use crate::invention::request_log::{
-    LoggedBeat, LoggedEdit, LoggedRequest, LoggedWhen, Recorder, RequestLog,
+    LoggedBeat, LoggedEdit, LoggedRequest, LoggedValue, LoggedWhen, Recorder, RequestLog,
 };
 use crate::ControlValue;
 
@@ -44,7 +44,8 @@ pub(crate) struct PendingWrite {
     pub(crate) key: String,
     pub(crate) value: ControlValue,
     /// The value exactly as the module will receive it, for the log; none
-    /// for a payload, which the log cannot carry (it counts as unlogged).
+    /// for a payload, which the log records as its read-back text
+    /// ([`Self::value`]).
     pub(crate) raw: Option<RtValue>,
     /// Its musical time, when it is timed in beats.
     pub(crate) beat: Option<LoggedBeat>,
@@ -418,7 +419,15 @@ impl PendingLog {
             self.log.lost(1);
             return;
         };
-        let Some(raw) = write.raw.filter(|_| write.source != Source::Automation) else {
+        let value = match (write.raw, write.value) {
+            _ if write.source == Source::Automation => None,
+            (Some(raw), _) => Some(raw.into()),
+            // A payload, as its control reads it back: the text its codec
+            // made canonical, which a replay writes again.
+            (None, ControlValue::String(text)) => Some(LoggedValue::Text(text)),
+            (None, _) => None,
+        };
+        let Some(value) = value else {
             self.log.unlogged();
             return;
         };
@@ -426,7 +435,7 @@ impl PendingLog {
             sample,
             module_id: write.module_id,
             key: write.key,
-            value: raw.into(),
+            value,
             due,
             beat: write.beat,
         });

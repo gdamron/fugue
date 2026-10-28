@@ -793,9 +793,9 @@ impl DeclaredSurface {
                     }
                     (_, value) => value,
                 };
-                // A payload is listed pending by its read-back and counted
-                // unlogged once applied: the session log cannot carry it yet
-                // (see `PendingWrite::raw`).
+                // A payload is listed pending by its read-back, which the
+                // session log records once it applies (see
+                // `PendingWrite::raw`).
                 let (read, raw) = match (&value, &shown) {
                     (RequestValue::Value(value), _) => {
                         (self.table.value(index, *value), Some(*value))

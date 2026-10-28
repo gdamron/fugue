@@ -228,6 +228,14 @@ impl RenderEngine {
                         graph = shared.lock().unwrap();
                         continue;
                     }
+                    // Written through its front door, which takes the
+                    // graph's lock itself.
+                    replay::Next::Payload => {
+                        drop(graph);
+                        self.replay_payload();
+                        graph = shared.lock().unwrap();
+                        continue;
+                    }
                 };
                 graph.process_block(&mut left[at..end], &mut right[at..end]);
                 at = end;
