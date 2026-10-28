@@ -316,7 +316,9 @@ fn a_hold_stays_with_a_surviving_instance_and_never_reaches_a_rebuilt_one() {
     rig.render(1);
     assert!(holds(&rig), "the surviving dial keeps its hold");
     let (got, _) = rig.live.take_outcomes();
-    assert_eq!(got, [(user, applied_at(at)), (script, Outcome::Overridden)]);
+    // The user's write stays staged on the survivor across the install,
+    // reported as it flushes.
+    assert_eq!(got, [(script, Outcome::Overridden), (user, applied_at(at))]);
 
     let at = rig.graph.current_sample;
     let user = submit_ranked(&rig, 0.75, at, USER);

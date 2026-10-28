@@ -503,8 +503,12 @@ impl SignalGraph {
                 break;
             };
             if is_edit {
-                if can_install {
-                    edit = drain.requests.pop();
+                match can_install {
+                    true => {
+                        edit = drain.requests.pop();
+                        drain.pending.outcomes.edit_installs();
+                    }
+                    false => drain.pending.outcomes.edit_held(now),
                 }
                 break;
             }
@@ -775,6 +779,9 @@ impl SignalGraph {
         let Some(mut next) = self.with_drain(apply_due) else {
             return remaining;
         };
+        if let Some(drain) = &mut self.requests {
+            drain.pending.outcomes.weighed();
+        }
         // A timed edit due now installs once what is due with it has
         // applied; what it maps may then be due too, and the tables it
         // keeps play on it (see `BeatHost::defers`).

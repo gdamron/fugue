@@ -8,6 +8,8 @@
 //! One write stands on a control at a sample ([`contest`]): of the requests
 //! reaching it there, staged or applied at once, the one due last, then of
 //! the higher rank, then received last, as if each had applied on time.
+//! Behind an edit held to a later block, a write is weighed so against one
+//! applied since the edit was first due too ([`Outcomes::edit_held`]).
 //! One that loses reports so at once, and a staged one's setter never runs.
 //! A write applied at once runs after the weaker writes staged on its
 //! module and before the stronger ([`flush_staged_before`]).
@@ -36,12 +38,15 @@ pub(crate) struct Applying {
     pub(crate) at: u64,
 }
 
-/// The request applying, whether its write was just staged, and how many wait.
+/// The request applying, whether its write was just staged, how many wait,
+/// and since when an edit held to a later block waited.
 #[derive(Debug, Default)]
 pub(crate) struct Staging {
     applying: Option<Applying>,
     parked: bool,
     staged: usize,
+    held: Option<u64>,
+    since: Option<u64>,
 }
 
 impl Staging {
@@ -61,6 +66,24 @@ impl Outcomes {
     /// The request [`Self::applying`] named, once.
     pub(crate) fn take_applying(&mut self) -> Option<Applying> {
         self.staging.applying.take()
+    }
+
+    /// Notes that an edit due at `now` waits to install, from the first
+    /// such sample.
+    pub(crate) fn edit_held(&mut self, now: u64) {
+        self.staging.held.get_or_insert(now);
+    }
+
+    /// As the edit installs: until [`Self::weighed`], the requests queued
+    /// behind it are weighed as if it had installed when first due, against
+    /// the writes standing since ([`contest`]).
+    pub(crate) fn edit_installs(&mut self) {
+        self.staging.since = self.staging.held.take();
+    }
+
+    /// Ends what [`Self::edit_installs`] began, once those requests applied.
+    pub(crate) fn weighed(&mut self) {
+        self.staging.since = None;
     }
 
     /// How many writes are staged, across the graph.
@@ -104,6 +127,14 @@ impl Slot {
         let rank = rank_of(self.hold.load(Relaxed))?;
         let due = self.due.load(Relaxed);
         (self.at.load(Relaxed) == at).then(|| (due, rank, self.id.load(Relaxed)))
+    }
+
+    /// The write standing here since sample `since`, by what decides
+    /// between two: its due sample, rank and receipt.
+    fn standing_since(&self, since: u64) -> Option<(u64, Rank, u64)> {
+        let rank = rank_of(self.hold.load(Relaxed))?;
+        let due = self.due.load(Relaxed);
+        (self.at.load(Relaxed) >= since).then(|| (due, rank, self.id.load(Relaxed)))
     }
 
     /// Settles the write staged here at `at` as losing to one of
@@ -272,8 +303,9 @@ pub(crate) fn contest<M: Module + ?Sized>(
         return Ok(false);
     };
     let mine = (standing.due, standing.rank, applying.id.0);
+    let since = outcomes.staging.since.map_or(applying.at, |at| at.min(applying.at));
     if let Some(theirs) = slot
-        .standing_at(applying.at)
+        .standing_since(since)
         .filter(|theirs| mine < *theirs)
     {
         return Err(standing.rank.loses_to(theirs.1));

@@ -59,6 +59,9 @@ impl ConditionHost for SignalGraph {
     fn control(&self, module: usize, control: ControlIndex) -> Option<f32> {
         let (_, instance) = self.modules.get_index(module)?;
         let (_, cells) = instance.module().declared()?;
+        // As the segment starts, before the writes due there apply: one
+        // staged at this sample (a survivor's, read again once an edit
+        // installs) is read at the next start, as with no edit.
         Some(match cells.load(control)? {
             RtValue::F32(value) => value,
             RtValue::U32(value) => value as f32,

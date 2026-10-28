@@ -1,7 +1,7 @@
 //! Where the graph stages a request's write, and flushes what is staged
 //! (see [`crate::control_request::stage_write`]).
 
-use super::SignalGraph;
+use super::{Publication, SignalGraph};
 use crate::control_request::{
     contest, flush_staged, flush_staged_before, stage_write, stand, Applying, ControlTarget,
     Outcome, Outcomes, Ramps, RequestValue, Standing,
@@ -144,6 +144,27 @@ impl SignalGraph {
     /// [`Self::flush_all`] through the graph's own drain.
     pub(super) fn flush_all_staged(&mut self) {
         self.with_drain(|graph, drain| graph.flush_all(&mut drain.pending.outcomes));
+    }
+
+    /// Flushes what is staged on each running module `publication` does
+    /// not keep, as it installs: those writes apply to the instance they
+    /// reached, before it is replaced (and inherited from) or removed. A
+    /// survivor keeps its staged writes, so the requests queued behind the
+    /// edit are weighed against them at this sample ([`contest`]), as with
+    /// no edit between them.
+    pub(super) fn flush_replaced(&mut self, publication: &Publication) {
+        self.with_drain(|graph, drain| {
+            let outcomes = &mut drain.pending.outcomes;
+            if outcomes.staged() == 0 {
+                return;
+            }
+            for (id, instance) in graph.modules.iter_mut() {
+                let at = publication.modules.get_index_of(id.as_str());
+                if !at.is_some_and(|at| publication.survivor[at]) {
+                    flush_staged(instance.module_mut(), outcomes);
+                }
+            }
+        });
     }
 
     /// [`Self::flush_module`] through the graph's drain, when it holds it.
