@@ -98,7 +98,10 @@ pub(crate) fn resolve(
     let timed = time_of(time, module_id, (publisher, pending), conditions)?;
     let on_sample = matches!(timed.when, When::AtSample(_) | When::AfterSamples(_));
     let (on_sample_room, room) = match reserved {
-        true => (SAMPLE_TIMED_CAPACITY + SAMPLE_TIMED_RESERVE, TIMED_WRITE_ROOM),
+        true => (
+            SAMPLE_TIMED_CAPACITY + SAMPLE_TIMED_RESERVE,
+            TIMED_WRITE_ROOM,
+        ),
         false => (SAMPLE_TIMED_CAPACITY, TIMED_WRITE_CAPACITY),
     };
     if on_sample && pending.on_sample() >= on_sample_room {
