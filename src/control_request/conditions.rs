@@ -415,7 +415,7 @@ impl Conditions {
     /// alike: `map` gives a module's index in the installed order, or
     /// `None` when it went away, which refuses the request
     /// ([`Refusal::TargetGone`], or [`Refusal::SourceGone`] for a module it
-    /// reads). Allocation-free.
+    /// reads, unless its condition is already met). Allocation-free.
     pub(crate) fn remap(
         &mut self,
         installed: u64,
@@ -434,15 +434,22 @@ impl Conditions {
                 self.end(i, outcomes, Refusal::TargetGone.into());
                 continue;
             };
+            // A met condition reads nothing more (every part is met), so
+            // a source going no longer matters to it: its request stays
+            // due, as one waiting for the install that removed it must.
+            let met = entry.due().is_some();
             let mut condition = entry.condition;
             let sources = condition.parts_mut().iter_mut();
-            let mapped = sources.filter_map(Predicate::module_mut).all(|source| {
-                map(generation, *source as usize).is_some_and(|new| {
-                    *source = new as u32;
-                    true
-                })
-            });
-            if !mapped {
+            let mapped = sources
+                .filter_map(Predicate::module_mut)
+                .fold(true, |all, source| {
+                    let new = map(generation, *source as usize);
+                    if let Some(new) = new {
+                        *source = new as u32;
+                    }
+                    all && new.is_some()
+                });
+            if !mapped && !met {
                 self.end(i, outcomes, Refusal::SourceGone.into());
                 continue;
             }
