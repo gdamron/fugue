@@ -85,3 +85,30 @@ fn a_voice_letting_go_of_twice_replaced_audio_frees_nothing() {
         let _ = std::fs::remove_file(path);
     }
 }
+
+#[test]
+fn a_note_taking_audio_swapped_in_at_its_instant_frees_nothing() {
+    let first = write_level_wav(0.5, 44_100);
+    let second = write_level_wav(0.25, 44_100);
+    let config = serde_json::json!({
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": first.to_str().unwrap() } ]
+    });
+    let (mut instrument, surface) = build_instrument(config);
+    instrument.set_control("note_on", 60.0).unwrap();
+
+    // The note has sounded nothing yet, so it lets go of the first audio
+    // and takes the second.
+    let payload = loaded(&surface, &second);
+    let (retired, allocs, frees) = allocator_events(|| {
+        let _audio = AudioThreadScope::enter();
+        let retired = instrument.apply_payload(ASSET, payload).ok().unwrap();
+        instrument.process(1);
+        retired
+    });
+    assert_eq!((allocs, frees), (0, 0));
+    drop(retired);
+    assert!((instrument.get_output("audio_left").unwrap() - 0.25).abs() < TOL);
+
+    let _ = std::fs::remove_file(first);
+    let _ = std::fs::remove_file(second);
+}

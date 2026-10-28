@@ -302,6 +302,8 @@ pub struct SampleInstrument {
     /// Whether a note off written since the last block waits for its
     /// release fade (see [`Module::finish_events`]).
     releasing: bool,
+    /// Whether any voice is `fresh`.
+    fresh_notes: bool,
     /// Allocation ordinal handed to the next note-on (steal-oldest order).
     next_started: u64,
     sample_rate: f32,
@@ -359,6 +361,7 @@ impl SampleInstrument {
             gliding: Vec::with_capacity(MAX_VOICES),
             release,
             releasing: false,
+            fresh_notes: false,
             next_started: 0,
             sample_rate: sample_rate as f32,
             declick_step: 1.0 / (DECLICK_SECONDS * sample_rate as f32).max(1.0),
@@ -448,14 +451,13 @@ impl SampleInstrument {
         1.0 / (self.release.max(RELEASE_RANGE.0) * self.sample_rate)
     }
 
-    fn note_on(&mut self, freq: f32, velocity: f32) {
+    /// Starts a note, returning the voice it took.
+    fn note_on(&mut self, freq: f32, velocity: f32) -> Option<usize> {
         if !freq.is_finite() || freq <= 0.0 {
-            return;
+            return None;
         }
         let note = note_from_freq(freq);
-        let Some(zone_index) = resolve_zone(&self.zones, note) else {
-            return;
-        };
+        let zone_index = resolve_zone(&self.zones, note)?;
         let ratio = f64::from(freq) / f64::from(self.zones[zone_index].root_freq);
 
         // A zone silent since a write plays its next note at the level
@@ -480,6 +482,7 @@ impl SampleInstrument {
             self.next_started,
         );
         self.next_started = self.next_started.wrapping_add(1);
+        Some(slot)
     }
 
     /// Picks the voice for a note-on. Keyed by note: a note already
@@ -623,8 +626,16 @@ impl Module for SampleInstrument {
         Some((&self.table, &self.cells))
     }
 
-    /// Note offs take the release in force.
+    /// Note offs take the release in force, and notes the zone audio in
+    /// force: a swap at a note's instant reaches it, whichever was written
+    /// first.
     fn finish_events(&mut self) {
+        if std::mem::take(&mut self.fresh_notes) {
+            for voice in self.voices.iter_mut() {
+                voice.fresh = false;
+                voice.fade_fresh = false;
+            }
+        }
         if std::mem::take(&mut self.releasing) {
             let release_step = self.release_step();
             for voice in self.voices.iter_mut() {
@@ -651,7 +662,10 @@ impl Module for SampleInstrument {
             }
             Some(InstrumentControl::NoteOn) => {
                 let note = midi_note(number).ok_or(Refusal::Invalid)?;
-                self.note_on(Note::new(note).frequency(), 1.0);
+                if let Some(slot) = self.note_on(Note::new(note).frequency(), 1.0) {
+                    self.voices[slot].fresh = true;
+                    self.fresh_notes = true;
+                }
                 Ok(RtValue::F32(0.0))
             }
             Some(InstrumentControl::NoteOff) => {
@@ -672,7 +686,9 @@ impl Module for SampleInstrument {
 
     /// A zone's new audio plays from its next note: a voice sounding on
     /// the old buffer finishes on it, as each latched its own clone of the
-    /// cache's buffer. The zone audio it replaces is retired.
+    /// cache's buffer. A note started at the same instant, which has
+    /// sounded nothing yet, takes the new audio. The zone audio it replaces
+    /// is retired.
     #[allow(private_interfaces)]
     fn apply_payload(
         &mut self,
@@ -685,7 +701,17 @@ impl Module for SampleInstrument {
         let audio = payload
             .downcast::<ZoneAudio>()
             .map_err(|payload| (Refusal::Invalid, payload))?;
-        Ok(std::mem::replace(&mut self.zones[zone].audio, audio).into())
+        let replaced = std::mem::replace(&mut self.zones[zone].audio, audio);
+        let audio = &self.zones[zone].audio;
+        for voice in self.voices.iter_mut() {
+            if voice.fresh && voice.zone == zone {
+                voice.relatch(audio);
+            }
+            if voice.fade_fresh && voice.fade_zone == zone {
+                voice.relatch_fade(audio);
+            }
+        }
+        Ok(replaced.into())
     }
 
     fn controls(&self) -> Vec<ControlMeta> {

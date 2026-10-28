@@ -79,6 +79,10 @@ pub(crate) struct Voice {
     pub velocity: f32,
     pub active: bool,
     pub held: bool,
+    /// Whether a `note_on` started the voice since the instrument last
+    /// rendered: it has sounded nothing yet, so a zone swap at the same
+    /// instant reaches it (see [`Self::relatch`]).
+    pub fresh: bool,
     /// Whether the sustain loop wraps at its end this pass. Always true
     /// while held; once released, true until a pass whose exit leaves the
     /// tail long enough for the fade to finish in it.
@@ -102,6 +106,11 @@ pub(crate) struct Voice {
     fade_amp: f32,
     fade_gain: f32,
     fade_step: f32,
+    /// The stolen note's zone, and whether that note was `fresh`: a note
+    /// stolen at the instant it started has sounded nothing, so a zone swap
+    /// at that instant reaches its tail as well (see [`Self::relatch_fade`]).
+    pub fade_zone: usize,
+    pub fade_fresh: bool,
 }
 
 impl Voice {
@@ -116,6 +125,7 @@ impl Voice {
             velocity: 1.0,
             active: false,
             held: false,
+            fresh: false,
             wraps: true,
             release_gain: 1.0,
             release_step: 0.0,
@@ -127,6 +137,8 @@ impl Voice {
             fade_amp: 0.0,
             fade_gain: 0.0,
             fade_step: 0.0,
+            fade_zone: 0,
+            fade_fresh: false,
         }
     }
 
@@ -168,6 +180,8 @@ impl Voice {
         self.fade_amp = amp;
         self.fade_gain = 1.0;
         self.fade_step = step;
+        self.fade_zone = self.zone;
+        self.fade_fresh = self.fresh;
     }
 
     /// Reads and advances the stolen note's crossfade tail for this frame.
@@ -221,6 +235,23 @@ impl Voice {
         self.release_gain = 1.0;
         self.release_step = 0.0;
         self.started = started;
+    }
+
+    /// Takes `audio`, its zone's new audio, in place of what it latched at
+    /// its start, which it has not sounded yet. Letting go of its clone
+    /// frees nothing: the sample cache keeps the buffer (see
+    /// [`ZoneAudio::sample`]).
+    pub fn relatch(&mut self, audio: &ZoneAudio) {
+        self.active = audio.sample.len() > 0;
+        self.sample = Some(Arc::clone(&audio.sample));
+        self.loop_region = audio.loop_region;
+    }
+
+    /// Takes `audio` into the crossfade tail of a note stolen at the
+    /// instant it started, as [`Self::relatch`] does for the note itself.
+    pub fn relatch_fade(&mut self, audio: &ZoneAudio) {
+        self.fade_sample = Some(Arc::clone(&audio.sample));
+        self.fade_loop = audio.loop_region;
     }
 
     /// Begins the release phase: the fade below takes `1/step` frames, and
