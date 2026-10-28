@@ -325,6 +325,8 @@ you are changing before you change it.
 - [Module design](docs/module-design.md): behaviour lives in modules with
   ports, interfaces follow one naming convention, and views of running audio
   show what is heard.
+- [Wasm modules](docs/wasm-modules.md): the world a guest component
+  implements, how it writes its outputs, and moving a guest to a new version.
 - [Shared runtime](docs/shared-runtime.md): how clients find, edit and
   recover from lost replies to the one daemon that plays the music.
 - [Atomic structural edits](docs/apply-edits.md) and
