@@ -26,6 +26,7 @@
 //! replace as they fall due at one sample, by the same rule, before either
 //! reaches the module ([`Conditions::give_way`]): one setter runs for a
 //! control at a sample, so a stateful one (a reverb retuning) runs once.
+//! A write the pending store holds for that sample weighs in too.
 //!
 //! [`PendingStore`]: super::super::pending::PendingStore
 
@@ -33,7 +34,7 @@ use super::{Conditions, Entry};
 use crate::control_request::condition::{Condition, Predicate};
 use crate::control_request::hold::Rank;
 use crate::control_request::pending::expired;
-use crate::control_request::pending::{Outcome, Outcomes};
+use crate::control_request::pending::{Outcome, Outcomes, PendingStore};
 use crate::control_request::request::{Request, RequestValue};
 
 /// Whether `request` may replace a waiting request, or be replaced.
@@ -102,6 +103,16 @@ impl Conditions {
     }
 }
 
+/// What stands for a control at a sample once the writes falling due
+/// there together gave way ([`Conditions::give_way`]).
+pub(super) enum Survivor {
+    /// The entry at this place in the table.
+    Entry(usize),
+    /// A write the pending store held, due at this sample, taken out to
+    /// apply in the place of the entry it outranked.
+    Pending(Request, u64),
+}
+
 impl Conditions {
     /// Settles, before entry `i` (due by `at`) reaches its module, every
     /// other plain write here to the same control due at the same sample,
@@ -116,16 +127,25 @@ impl Conditions {
     /// own sample ([`Standing`](crate::control_request::Standing)): at
     /// one sample, a hold that turns away the winner turns away the rest
     /// too, so none is lost to it.
-    /// Returns where entry `i` now is, or `None` once it gave way.
-    /// Allocation- and free-free; one pass over the table per contender.
+    ///
+    /// A write the pending store holds for the same sample (one timed in
+    /// samples, applied after this table's at a segment start) weighs the
+    /// one left standing the same way, the later received read from the
+    /// ids, which a channel hands out in submission order. One that wins
+    /// is taken out to apply in its place, so it applies before the
+    /// events due here at that sample, as the write it replaced would have
+    /// (a note off reads the release written for its sample).
+    /// Returns what now stands, or `None` once entry `i` gave way to
+    /// another here. Allocation- and free-free; one pass over the table
+    /// per contender.
     pub(super) fn give_way(
         &mut self,
         mut i: usize,
         at: u64,
-        outcomes: &mut Outcomes,
-    ) -> Option<usize> {
+        pending: &mut PendingStore,
+    ) -> Option<Survivor> {
         let Some(due) = self.contends(i, at) else {
-            return Some(i);
+            return Some(Survivor::Entry(i));
         };
         while let Some(other) = self.contender(i, due, at) {
             let mine = Rank::of(&self.entries[i].request).expect("not an event");
@@ -139,7 +159,7 @@ impl Conditions {
                 true => mine.loses_to(theirs),
                 false => theirs.loses_to(mine),
             };
-            self.end(loser, outcomes, outcome);
+            self.end(loser, &mut pending.outcomes, outcome);
             if loser == i {
                 return None;
             }
@@ -147,7 +167,27 @@ impl Conditions {
                 i -= 1;
             }
         }
-        Some(i)
+        let request = &self.entries[i].request;
+        let target = request.target;
+        let mut standing = (Rank::of(request).expect("not an event"), request.id);
+        let mut taken = None::<Request>;
+        while let Some((place, theirs, id)) = pending.rival(&target, due, at) {
+            let (rank, _) = standing;
+            if standing < (theirs, id) {
+                let won = pending.take(place);
+                match taken.replace(won) {
+                    Some(lost) => pending.outcomes.settle(lost, rank.loses_to(theirs)),
+                    None => self.end(i, &mut pending.outcomes, rank.loses_to(theirs)),
+                }
+                standing = (theirs, id);
+            } else {
+                let lost = pending.take(place);
+                pending.outcomes.settle(lost, theirs.loses_to(rank));
+            }
+        }
+        Some(taken.map_or(Survivor::Entry(i), |request| {
+            Survivor::Pending(request, due)
+        }))
     }
 
     /// The sample entry `i` is due at, if it would apply by `at` as a
@@ -170,5 +210,7 @@ impl Conditions {
     }
 }
 
+#[cfg(test)]
+mod pending_tests;
 #[cfg(test)]
 mod tests;

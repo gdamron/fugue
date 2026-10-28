@@ -30,7 +30,7 @@ pub(super) struct Host {
     controls: Vec<f32>,
     /// How many requests had applied each time the late events applied
     /// were finished.
-    finished: Vec<usize>,
+    pub(super) finished: Vec<usize>,
     /// Holds on the target's controls, weighed as the graph weighs them,
     /// when set.
     pub(super) holds: Option<Holds>,
@@ -204,7 +204,7 @@ pub(super) fn apply_all(
 ) -> Option<u64> {
     loop {
         let waiting = conditions.len();
-        let next = conditions.apply_due(INSTALLED, Some(TARGET), at, host, &mut store.outcomes);
+        let next = conditions.apply_due(INSTALLED, Some(TARGET), at, host, store);
         if conditions.len() == waiting {
             return next;
         }
@@ -321,14 +321,14 @@ fn a_condition_read_only_after_its_target_computed_applies_late() {
         host.segment(0);
         conditions.start(0, INSTALLED, &host, &mut store.outcomes);
         conditions.read(INSTALLED, Some(TARGET), &host, &store.outcomes.chains);
-        let next = conditions.apply_due(INSTALLED, Some(TARGET), 0, &mut host, &mut store.outcomes);
+        let next = conditions.apply_due(INSTALLED, Some(TARGET), 0, &mut host, &mut store);
         assert_eq!(next, None);
         host.compute(0, 64);
         conditions.read(INSTALLED, None, &host, &store.outcomes.chains);
         // Met at 30, it applies before the target's next sample, at 64.
         host.segment(64);
         conditions.start(64, INSTALLED, &host, &mut store.outcomes);
-        conditions.apply_due(INSTALLED, Some(TARGET), 64, &mut host, &mut store.outcomes);
+        conditions.apply_due(INSTALLED, Some(TARGET), 64, &mut host, &mut store);
         let late = Outcome::AppliedLate { at: 64, due: 30 };
         assert_eq!(log(&outcomes), [(1, late)]);
         // A late event finishes as it applies.
@@ -353,11 +353,13 @@ fn late_events_due_at_one_sample_each_finish_as_they_apply() {
     conditions.read(INSTALLED, None, &host, &store.outcomes.chains);
     host.segment(64);
     conditions.start(64, INSTALLED, &host, &mut store.outcomes);
-    conditions.apply_due(INSTALLED, Some(TARGET), 64, &mut host, &mut store.outcomes);
+    conditions.apply_due(INSTALLED, Some(TARGET), 64, &mut host, &mut store);
     let late = Outcome::AppliedLate { at: 64, due: 30 };
-    assert_eq!(log(&outcomes), [(1, late), (2, late), (3, late)]);
+    // The value due beside them first, as in the pending store, so each
+    // event reads it.
+    assert_eq!(log(&outcomes), [(3, late), (1, late), (2, late)]);
     // As the pending store's and a replay's: each before the next applies.
-    assert_eq!(host.finished, [1, 2]);
+    assert_eq!(host.finished, [2, 3]);
 }
 
 #[test]
