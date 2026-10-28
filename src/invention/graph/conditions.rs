@@ -83,7 +83,9 @@ impl ConditionHost for SignalGraph {
         value: RequestValue,
         outcomes: &mut Outcomes,
     ) -> Result<(), Outcome> {
-        self.stage(target, standing, value, outcomes)
+        // Requests apply through `Superseding`, which stages; this host
+        // applies at once, as it always has.
+        self.apply_now(target, standing, value, outcomes)
     }
 }
 

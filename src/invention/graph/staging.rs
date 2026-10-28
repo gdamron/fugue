@@ -54,13 +54,14 @@ impl SignalGraph {
     }
 
     /// Applies a request at once, after what is staged on its module.
-    fn apply_now(
+    pub(super) fn apply_now(
         &mut self,
         target: &ControlTarget,
         standing: Option<Standing>,
         value: RequestValue,
         outcomes: &mut Outcomes,
     ) -> Result<(), Outcome> {
+        outcomes.take_applying();
         self.flush_module(target.module_idx, outcomes);
         self.apply_ranked(target, standing, value, &mut outcomes.retirer)
     }
