@@ -5,11 +5,15 @@
 //! installs. A change whose schedules can run more ramps at once, summed
 //! over the modules it leaves, carries more room in its publication; one
 //! live schedule write that would need more publishes the topology
-//! recompiled to carry it (see `publish::retarget`). Schedulers are the
+//! recompiled to carry it (see `publish::retarget`), and a change
+//! publishing grows its room again for writes made since it compiled. Schedulers are the
 //! only modules with tables a drain plays, and a scheduler's surface
 //! knows the schedule it was last written.
 
-use super::GraphChange;
+use indexmap::IndexMap;
+use std::collections::HashMap;
+
+use super::{GraphChange, PreparedChange, SurfaceMap, TopologyMirror};
 use crate::control_request::RampRoom;
 use crate::modules::ControlSchedulerControls;
 
@@ -49,15 +53,46 @@ impl GraphChange {
     /// The most ramps the tables of the modules the change leaves can run
     /// at once, summed.
     fn table_ramps(&self) -> usize {
-        let ramps = |id: &String| {
-            let written = self.ramps_written.get(id).copied();
-            written.unwrap_or_else(|| {
-                let surface = self.surfaces.get(id).and_then(|surface| surface.as_any());
-                let controls =
-                    surface.and_then(|any| any.downcast_ref::<ControlSchedulerControls>());
-                controls.map_or(0, ControlSchedulerControls::table_ramps)
-            })
-        };
-        self.mirror.modules.keys().map(ramps).sum()
+        let schedules = &self.rescheduling.schedules;
+        table_ramps(&self.mirror, &self.surfaces, &self.ramps_written, schedules)
     }
+}
+
+impl PreparedChange {
+    /// Under the publisher, as the change publishes: grows the room its
+    /// publication carries for what its schedulers' schedules need now,
+    /// when a write that fit the drain changed one since it compiled.
+    /// Allocates.
+    pub(crate) fn refit_ramp_room(&mut self) {
+        let Some(publication) = self.publication.as_mut() else {
+            return;
+        };
+        let (written, schedules) = (IndexMap::new(), &self.rescheduling.schedules);
+        let needed = table_ramps(&self.mirror, &self.surfaces, &written, schedules);
+        if RampRoom::fitting(needed) > RampRoom::fitting(self.mirror.table_ramps) {
+            self.mirror.table_ramps = RampRoom::fitting(needed);
+            publication.ramp_room = Some(RampRoom::new(needed));
+        }
+    }
+}
+
+/// The most ramps the tables of `mirror`'s modules can run at once, summed:
+/// each scheduler's schedule as a live write leaves it (`written`), else as
+/// the change writes it (`schedules`), else as its surface last recorded.
+fn table_ramps(
+    mirror: &TopologyMirror,
+    surfaces: &SurfaceMap,
+    written: &IndexMap<String, usize>,
+    schedules: &HashMap<String, String>,
+) -> usize {
+    let ramps = |id: &String| {
+        let rewritten =
+            (schedules.get(id)).and_then(|json| ControlSchedulerControls::schedule_ramps(json));
+        written.get(id).copied().or(rewritten).unwrap_or_else(|| {
+            let surface = surfaces.get(id).and_then(|surface| surface.as_any());
+            let controls = surface.and_then(|any| any.downcast_ref::<ControlSchedulerControls>());
+            controls.map_or(0, ControlSchedulerControls::table_ramps)
+        })
+    };
+    mirror.modules.keys().map(ramps).sum()
 }

@@ -302,6 +302,12 @@ impl ControlSchedulerControls {
         spec_ramps(&self.shared.state.lock().unwrap().spec)
     }
 
+    /// [`Self::table_ramps`] of schedule `json`, or `None` when it does not
+    /// parse (a write then refuses it).
+    pub(crate) fn schedule_ramps(json: &str) -> Option<usize> {
+        parse_schedule_json(json).ok().map(|spec| spec_ramps(&spec))
+    }
+
     /// [`Self::target_module_ids`], or `None` while a control thread holds
     /// them: it never waits, so the audio thread may call it.
     pub(crate) fn try_target_module_ids(&self) -> Option<Vec<String>> {

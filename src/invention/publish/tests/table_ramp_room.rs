@@ -246,3 +246,55 @@ fn past_the_limit_a_ramp_jumps_and_the_status_counts_it() {
     let jump = heard.iter().position(|&level| level != 0.25).unwrap();
     assert_eq!(heard[jump], 0.9, "it jumps");
 }
+
+/// Entries for `dials` dials at step 1, none ramping.
+fn still(dials: impl IntoIterator<Item = usize>) -> serde_json::Value {
+    let entry = |dial| {
+        let module = format!("dial{dial}");
+        serde_json::json!({ "at_step": 1, "module": module, "control": "level", "value": 0.25 })
+    };
+    dials.into_iter().map(entry).collect()
+}
+
+#[test]
+fn a_schedule_an_edit_writes_with_a_rebuilt_target_takes_its_room() {
+    let dials = RAMP_CAPACITY + 1;
+    let run = |written: serde_json::Value| {
+        let mut rig = linked(dials, Steps::Clock, still(0..dials));
+        render_counted(&mut rig, 1);
+        let mut change = rig.live.begin();
+        change.upsert("dial0", rig.build("dial0", DIAL, serde_json::json!({})));
+        change.reschedule("sched", &written.to_string());
+        rig.live.commit(change.prepare().unwrap()).unwrap();
+        let heard = render_counted(&mut rig, BLOCKS);
+        (rig, heard)
+    };
+    let (_, alone) = run(schedule(dials, [dials - 1]));
+    let (rig, heard) = run(schedule(dials, 0..dials));
+    glides(&alone);
+    assert_eq!(heard, alone);
+    assert_eq!(rig.live.table_ramp_jumps(), 0);
+}
+
+#[test]
+fn a_change_publishing_after_a_write_that_fit_takes_the_room_both_need() {
+    let dials = RAMP_CAPACITY + 1;
+    let heard_dial = dials - 1;
+    // The heard dial is the new scheduler's alone.
+    let mut rig = linked(dials, Steps::Clock, still(0..heard_dial));
+    render_counted(&mut rig, 1);
+    let mut change = rig.live.begin();
+    let config = serde_json::json!({ "schedule": schedule(dials, [heard_dial]) });
+    change.upsert("sched2", rig.build("sched2", "control_scheduler", config));
+    change
+        .connect(edge("steps", "beat", "sched2", "clock"))
+        .unwrap();
+    let prepared = change.prepare().unwrap();
+    // The same targets, all ramping: it fits the drain, so publishes nothing.
+    let written = schedule(dials, 0..heard_dial);
+    super::migrated::write(&rig, "sched", "schedule", written.to_string().into());
+    rig.live.commit(prepared).unwrap();
+    // The new scheduler counts its steps from the edit on.
+    glides(&render_counted(&mut rig, 2 * BLOCKS));
+    assert_eq!(rig.live.table_ramp_jumps(), 0);
+}
