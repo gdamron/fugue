@@ -24,6 +24,10 @@ fn peak(running: &RunningInvention, pump: &Pump, sound: (&str, f32)) -> f32 {
             .unwrap()
     };
     play(sound.0);
+    if sound.0 == "play" {
+        // Past the fade of the play it cut off, as there.
+        pump.render(3);
+    }
     let peak = pump
         .render(4)
         .iter()
