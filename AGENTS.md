@@ -13,15 +13,16 @@ priority.
 
 - Keep audio-thread code allocation-free (no `Vec::new()`, etc.)
 - Keep audio-thread code lock-free. Module `process()` runs at sample rate
-  (tens of thousands of times per second per module), so a `Mutex` shared
-  with control/script threads will starve the audio callback and produce
-  dropouts. Share state with control/script threads via `std::sync::atomic`
-  primitives on the hot path. Control writes are requests that the audio
-  thread applies (see `src/control_request/mod.rs`): every module declares
-  its controls in a `ControlTable` (a catalog test enforces it), and heavy
-  values are built on a control thread, swapped in by pointer, and freed
-  there. Only host state that no audio thread reads (an agent's prompt, a
-  script's status) stays undeclared.
+  (tens of thousands of times per second per module), so a lock shared with
+  control/script threads will starve the audio callback and produce
+  dropouts. Control writes are requests that the audio thread applies
+  (`src/control_request/`): modules declare their controls in a
+  `ControlTable`, and heavy values are built on a control thread, swapped in
+  by pointer, and freed there.
+- Control-thread state that needs a lock uses `audio_thread::ControlLock`,
+  whose `lock()` panics in debug builds on the audio thread. A source lock
+  scan and the catalog test (no module allocates, frees or locks on the
+  audio thread) enforce this; fix violations rather than allow-listing them.
 - Use pre-allocated buffers for DSP
 - Prefer `f32` math for audio-rate signals (SIMD-friendly)
 - Wrap phase accumulators with `phase -= phase.floor()` (sign-safe under
