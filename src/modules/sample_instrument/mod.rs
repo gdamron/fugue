@@ -84,7 +84,7 @@ use crate::{ControlMeta, Module};
 pub use self::controls::{LoopSpec, ZoneSpec};
 pub use self::voice::MAX_VOICES;
 
-use self::controls::RELEASE_RANGE;
+use self::controls::{held_release, RELEASE_RANGE};
 use self::controls::{control_at, index_of, midi_note, InstrumentControl, ZoneAudio};
 use self::voice::{note_from_freq, resolve_zone, Voice, ZoneRuntime, DECLICK_SECONDS};
 
@@ -155,8 +155,7 @@ fn parse_config(config: &serde_json::Value) -> Result<(Vec<ZoneSpec>, usize, f32
 
     let release = match reader.float(&RELEASE).map_err(|error| error.to_string())? {
         None => DEFAULT_RELEASE,
-        Some(release) if release > 0.0 => release.clamp(RELEASE_RANGE.0, RELEASE_RANGE.1),
-        Some(_) => return Err("'release' must be a positive number of seconds".to_string()),
+        Some(release) => held_release(release),
     };
 
     let Some(zones) = config.get("zones") else {
@@ -654,10 +653,10 @@ impl Module for SampleInstrument {
         };
         match self.control(control) {
             Some(InstrumentControl::Release) => {
-                if !(number.is_finite() && number > 0.0) {
+                if !number.is_finite() {
                     return Err(Refusal::Invalid);
                 }
-                self.release = number.clamp(RELEASE_RANGE.0, RELEASE_RANGE.1);
+                self.release = held_release(number);
                 Ok(RtValue::F32(self.release))
             }
             Some(InstrumentControl::NoteOn) => {

@@ -127,3 +127,27 @@ fn a_late_release_queued_behind_an_edit_does_not_reach_back() {
         last(&heard)
     );
 }
+
+/// A release of 0 sent live, staged and applied at its sample, is taken
+/// (not refused) and held at the steal fade's 3 ms: the note off after it
+/// ends the note within that fade, never with a step.
+#[test]
+fn a_release_of_zero_sent_live_ends_the_note_over_the_steal_fade() {
+    let (_dir, mut rig, start) = sounding();
+    send(&rig, RELEASE, 0.0, start + 4);
+    send(&rig, NOTE_OFF, 60.0, start + 8);
+    let heard = rig.render(4);
+    all_applied(&mut rig);
+    let held = super::migrated::read(&rig, "inst", "release");
+    assert_eq!(held, crate::ControlValue::Number(0.003));
+    // 0.5 over 144 frames at 48 kHz, with slack for 16-bit quantization.
+    let steepest = 0.5 / 144.0 + TOL;
+    for (frame, pair) in heard.windows(2).enumerate() {
+        assert!(
+            pair[0] - pair[1] <= steepest,
+            "stepped at frame {frame}: {pair:?}"
+        );
+    }
+    assert!(heard[8 + 100].abs() > TOL, "cut short: {}", heard[108]);
+    assert!(last(&heard).abs() < TOL, "still sounding: {}", last(&heard));
+}
