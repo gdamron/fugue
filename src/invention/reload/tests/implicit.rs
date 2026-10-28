@@ -337,6 +337,20 @@ fn a_developments_implicit_key_is_not_restored_by_one_write() {
 }
 
 #[test]
+fn a_position_under_a_null_whole_key_returns_as_built() {
+    // A null reads as absent: the whole key returns as built.
+    let weights = melody(json!({ "degrees": [0, 2, 4], "note_weights": null, "seed": 1 }));
+    let at = ("tune", "note_weight.1");
+    restores_by(&weights, at, number(9.0), number(1.0), "note_weights");
+    let scale = melody(json!({ "degrees": null, "seed": 1 }));
+    let built = start_pumped(&scale)
+        .0
+        .get_control("tune", "degree.1")
+        .unwrap();
+    restores_by(&scale, ("tune", "degree.1"), number(5.0), built, "degrees");
+}
+
+#[test]
 fn a_count_of_an_empty_scale_returns_by_the_scale() {
     // An empty scale builds a count of zero, below the one a count write
     // starts at: the whole scale written again restores it.

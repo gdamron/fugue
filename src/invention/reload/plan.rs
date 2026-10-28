@@ -239,8 +239,9 @@ fn restore_write(
     let Some(whole) = wholes.iter().find(replacing) else {
         return Some((key.to_string(), fresh(key)?));
     };
-    // A structured key stated as structure is written as its JSON text.
-    let value = match config.get(whole.key) {
+    // A structured key stated as structure is written as its JSON text; a
+    // null reads as absent, as a build reads it.
+    let value = match config.get(whole.key).filter(|value| !value.is_null()) {
         Some(value @ (serde_json::Value::Array(_) | serde_json::Value::Object(_)))
             if whole.kind == ConfigKind::Json =>
         {
