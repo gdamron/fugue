@@ -294,6 +294,11 @@ pub(crate) struct QueueConsumer<T> {
 }
 
 impl<T> QueueConsumer<T> {
+    /// How many items the queue holds at most.
+    pub(crate) fn capacity(&self) -> u64 {
+        self.shared.mask + 1
+    }
+
     /// Calls `f` with the oldest published item, leaving it queued, or
     /// returns `None` exactly when [`Self::pop`] would. Wait-free,
     /// allocation-free and never frees.

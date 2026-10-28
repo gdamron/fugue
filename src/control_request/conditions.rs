@@ -43,15 +43,36 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use self::parts::{arm, latch, read_controls, waits_on};
+use self::replace::Survivor;
 use super::chains::Chains;
 use super::condition::{Condition, Predicate, MAX_PARTS};
 use super::hold::Standing;
-use super::pending::{expired, Outcome, Outcomes, Refusal};
+use super::pending::{expired, Outcome, Outcomes, PendingStore, Refusal};
 use super::request::{ControlIndex, ControlTarget, Request, RequestId, RequestValue, When};
 use crate::payload::Retirer;
 
-/// The most requests timed by a condition one graph keeps waiting.
+/// The most requests timed by a condition one graph keeps waiting, but
+/// for the [`WAITING_RESERVE`] reserved ones may take too.
 pub(crate) const CONDITION_CAPACITY: usize = 64;
+
+/// Room beyond what a condition table or the beat watches hold that only
+/// reserved requests (`Request::reserved`: note offs) may take, so a note
+/// off timed by a condition or a beat is never shut out by other requests
+/// waiting, which may never apply.
+pub(crate) const WAITING_RESERVE: usize = 16;
+
+/// Requests timed by a condition one graph keeps waiting, reserved ones
+/// included.
+pub(crate) const CONDITION_ROOM: usize = CONDITION_CAPACITY + WAITING_RESERVE;
+
+/// A table's `capacity`, and its [`WAITING_RESERVE`] for a `reserved`
+/// request.
+pub(crate) const fn limit(capacity: usize, reserved: bool) -> usize {
+    match reserved {
+        true => capacity + WAITING_RESERVE,
+        false => capacity,
+    }
+}
 
 /// How many of the latest timed edits cancelled [`WatchSlots`] remembers.
 const CANCELLED: usize = 4;
@@ -90,9 +111,10 @@ impl WatchSlots {
         debug_assert!(released.is_ok(), "released a slot never taken");
     }
 
-    /// Whether [`CONDITION_CAPACITY`] requests are in flight.
-    pub(crate) fn full(&self) -> bool {
-        self.taken.load(Ordering::Relaxed) >= CONDITION_CAPACITY
+    /// Whether [`CONDITION_CAPACITY`] requests are in flight, or
+    /// [`CONDITION_ROOM`] for a `reserved` one.
+    pub(crate) fn full(&self, reserved: bool) -> bool {
+        self.taken.load(Ordering::Relaxed) >= limit(CONDITION_CAPACITY, reserved)
     }
 
     pub(crate) fn taken(&self) -> usize {
@@ -202,11 +224,12 @@ pub(crate) struct Conditions {
 }
 
 impl Conditions {
-    /// Room for `capacity` requests, releasing each one's slot in `slots`
-    /// as it settles. Allocates: control thread.
+    /// Room for `capacity` requests, and [`WAITING_RESERVE`] more reserved
+    /// ones, releasing each one's slot in `slots` as it settles.
+    /// Allocates: control thread.
     pub(crate) fn new(capacity: usize, slots: Arc<WatchSlots>) -> Self {
         Self {
-            entries: Vec::with_capacity(capacity),
+            entries: Vec::with_capacity(capacity + WAITING_RESERVE),
             limit: capacity,
             slots,
         }
@@ -231,8 +254,9 @@ impl Conditions {
         self.entries.is_empty()
     }
 
-    pub(crate) fn is_full(&self) -> bool {
-        self.entries.len() >= self.limit
+    /// Whether a request, `reserved` or not, finds no room.
+    pub(crate) fn is_full(&self, reserved: bool) -> bool {
+        self.entries.len() >= limit(self.limit, reserved)
     }
 
     /// Refuses a condition nothing can meet. An edit timed by one lands
@@ -262,7 +286,7 @@ impl Conditions {
         let Some(request) = self.coalesce(request, condition, outcomes) else {
             return;
         };
-        if self.is_full() {
+        if self.is_full(request.reserved) {
             return self.settle(request, Refusal::PendingFull.into(), outcomes);
         }
         self.entries.push(Entry {
@@ -386,75 +410,12 @@ impl Conditions {
         }
     }
 
-    /// Applies, in receipt order, every request in the `installed`
-    /// generation (on module `target`, if given) whose condition was met at
-    /// or before `at`, the sample its target computes next: on time at its
-    /// due sample, late after it; refuses each that waits on a request
-    /// that will not apply. Returns the earliest sample a condition read so
-    /// far is met at among the rest, which their target must not compute
-    /// past before this is called again. Allocation- and free-free.
-    pub(crate) fn apply_due(
-        &mut self,
-        installed: u64,
-        target: Option<usize>,
-        at: u64,
-        host: &mut impl ConditionHost,
-        outcomes: &mut Outcomes,
-    ) -> Option<u64> {
-        let mut next = None::<u64>;
-        let mut i = 0;
-        while i < self.entries.len() {
-            let entry = &self.entries[i];
-            let ours = target.is_none_or(|target| entry.request.target.module_idx == target);
-            if entry.request.target.generation != installed || !ours {
-                i += 1;
-                continue;
-            }
-            if entry.broken {
-                self.end(i, outcomes, Refusal::ChainBroken.into());
-                continue;
-            }
-            let Some(due) = entry.due() else {
-                i += 1;
-                continue;
-            };
-            if due > at {
-                next = Some(next.map_or(due, |next| next.min(due)));
-                i += 1;
-                continue;
-            }
-            let Entry { request, .. } = self.take(i, &mut outcomes.chains);
-            if expired(&request, at) {
-                self.settle(request, Refusal::Expired.into(), outcomes);
-                continue;
-            }
-            let standing = Standing::of(&request, due);
-            let fires = request.fires();
-            let Request {
-                target, value, id, ..
-            } = request;
-            let payload = value.is_payload();
-            let outcome = match host.apply(&target, standing, value, &mut outcomes.retirer) {
-                Ok(()) if due < at => Outcome::AppliedLate { at, due },
-                Ok(()) => Outcome::Applied { at },
-                Err(outcome) => outcome,
-            };
-            // A late event finishes as it applies, as the pending store's.
-            if fires && matches!(outcome, Outcome::AppliedLate { .. }) {
-                host.finish_events();
-            }
-            outcomes.record(id, payload, outcome, true);
-            self.slots.release();
-        }
-        next
-    }
-
     /// Maps every request resolved against a generation older than
     /// `installed` into it, its target and the modules its condition reads
     /// alike: `map` gives a module's index in the installed order, or
     /// `None` when it went away, which refuses the request
     /// ([`Refusal::TargetGone`], or [`Refusal::SourceGone`] for a module it
-    /// reads). Allocation-free.
+    /// reads, unless its condition is already met). Allocation-free.
     pub(crate) fn remap(
         &mut self,
         installed: u64,
@@ -473,15 +434,22 @@ impl Conditions {
                 self.end(i, outcomes, Refusal::TargetGone.into());
                 continue;
             };
+            // A met condition reads nothing more (every part is met), so
+            // a source going no longer matters to it: its request stays
+            // due, as one waiting for the install that removed it must.
+            let met = entry.due().is_some();
             let mut condition = entry.condition;
             let sources = condition.parts_mut().iter_mut();
-            let mapped = sources.filter_map(Predicate::module_mut).all(|source| {
-                map(generation, *source as usize).is_some_and(|new| {
-                    *source = new as u32;
-                    true
-                })
-            });
-            if !mapped {
+            let mapped = sources
+                .filter_map(Predicate::module_mut)
+                .fold(true, |all, source| {
+                    let new = map(generation, *source as usize);
+                    if let Some(new) = new {
+                        *source = new as u32;
+                    }
+                    all && new.is_some()
+                });
+            if !mapped && !met {
                 self.end(i, outcomes, Refusal::SourceGone.into());
                 continue;
             }
@@ -524,6 +492,7 @@ fn read_part(part: &Predicate, seen: &mut Seen, host: &impl ConditionHost) {
     seen.next = seen.next.max(first + values.len() as u64);
 }
 
+mod apply;
 mod parts;
 mod replace;
 #[cfg(test)]

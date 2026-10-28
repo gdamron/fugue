@@ -63,8 +63,8 @@ pub(crate) use compile::{compile_topology, CompiledTopology, TopologyFacts};
 pub use master::MasterLevels;
 pub(crate) use master::MasterObservers;
 pub(crate) use publication::{
-    vacant, AudioLink, Fate, Handover, InputWrite, Publication, SurvivorRemap,
-    MAX_INPUT_PORT_NAME, MAX_INSTALLS_PER_BLOCK, TIMED_EDIT_MODULE,
+    vacant, AudioLink, Fate, Handover, InputWrite, Publication, SurvivorRemap, MAX_INPUT_PORT_NAME,
+    MAX_INSTALLS_PER_BLOCK, TIMED_EDIT_MODULE,
 };
 #[cfg(test)]
 pub(crate) use requests::link_requests;
@@ -212,6 +212,9 @@ pub(crate) struct SignalGraph {
     /// The publication an edit installing held as a render panicked, kept
     /// for teardown (see `unwind`).
     pub(crate) unwound: Option<Box<Publication>>,
+    /// Payloads and other values a render dropped as it panicked, kept for
+    /// teardown (see `unwind`).
+    pub(crate) caught: [Option<crate::payload::Retired>; crate::payload::CAUGHT],
     /// An offline render's graph that a new render replaced: no module is
     /// added to it or removed from it again (see `declared::retire_offline`).
     pub(crate) retired: bool,
@@ -269,6 +272,7 @@ impl SignalGraph {
             installing: None,
             failed: false,
             unwound: None,
+            caught: Default::default(),
             retired: false,
             offline_edits: 0,
             master,

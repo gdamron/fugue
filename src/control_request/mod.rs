@@ -23,6 +23,7 @@
 #![allow(dead_code, unused_imports)]
 
 mod automation;
+mod backlog;
 #[cfg(test)]
 mod catalog_tests;
 mod cells;
@@ -77,9 +78,12 @@ mod sync {
 }
 
 pub(crate) use automation::{take_automation, Automation, EventReserve};
+pub(crate) use backlog::{Held, BACKLOG_CAPACITY};
 pub(crate) use cells::{apply_declared, ControlCells};
 pub(crate) use condition::{Condition, Edge, Join, Predicate, GATE_LEVEL, MAX_PARTS};
-pub(crate) use conditions::{ConditionHost, Conditions, WatchSlots, CONDITION_CAPACITY};
+pub(crate) use conditions::{
+    ConditionHost, Conditions, WatchSlots, CONDITION_CAPACITY, CONDITION_ROOM, WAITING_RESERVE,
+};
 pub(crate) use declare::{
     integer_domain, ControlContext, ControlDecl, ControlTable, DeclKind, PayloadCodec, Prepared,
     ValueReader, Writer,

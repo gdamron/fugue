@@ -347,7 +347,11 @@ fn an_overridden_write_is_not_logged() {
         .submit_logged_from(level, value(0.75), When::AtSample(at), None, Source::User);
     assert_eq!(counted_block(&mut rig), (0, 0));
     let log = rig.live.request_log();
-    let logged: Vec<_> = log.requests.iter().map(|r| (r.sample, r.value)).collect();
+    let logged: Vec<_> = log
+        .requests
+        .iter()
+        .map(|r| (r.sample, r.value.clone()))
+        .collect();
     assert_eq!(logged, [(at, crate::LoggedValue::Number(0.75))]);
     assert_eq!((log.lost, log.unlogged), (0, 0));
 }

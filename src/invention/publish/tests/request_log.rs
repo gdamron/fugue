@@ -63,6 +63,7 @@ impl LiveGraph {
             beat,
             source,
             when: crate::control_request::When::Now,
+            expires: None,
             announced: false,
             awaited: false,
             authored: None,

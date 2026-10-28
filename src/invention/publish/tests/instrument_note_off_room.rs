@@ -148,18 +148,17 @@ fn note_offs_held_across_an_edit_drain_end_their_notes() {
     assert_eq!(tally(&mut rig), (OFFS, 100 + OFFS));
 }
 
-#[test]
-fn a_note_off_finds_room_in_a_queue_full_of_requests_and_stalled_edits() {
+/// [`sounding`], its retirement held so edits stall, the queue full of
+/// note ons due long after and of edits behind them, but for the room
+/// left for reserved requests.
+fn stalled(dir: &std::path::Path) -> Rig {
     use crate::invention::publish::publisher::{EDIT_RESERVE, RESERVED_ROOM};
-    let dir = tempfile::tempdir().unwrap();
-    let mut rig = sounding(dir.path());
+    let mut rig = sounding(dir);
     rig.hold_a_retirement();
     let far = rig.graph.current_sample + 10_000_000;
     for n in 0..REQUEST_QUEUE_CAPACITY as u64 {
         note_on(&rig, far + n).unwrap();
     }
-    // Edits queue behind the install they wait on until only the room
-    // left for reserved requests is free.
     let fm = edge("osc1", "audio", "osc2", "frequency_mod");
     let mut edits = 0;
     loop {
@@ -175,16 +174,209 @@ fn a_note_off_finds_room_in_a_queue_full_of_requests_and_stalled_edits() {
         edits += 1;
     }
     assert_eq!(edits, EDIT_RESERVE - RESERVED_ROOM);
+    rig
+}
 
-    note_offs(&rig);
+/// Renders until what is queued has applied, and counts the note offs
+/// that did.
+fn applied_after_stall(rig: &mut Rig) -> (Vec<f32>, usize) {
     let mut heard = Vec::new();
+    let mut applied = 0;
+    let held = rig.live.held_flush();
     for _ in 0..64 {
         rig.live.reclaim();
+        // As the reclaimer's thread would, between blocks.
+        held.tick();
         heard = rig.render(1);
+        applied += (outcomes(rig).into_iter())
+            .filter(|(_, outcome)| matches!(outcome, Outcome::Applied { .. }))
+            .count();
     }
+    (heard, applied)
+}
+
+#[test]
+fn a_note_off_finds_room_in_a_queue_full_of_requests_and_stalled_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut rig = stalled(dir.path());
+    note_offs(&rig);
+    let (heard, applied) = applied_after_stall(&mut rig);
     assert!(heard.iter().all(|level| level.abs() < TOL), "{heard:?}");
-    let applied = (outcomes(&mut rig).into_iter())
-        .filter(|(_, outcome)| matches!(outcome, Outcome::Applied { .. }))
-        .count();
     assert_eq!(applied, OFFS, "every note off");
+}
+
+/// As many note offs as forty full instruments release at once all find
+/// room behind a full queue and stalled edits, and apply once the
+/// installs go on.
+#[test]
+fn every_voice_of_many_instruments_ends_behind_stalled_edits() {
+    const VOICES: usize = 40 * crate::modules::sample_instrument::MAX_VOICES;
+    let dir = tempfile::tempdir().unwrap();
+    let mut rig = stalled(dir.path());
+    for n in 0..VOICES {
+        let note = (60 + n) % 128;
+        set(&rig, "note_off", (note as f32).into()).unwrap();
+    }
+    let (heard, applied) = applied_after_stall(&mut rig);
+    assert!(heard.iter().all(|level| level.abs() < TOL), "{heard:?}");
+    assert_eq!(applied, VOICES, "every note off");
+}
+
+/// More note offs than the queue has room for, behind stalled edits: those
+/// past the room are held until it frees, and every one applies. Past the
+/// backlog too, one is refused.
+#[test]
+fn note_offs_past_the_queue_wait_for_room_and_all_end() {
+    use crate::control_request::BACKLOG_CAPACITY;
+    use crate::invention::publish::publisher::RESERVED_ROOM;
+    let dir = tempfile::tempdir().unwrap();
+    let mut rig = stalled(dir.path());
+    let offs = RESERVED_ROOM + BACKLOG_CAPACITY;
+    for n in 0..offs {
+        let note = (60 + n) % 128;
+        set(&rig, "note_off", (note as f32).into()).unwrap();
+    }
+    assert!(
+        set(&rig, "note_off", 60.0.into()).is_err(),
+        "past the backlog"
+    );
+    let (heard, applied) = applied_after_stall(&mut rig);
+    assert!(heard.iter().all(|level| level.abs() < TOL), "{heard:?}");
+    assert_eq!(applied, offs, "every note off");
+}
+
+/// While note offs are held, one submitted after them never overtakes
+/// them, though the audio thread has freed room since: what is held is
+/// queued first, so every note off applies in the order it was sent.
+#[test]
+fn nothing_overtakes_a_held_note_off() {
+    use crate::invention::publish::publisher::RESERVED_ROOM;
+    let dir = tempfile::tempdir().unwrap();
+    let mut rig = stalled(dir.path());
+    let offs = RESERVED_ROOM + 2;
+    for n in 0..offs - 1 {
+        set(&rig, "note_off", (((60 + n) % 128) as f32).into()).unwrap();
+    }
+    assert!(rig.live.requests.holding().any(), "held");
+    // The audio thread frees room, which nothing has filled from the
+    // backlog yet.
+    rig.live.reclaim();
+    rig.render(1);
+    assert!(rig.live.requests.holding().any());
+    set(&rig, "note_off", 61.0.into()).unwrap();
+    assert!(!rig.live.requests.holding().any(), "queued");
+    let mut applied = Vec::new();
+    for _ in 0..64 {
+        rig.live.reclaim();
+        rig.render(1);
+        applied.extend(
+            (outcomes(&mut rig).into_iter())
+                .filter(|(_, outcome)| matches!(outcome, Outcome::Applied { .. }))
+                .map(|(id, _)| id),
+        );
+    }
+    assert_eq!(applied.len(), offs, "every note off");
+    assert!(applied.is_sorted(), "in the order sent");
+}
+
+/// A note off held while a timed edit waits to land is tagged with the
+/// graph the edit replaces. The edit lands and is adopted, and the queue
+/// drains, before anything queues what is held: the note off still
+/// reaches the instrument the edit keeps, and its note ends.
+#[test]
+fn a_note_off_held_across_a_timed_edit_still_ends_its_note() {
+    use crate::invention::publish::timed::EditTime;
+    let dir = tempfile::tempdir().unwrap();
+    let mut rig = sounding(dir.path());
+    let spare = rig.build("spare", "oscillator", json!({}));
+    let mut change = rig.live.begin();
+    change.upsert("spare", spare);
+    let at = EditTime::AtSample(rig.graph.current_sample + 64);
+    let edit = (rig.live)
+        .commit_when(change.prepare().unwrap(), at, None, |state| {
+            state.document = None;
+        })
+        .unwrap();
+    let far = rig.graph.current_sample + 10_000_000;
+    let mut next = 0;
+    while note_on(&rig, far + next).is_some() {
+        next += 1;
+    }
+    // Note offs for a note not sounding, until one is held.
+    let holding = rig.live.requests.holding();
+    while !holding.any() {
+        set(&rig, "note_off", 61.0.into()).unwrap();
+    }
+    set(&rig, "note_off", 60.0.into()).unwrap();
+    for _ in 0..8 {
+        rig.render(1);
+        rig.live.adopt_landed();
+    }
+    assert!(rig.module_ids().contains(&"spare".to_string()), "landed");
+    let landed = outcomes(&mut rig).into_iter().find(|(id, _)| *id == edit);
+    assert!(
+        matches!(landed, Some((_, Outcome::Applied { .. }))),
+        "{landed:?}"
+    );
+    assert!(holding.any(), "nothing queued what is held");
+    rig.live.held_flush().tick();
+    let heard = rig.render(2);
+    assert!(
+        heard[64..].iter().all(|level| level.abs() < TOL),
+        "{heard:?}"
+    );
+    let gone = Outcome::Refused(Refusal::TargetGone);
+    assert!(!outcomes(&mut rig)
+        .iter()
+        .any(|(_, outcome)| *outcome == gone));
+}
+
+/// A timed edit lands and is adopted, and an immediate edit is queued
+/// before the audio thread lets the timed edit's bridge go. Note offs then
+/// fill the queue behind the immediate edit, and some are held. They are
+/// tagged for the graph that edit installs, so they keep no bridge, which
+/// would block the install: the edit installs, they are queued, and the
+/// note ends.
+#[test]
+fn note_offs_held_behind_an_edit_after_a_timed_one_let_it_install() {
+    use crate::invention::publish::timed::EditTime;
+    let dir = tempfile::tempdir().unwrap();
+    let mut rig = sounding(dir.path());
+    let spare = rig.build("spare", "oscillator", json!({}));
+    let mut change = rig.live.begin();
+    change.upsert("spare", spare);
+    let at = EditTime::AtSample(rig.graph.current_sample + 64);
+    (rig.live)
+        .commit_when(change.prepare().unwrap(), at, None, |state| {
+            state.document = None;
+        })
+        .unwrap();
+    rig.render(2);
+    assert!(rig.module_ids().contains(&"spare".to_string()), "landed");
+    rig.live.adopt_landed();
+    let osc = rig.build("osc3", "oscillator", json!({}));
+    {
+        let mut publisher = rig.live.publisher().lock().unwrap();
+        let mut change = rig.live.change_on(&publisher);
+        change.upsert("osc3", osc);
+        assert!(publisher.publish(change.prepare().unwrap()).is_ok());
+    }
+    let holding = rig.live.requests.holding();
+    while !holding.any() {
+        set(&rig, "note_off", 61.0.into()).unwrap();
+    }
+    set(&rig, "note_off", 60.0.into()).unwrap();
+    let held = rig.live.held_flush();
+    let (mut heard, mut settled) = (Vec::new(), Vec::new());
+    for _ in 0..16 {
+        rig.live.reclaim();
+        held.tick();
+        heard = rig.render(1);
+        settled.extend(outcomes(&mut rig));
+    }
+    assert!(rig.module_ids().contains(&"osc3".to_string()), "installed");
+    assert!(!holding.any(), "queued");
+    assert!(heard.iter().all(|level| level.abs() < TOL), "{heard:?}");
+    let gone = Outcome::Refused(Refusal::TargetGone);
+    assert!(!settled.iter().any(|(_, outcome)| *outcome == gone));
 }

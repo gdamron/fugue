@@ -15,6 +15,7 @@
 //! A request carrying a ramp starts it at its beat, in the graph's ramps
 //! (see [`super::ramps`]).
 
+use super::conditions::{limit, WAITING_RESERVE};
 use super::hold::Standing;
 use super::pending::{expired, Outcome, Outcomes, Refusal};
 use super::ramps::{Ramps, RAMP_CAPACITY};
@@ -237,10 +238,11 @@ pub(crate) struct Watches {
 }
 
 impl Watches {
-    /// Room for `capacity` watches. Allocates: control thread.
+    /// Room for `capacity` watches, and [`WAITING_RESERVE`] more reserved
+    /// ones. Allocates: control thread.
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
-            entries: Vec::with_capacity(capacity),
+            entries: Vec::with_capacity(capacity + WAITING_RESERVE),
             limit: capacity,
             ramps: Ramps::new(RAMP_CAPACITY),
             cursors: Cursors::new(CURSOR_CAPACITY),
@@ -257,8 +259,9 @@ impl Watches {
         self.entries.is_empty() && self.ramps.is_empty() && self.cursors.is_empty()
     }
 
-    pub(crate) fn is_full(&self) -> bool {
-        self.entries.len() >= self.limit
+    /// Whether a watch, `reserved` or not, finds no room.
+    pub(crate) fn is_full(&self, reserved: bool) -> bool {
+        self.entries.len() >= limit(self.limit, reserved)
     }
 
     /// Refuses a beat no clock can reach (a span or grid that is not
@@ -310,7 +313,7 @@ impl Watches {
             return outcomes.settle(request, Outcome::Refused(Refusal::Unsupported));
         };
         let no_ramp_room = beat.ramp.is_some() && !self.ramps.has_room(self.ramps_waiting());
-        if self.is_full() || no_ramp_room {
+        if self.is_full(request.reserved) || no_ramp_room {
             return outcomes.settle(request, Outcome::Refused(Refusal::PendingFull));
         }
         let goal = match beat.spec {

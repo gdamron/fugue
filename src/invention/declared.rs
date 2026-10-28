@@ -50,7 +50,7 @@ use super::graph::GraphCommand;
 use super::graph::SignalGraph;
 use super::publish::{
     kept_until, timed_write, Authoring, CancelCause, PendingLog, PendingWrite, Publisher, Retarget,
-    Settler, Touched, WriteTime,
+    Settler, WriteTime,
 };
 use super::runtime::ControlSurfaceInstance;
 #[cfg(test)]
@@ -197,6 +197,10 @@ pub(crate) struct WriteOptions<'a> {
     /// timed write, which only a live graph's declared, value or payload
     /// control takes (see `publish::timed_write`).
     pub(crate) time: Option<WriteTime<'a>>,
+    /// The sample an offline payload write was due at, which it holds
+    /// from when earlier than now, as a request applied late does: a
+    /// replayed one (see `render::replay`).
+    pub(crate) due: Option<u64>,
 }
 
 impl<'a> WriteOptions<'a> {
@@ -210,6 +214,7 @@ impl<'a> WriteOptions<'a> {
             announced: false,
             awaited: false,
             time: None,
+            due: None,
         }
     }
 
@@ -227,6 +232,7 @@ impl<'a> WriteOptions<'a> {
             announced: self.announced,
             awaited: self.awaited,
             time: self.time,
+            due: self.due,
         }
     }
 
@@ -268,6 +274,8 @@ pub(crate) struct Resolved {
     pub(crate) index: ControlIndex,
     pub(crate) raw: RtValue,
     pub(crate) event: bool,
+    /// Whether the control is reserved (see `ControlDecl::reserved`).
+    pub(crate) reserved: bool,
     /// Its key and value as reads list it pending.
     pub(crate) shown: Option<(String, ControlValue)>,
 }
@@ -464,12 +472,14 @@ impl DeclaredSurface {
         }
         let index = self.index(key)?;
         let raw = self.coerce(index, value)?;
-        let event = self.table.decl(index).is_some_and(|(decl, _)| decl.event);
+        let decl = self.table.decl(index).map(|(decl, _)| decl);
+        let (event, reserved) = decl.map_or((false, false), |decl| (decl.event, decl.reserved));
         let shown = self.table.key(index).zip(self.table.value(index, raw));
         Ok(Resolved {
             index,
             raw,
             event,
+            reserved,
             shown,
         })
     }
@@ -789,9 +799,9 @@ impl DeclaredSurface {
                     }
                     (_, value) => value,
                 };
-                // A payload is listed pending by its read-back and counted
-                // unlogged once applied: the session log cannot carry it yet
-                // (see `PendingWrite::raw`).
+                // A payload is listed pending by its read-back, which the
+                // session log records once it applies (see
+                // `PendingWrite::raw`).
                 let (read, raw) = match (&value, &shown) {
                     (RequestValue::Value(value), _) => {
                         (self.table.value(index, *value), Some(*value))
@@ -821,12 +831,13 @@ impl DeclaredSurface {
                     Some(time) => {
                         let conditions = match &request.value {
                             RequestValue::Payload(_) => Err(PAYLOAD_UNCHAINED),
-                            _ if port.requests.watchers_full() => Err(CHAINS_FULL),
+                            _ if port.requests.watchers_full(reserved) => Err(CHAINS_FULL),
                             _ => Ok(()),
                         };
                         let module = port.module_id.as_str();
                         let locked = (&mut *publisher, &mut *pending);
-                        let resolved = timed_write::resolve(time, module, locked, conditions)?;
+                        let resolved =
+                            timed_write::resolve(time, module, locked, (conditions, reserved))?;
                         // Counted from now as the sender would count it,
                         // so the log knows the sample it is due on.
                         request.when = match resolved.when {
@@ -839,7 +850,7 @@ impl DeclaredSurface {
                     }
                     None => None,
                 };
-                let (source, when) = (request.source, request.when);
+                let (source, when, ttl) = (request.source, request.when, request.ttl);
                 // A timed write is never kept: the later of it and the
                 // edit plays (see `publish::timed_write`).
                 let kept = match (&request.value, authored) {
@@ -857,27 +868,23 @@ impl DeclaredSurface {
                     }
                     _ => None,
                 };
-                let (safe, copy) = (kept.map(|(safe, _)| safe), kept.and_then(|(_, copy)| copy));
-                let id = match port.requests.submit(request) {
+                let (safe, kept) = (kept.map(|(safe, _)| safe), kept.and_then(|(_, kept)| kept));
+                let submitted = match kept {
+                    Some(kept) => port.requests.submit_as(kept.write, request),
+                    None => port.requests.submit(request),
+                };
+                let id = match submitted {
                     Ok(id) => id,
                     // Never, as `keep_authored` kept it only with room for
-                    // this write too, but a write kept and not made is not
-                    // to play: the edit is cancelled, the copy with it.
-                    // Landed already, the copy plays: it is the write.
-                    Err(_) => match (copy, authored) {
-                        (Some(copy), Some(key)) => {
-                            let cause = || CancelCause::AuthoredWrite {
-                                module_id: port.module_id.clone(),
-                                key: key.to_string(),
-                                touches: Touched::Written,
-                            };
-                            if publisher.cancel_timed(cause) {
-                                return Err(QUEUE_FULL.into());
-                            }
-                            copy
+                    // this write too. A write not made is not to play: its
+                    // copy, waiting on it, is refused at the drain's next
+                    // segment start, and the edit is left alone.
+                    Err(_) => {
+                        if let Some(kept) = kept {
+                            port.requests.cancelled(kept.write);
                         }
-                        _ => return Err(QUEUE_FULL.into()),
-                    },
+                        return Err(QUEUE_FULL.into());
+                    }
                 };
                 // Under the publisher's lock, so reads report the last write
                 // submitted.
@@ -894,6 +901,7 @@ impl DeclaredSurface {
                         beat,
                         source,
                         when,
+                        expires: port.requests.expires_by(ttl),
                         announced: options.announced,
                         awaited: options.awaited,
                         // Safe from the timed edit it was kept over, or that
@@ -905,14 +913,14 @@ impl DeclaredSurface {
                     };
                     // The copy applying, too, is this write's, though only the
                     // write is announced: the copy is the edit's.
-                    if let Some(copy) = copy.filter(|copy| *copy != id) {
+                    if let Some(kept) = kept {
                         let copy_write = PendingWrite {
-                            when: safe.map_or(when, kept_until),
+                            when: safe.map_or(when, |edit| kept_until(edit, id)),
                             announced: false,
                             awaited: false,
                             ..write.clone()
                         };
-                        pending.submitted(copy, copy_write);
+                        pending.submitted(kept.copy, copy_write);
                     }
                     pending.submitted(id, write);
                 }
@@ -947,7 +955,8 @@ impl DeclaredSurface {
                         if generation.is_some_and(|seen| seen != graph.offline_edits) {
                             return Err(STALE.into());
                         }
-                        let applied = graph.apply_payload(&module_id, index, payload, rank);
+                        let standing = (rank, options.due);
+                        let applied = graph.apply_payload(&module_id, index, payload, standing);
                         if applied == Ok(true) {
                             self.show(index, shown, None);
                             if let Some(checked) = checked {

@@ -193,7 +193,7 @@ fn refused(refusal: Refusal) -> String {
         Refusal::PendingFull => "the audio thread had no room for it".into(),
         Refusal::Unsupported => "its module does not take that write for this control".into(),
         Refusal::Invalid => "its value is not one the control holds".into(),
-        Refusal::Stopped => "the invention it was queued on stopped".into(),
+        Refusal::Stopped => "the invention it was queued on stopped, or its audio failed".into(),
         other => format!("refused by the audio thread ({other:?})"),
     }
 }

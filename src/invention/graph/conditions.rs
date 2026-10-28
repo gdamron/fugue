@@ -212,18 +212,18 @@ impl SignalGraph {
         let installed = drain.installed;
         loop {
             let waiting = drain.conditions.len();
-            let outcomes = &mut drain.pending.outcomes;
             let mut host = Superseding {
                 graph: self,
                 ramps: &mut drain.watches.ramps,
             };
+            let pending = &mut drain.pending;
             let next = drain
                 .conditions
-                .apply_due(installed, target, at, &mut host, outcomes);
+                .apply_due(installed, target, at, &mut host, pending);
             if drain.conditions.len() == waiting {
                 return next;
             }
-            drain.conditions.chain(installed, &outcomes.chains);
+            drain.conditions.chain(installed, &pending.outcomes.chains);
         }
     }
 

@@ -40,6 +40,7 @@ mod announce;
 mod authored;
 mod change;
 mod contested;
+mod held;
 mod pending;
 mod policy;
 mod publisher;
@@ -127,14 +128,25 @@ const MAX_SETTLE_BLOCKS: usize = (publisher::REQUEST_QUEUE_CAPACITY + publisher:
     .div_ceil(MAX_INSTALLS_PER_BLOCK)
     + 1;
 
+/// Zero-length blocks one settle renders at most after that, so the
+/// reserved requests queued, and those the request channel held for want
+/// of room, are taken: each block takes a budget's worth.
+const HELD_SETTLE_BLOCKS: usize = (publisher::QUEUE_SLOTS
+    + crate::control_request::BACKLOG_CAPACITY)
+    .div_ceil(publisher::REQUEST_QUEUE_CAPACITY);
+
 impl Settler {
     /// Call it with no lock held, never from inside a render.
     ///
     /// Renders until every edit published so far has installed: a block
     /// installs a bounded number, so a burst of edits from several threads
-    /// can take a few. One block that installs them all also takes up every
-    /// request queued (they never outnumber its budget); after several, one
-    /// more takes up the requests behind the last install.
+    /// can take a few. One block that installs them all also takes up the
+    /// requests queued, as many as its budget, and only a burst of reserved
+    /// ones (note offs), which may take any slot, can outnumber it, the rest
+    /// taken in the blocks after; after several, one more takes up the
+    /// requests behind the last install. Then, while reserved requests wait
+    /// in the queue or the channel holds them for want of room, it renders
+    /// until they have all been taken.
     pub(crate) fn settle(&self) {
         // Most retirements are freed here, off both locks.
         self.reclaimer.reclaim();
@@ -159,6 +171,12 @@ impl Settler {
                 if publisher.applied() >= published {
                     if blocks > 1 {
                         block();
+                    }
+                    for _ in 0..HELD_SETTLE_BLOCKS {
+                        let held = !publisher.flush_held();
+                        if !held && !publisher.reserved_waiting() || !block() {
+                            return;
+                        }
                     }
                     return;
                 }
@@ -262,11 +280,12 @@ impl LiveGraph {
                 reclaimer: Arc::clone(&reclaimer),
             }
         });
+        let transport = ends.requests.transport();
         let live = Self {
             publisher,
             reclaimer,
             requests: ends.requests,
-            pending: Arc::new(Mutex::new(PendingLog::new(ends.outcomes))),
+            pending: Arc::new(Mutex::new(PendingLog::new(ends.outcomes, transport))),
             state,
             control_surfaces,
             module_ports,
@@ -293,12 +312,17 @@ impl LiveGraph {
     /// Starts freeing retired publications on a control thread every
     /// [`reclaim::RECLAIM_INTERVAL`], so a removed module (a sink finalizing
     /// its file, say) is dropped promptly rather than at the next change.
-    /// The same cadence adopts a timed edit once it lands (see `timed`).
+    /// The same cadence adopts a timed edit once it lands (see `timed`), and
+    /// queues the note offs the request channel holds for want of room
+    /// (see `held`).
     /// The thread ends once every clone of this graph is gone. Returns false
     /// when no thread could start.
     pub(crate) fn start_reclaimer(&self) -> bool {
-        let adopter = self.adopter();
-        Reclaimer::spawn(&self.reclaimer, move || adopter.tick())
+        let (adopter, held) = (self.adopter(), self.held_flush());
+        Reclaimer::spawn(&self.reclaimer, move || {
+            adopter.tick();
+            held.tick();
+        })
     }
 
     /// Frees retired publications now, on the calling thread.

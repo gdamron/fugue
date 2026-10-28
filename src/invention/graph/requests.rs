@@ -71,6 +71,9 @@
 //! finding them full is refused (`Refusal::PendingFull`) rather than left
 //! at the head of the queue, so it never blocks what follows, edits
 //! included. One held for a newer generation needs room, as in the store.
+//! A reserved request (a note off) timed in beats or by a condition may
+//! also take a few places no other may (`WAITING_RESERVE`), so others
+//! waiting, which may never apply, do not shut it out.
 //!
 //! A clockless drain (a `NullBackend`'s) applies no back-pressure: what
 //! fills its store (or its watches) waits for samples that never come,
@@ -135,6 +138,7 @@ use crate::control_request::{
     admits_hold, apply_declared, expired, take_automation, take_hold, Conditions, ControlIndex,
     ControlTarget, Outcome, OutcomeSender, PendingStore, QueueConsumer, Rank, Refusal, Request,
     RequestValue, ReservedQueued, RtValue, Standing, WatchSlots, Watches, When, CONDITION_CAPACITY,
+    CONDITION_ROOM, WAITING_RESERVE,
 };
 use crate::payload::{Payload, Retirer};
 
@@ -272,8 +276,11 @@ impl RequestDrain {
         let mut store = PendingStore::new(pending, retirer, outcomes);
         // A condition waiting on a request submitted before it starts
         // waiting once it is taken: before then, every request ahead of it
-        // can settle, and those taken behind it in the same block.
-        store.remember(2 * pop_limit + pending + watches + CONDITION_CAPACITY);
+        // in the queue can settle, those taken behind it in the same block,
+        // and every one waiting, reserved ones included.
+        let queue = requests.capacity() as usize;
+        let waiting = pending + watches + WAITING_RESERVE + CONDITION_ROOM;
+        store.remember(queue + pop_limit + waiting);
         Self {
             requests,
             pop_limit,
@@ -304,14 +311,26 @@ impl RequestDrain {
         &self.published
     }
 
-    /// Closes the queue to every later submission (see `super::unwind`).
+    /// Closes the queue to every later submission, and says no outcome
+    /// will come after those sent so far, so the control side settles
+    /// what still waits (see `super::unwind`).
     pub(super) fn close(&self) {
         self.requests.close();
+        self.pending.outcomes.end();
     }
 
-    /// Whether nothing tagged `generation` or older waits in the queue.
-    /// Tags never decrease along the queue, so the head tells.
+    /// Whether nothing tagged `generation` or older waits in the queue, or
+    /// on the control side for room: a request held there (see
+    /// `control_request::backlog`) may be tagged that old, and is queued
+    /// later, ahead of anything newer. Tags never decrease along the
+    /// queue, so then the head tells. What is held is read first: it
+    /// moves on only once what was held is queued. Only what is held that
+    /// old keeps the bridge: newer requests held behind an edit wait for
+    /// its install, which the bridge would block.
     pub(super) fn drained_through(&mut self, generation: u64) -> bool {
+        if self.reserved.held_through(generation) {
+            return false;
+        }
         let head = self.requests.peek(|head| head.target.generation);
         head.is_none_or(|head| head > generation)
     }
@@ -517,13 +536,15 @@ impl SignalGraph {
                 // the installed generation rather than hold the queue
                 // behind it; one held for a newer generation waits, until
                 // that install.
-                Ok(Landing::Watch(target, _)) => {
-                    (target.generation > installed, drain.watches.is_full())
-                }
+                Ok(Landing::Watch(target, _)) => (
+                    target.generation > installed,
+                    drain.watches.is_full(reserved),
+                ),
                 // A condition may never be met: as a watch.
-                Ok(Landing::Condition(target)) => {
-                    (target.generation > installed, drain.conditions.is_full())
-                }
+                Ok(Landing::Condition(target)) => (
+                    target.generation > installed,
+                    drain.conditions.is_full(reserved),
+                ),
                 Err(_) => (false, false),
             };
             // A reserved request behind is as an edit.
@@ -934,18 +955,21 @@ impl SignalGraph {
 
     /// Keeps `payload` as declared payload control `control` of module
     /// `module_id` at once, as [`Self::apply_control`] applies a value of
-    /// `rank`, holding it, or losing, as that does. Control thread: the
-    /// value it replaces, or a payload refused or lost, is dropped here.
+    /// `rank`, holding it, or losing, as that does: from the sample it was
+    /// `due` at, when earlier, as a request applied late does. Control
+    /// thread: the value it replaces, or a payload refused or lost, is
+    /// dropped here.
     pub(crate) fn apply_payload(
         &mut self,
         module_id: &str,
         control: ControlIndex,
         payload: Payload,
-        rank: Rank,
+        (rank, due): (Rank, Option<u64>),
     ) -> Result<bool, Refusal> {
+        let now = self.current_sample;
         let standing = Standing {
             rank,
-            due: self.current_sample,
+            due: due.map_or(now, |due| due.min(now)),
         };
         let instance = self.modules.get_mut(module_id).ok_or(Refusal::TargetGone)?;
         if admits_hold(instance.module(), control, standing).is_err() {

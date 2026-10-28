@@ -5,7 +5,9 @@
 //! What plays and what is recorded, once the write applies, are the
 //! author's value whenever the audio thread takes the write: before the
 //! landing, after it, or held back by a full pending store, and the copy
-//! applying is the write's own, never counted lost. When it cannot
+//! applying is the write's own, never counted lost. A write that loses at
+//! its own sample is not re-asserted as the edit lands, and one chained
+//! to the edit after it plays in its place. When it cannot
 //! be kept (no room for requests waiting on conditions, or for the copy and
 //! the write both), the whole edit is cancelled instead, as before; a write
 //! refused outright leaves the edit alone.
@@ -184,6 +186,29 @@ fn a_kept_write_refuses_no_later_request_chained_to_the_landing() {
     );
 }
 
+/// A request chained to the edit before it lands, after a kept write, is
+/// the later write: it plays as the edit lands, and the copy gives way.
+#[test]
+fn a_request_chained_to_the_edit_after_a_kept_write_plays_as_it_lands() {
+    let mut rig = Rig::new(BASE);
+    let id = queue_writing(&rig, 440.0);
+    write(&rig, "osc2", "frequency", 660.0, ControlWriteIntent::Author);
+    assert_eq!(kept(&rig, id), ["osc2.frequency"]);
+    rig.render(1);
+    let mut request = Request::new(
+        frequency_target(&rig, "osc2"),
+        RequestValue::Value(RtValue::F32(700.0)),
+    );
+    request.when = When::Condition(Condition::all(&[Predicate::Applied(id)]).unwrap());
+    rig.live.requests.submit(request).unwrap();
+    rig.render(BLOCKS);
+    assert_eq!(state_of(&rig, id), EditState::Adopted);
+    assert_eq!(
+        playing(&rig, "osc2", "frequency"),
+        ControlValue::Number(700.0)
+    );
+}
+
 /// However late the audio thread takes the write: here the pending store
 /// is full through the landing sample, so the write plays after the
 /// edit's own value. What plays and what is recorded are the write.
@@ -261,7 +286,7 @@ fn a_write_that_cannot_be_kept_cancels_the_edit() {
     let id = queue_writing(&rig, 440.0);
     let target = frequency_target(&rig, "osc1");
     let never = Condition::all(&[Predicate::Applied(RequestId(u64::MAX))]).unwrap();
-    while !rig.live.requests.watch_slots().full() {
+    while !rig.live.requests.watch_slots().full(false) {
         let mut request = Request::new(target, RequestValue::Value(RtValue::F32(300.0)));
         request.when = When::Condition(never);
         rig.live.requests.submit(request).unwrap();
@@ -367,19 +392,23 @@ fn queue_writing_far(rig: &Rig, frequency: f32) -> RequestId {
 }
 
 /// A slider dragged over a control the edit writes: each write's copy
-/// replaces the last, so the drag holds one slot however long it runs, and
-/// the edit waits on, landing with the drag's last value.
+/// replaces the last, so the drag holds one slot however long it runs,
+/// beside the edit's own write, and the edit waits on, landing with the
+/// drag's last value.
 #[test]
 fn a_drag_on_a_kept_control_holds_one_slot_and_keeps_the_edit() {
     let mut rig = Rig::new(BASE);
     let id = queue_writing_far(&rig, 440.0);
+    let edits = rig.live.requests.watch_slots().taken();
+    assert_eq!(edits, 1, "the edit's own write");
     let author = ControlWriteIntent::Author;
     let drag = CONDITION_CAPACITY + 16;
     for i in 0..drag {
         write(&rig, "osc2", "frequency", 500.0 + i as f32, author);
         rig.render(1);
         assert_eq!(state_of(&rig, id), EditState::Queued, "after write {i}");
-        assert_eq!(rig.live.requests.watch_slots().taken(), 1, "write {i}");
+        let taken = rig.live.requests.watch_slots().taken();
+        assert_eq!(taken, edits + 1, "write {i}");
     }
     rig.render(110 - drag);
     assert_eq!(state_of(&rig, id), EditState::Adopted);
@@ -405,4 +434,34 @@ fn a_kept_copy_is_not_counted_lost() {
     assert_eq!(recorded(&rig, "osc2", "frequency"), (660.0, 660.0));
     let log = rig.live.request_log();
     assert_eq!(log.lost, 0, "{log:?}");
+}
+
+/// An authored write that loses at its own sample, to a performed write
+/// of higher priority there, is not re-asserted as the edit lands: its
+/// copy is refused, and the edit's own value plays and is recorded, as it
+/// would were nothing kept.
+#[test]
+fn a_kept_write_that_loses_at_its_sample_is_not_reasserted_as_the_edit_lands() {
+    let mut rig = Rig::new(BASE);
+    let id = queue_writing(&rig, 440.0);
+    let door = front_door(&rig);
+    let higher = WriteOptions {
+        priority: 1,
+        ..WriteOptions::default()
+    };
+    let perform = ControlWriteIntent::Perform;
+    door.submit_control("osc2", "frequency", 330.0.into(), perform, higher)
+        .unwrap();
+    let author = ControlWriteIntent::Author;
+    let options = WriteOptions::default();
+    door.submit_control("osc2", "frequency", 660.0.into(), author, options)
+        .unwrap();
+    assert_eq!(kept(&rig, id), ["osc2.frequency"]);
+    rig.render(1);
+    assert_eq!(playing(&rig, "osc2", "frequency"), 330.0.into());
+    rig.render(BLOCKS);
+    assert_eq!(state_of(&rig, id), EditState::Adopted);
+    assert_eq!(playing(&rig, "osc2", "frequency"), 440.0.into());
+    assert_eq!(recorded(&rig, "osc2", "frequency"), (440.0, 440.0));
+    assert_eq!(rig.live.requests.watch_slots().taken(), 0, "nothing waits");
 }

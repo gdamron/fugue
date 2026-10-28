@@ -40,6 +40,7 @@ impl SignalGraph {
         let rendered = catch_unwind(AssertUnwindSafe(|| self.render_block(left, right)));
         if let Err(panic) = rendered {
             self.fail();
+            self.keep_caught();
             resume_unwind(panic);
         }
     }

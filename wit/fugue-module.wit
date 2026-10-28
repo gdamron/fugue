@@ -1,23 +1,41 @@
-package fugue:module@0.1.0;
+package fugue:module@0.2.0;
 
-/// A component world for Fugue graph modules.
-///
-/// The block operations are the audio hot-path interface. Scalar input/output
-/// functions mirror the legacy `Module` helpers used by tests and control
-/// commands.
+/// What the host gives a guest.
+interface host {
+    /// Writes output `index`'s samples for the block `process` is rendering.
+    ///
+    /// The host copies the samples into a buffer it owns, so nothing is
+    /// handed back for the host to free. Call it once per output from inside
+    /// `process`: an output not written in a block reads as silence for that
+    /// block, a second call for one output replaces the first, a list shorter
+    /// than the block is padded with silence, and samples past the block are
+    /// ignored. A call from outside `process`, or with an index past
+    /// `outputs`, fails the module.
+    emit-output: func(index: u32, samples: list<f32>);
+}
+
+/// What a guest gives the host. The block operations are the audio hot-path
+/// interface; `set-input` and `set-control` take single values from controls
+/// and tests.
+interface guest {
+    init: func(sample-rate: u32, config-json: string) -> result<_, string>;
+    name: func() -> string;
+    inputs: func() -> list<string>;
+    outputs: func() -> list<string>;
+    set-input: func(port: string, value: f32) -> result<_, string>;
+    set-input-connected: func(index: u32, connected: bool);
+    set-input-block: func(index: u32, values: list<f32>) -> result<_, string>;
+    /// Renders one block of `frames` samples, writing each output with
+    /// `emit-output`. Returns false once the module has finished, so a
+    /// one-shot or envelope guest can signal completion.
+    process: func(frames: u32) -> bool;
+    set-control: func(key: string, value: f32) -> result<_, string>;
+}
+
+/// A component world for Fugue graph modules. A guest's exports sit in the
+/// versioned `guest` interface, so the host reads the version a guest was
+/// built for from its export, `fugue:module/guest@0.2.0`, before it runs it.
 world module {
-    export init: func(sample-rate: u32, config-json: string) -> result<_, string>;
-    export name: func() -> string;
-    export inputs: func() -> list<string>;
-    export outputs: func() -> list<string>;
-    export set-input: func(port: string, value: f32) -> result<_, string>;
-    export set-input-connected: func(index: u32, connected: bool);
-    export set-input-block: func(index: u32, values: list<f32>) -> result<_, string>;
-    export process: func(frames: u32) -> bool;
-    /// Fused single-output fast path. The bool carries the same active flag
-    /// returned by `process` so one-shot/envelope guests can signal completion.
-    export process-output-block: func(frames: u32) -> result<tuple<bool, list<f32>>, string>;
-    export output-block: func(index: u32) -> result<list<f32>, string>;
-    export get-output: func(port: string) -> result<f32, string>;
-    export set-control: func(key: string, value: f32) -> result<_, string>;
+    import host;
+    export guest;
 }

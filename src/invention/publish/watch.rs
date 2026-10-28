@@ -66,7 +66,8 @@ impl LiveGraph {
     /// Refused with nothing submitted when the module, a port or a control
     /// is unknown, the value does not fit the control, a part can never be
     /// met, or [`CONDITION_CAPACITY`] requests already wait on conditions
-    /// (`ControlError`, to retry once some settle).
+    /// (`ControlError`, to retry once some settle). A reserved control's
+    /// write (a note off) may take a few more places.
     ///
     /// [`CONDITION_CAPACITY`]: crate::control_request::CONDITION_CAPACITY
     pub(crate) fn submit_when(
@@ -82,10 +83,6 @@ impl LiveGraph {
         if !publisher.audio_alive() {
             return Err(GraphCommandError::AudioThreadStopped);
         }
-        if self.requests.watchers_full() {
-            let full = "Too many requests wait on a condition; try again once some apply";
-            return Err(control(full.into()));
-        }
         // Publisher, then surfaces, as a commit takes them.
         let surfaces = self.control_surfaces.lock().unwrap();
         let surface = surfaces.get(module_id);
@@ -99,6 +96,10 @@ impl LiveGraph {
             ))
         })?;
         let write = declared.resolve_write(key, value).map_err(control)?;
+        if self.requests.watchers_full(write.reserved) {
+            let full = "Too many requests wait on a condition; try again once some apply";
+            return Err(control(full.into()));
+        }
         let condition = condition_of(publisher.mirror(), &surfaces, parts)?;
         drop(surfaces);
 
@@ -121,7 +122,8 @@ impl LiveGraph {
         request.when = When::Condition(condition);
         request.ttl = ttl;
         request.event = write.event;
-        let (source, when) = (request.source, request.when);
+        request.reserved = write.reserved;
+        let (source, when, ttl) = (request.source, request.when, request.ttl);
 
         // Recorded as a declared surface records its writes (see
         // `invention::declared`): the log locked before the submission.
@@ -139,6 +141,7 @@ impl LiveGraph {
                 beat: None,
                 source,
                 when,
+                expires: self.requests.expires_by(ttl),
                 authored: None,
                 announced: false,
                 awaited: false,
