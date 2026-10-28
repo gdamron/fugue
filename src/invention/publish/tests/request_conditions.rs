@@ -1,8 +1,8 @@
 //! Requests timed by a condition on a live graph: the nth beat of a clock
 //! sets a dial's level on that beat's exact sample when the clock computes
 //! before the dial, and before the dial's next segment when it computes
-//! after; a removed source refuses the request; every block stays
-//! allocation- and free-free. The same graph rendered without the request
+//! after; a removed source refuses the request, unless its condition was
+//! already met; every block stays allocation- and free-free. The same graph rendered without the request
 //! is the oracle.
 
 use super::request_beats::{outcomes_of, render_counted};
@@ -135,6 +135,44 @@ fn removing_a_source_refuses_the_request() {
         [(id, Outcome::Refused(Refusal::SourceGone))]
     );
     assert_eq!(rig.live.requests.watch_slots().taken(), 0);
+}
+
+/// A condition met with an offset still to run reads nothing more, so an
+/// edit removing its source before the offset runs out leaves its request
+/// due: it applies on its sample rather than being refused.
+#[test]
+fn a_met_condition_applies_when_an_edit_removes_its_source() {
+    const OFFSET: u32 = 500;
+    let oracle = rig(false).render(200);
+    let mut rig = rig(false);
+    let id = {
+        let publisher = rig.live.publisher().lock().unwrap();
+        let target = publisher.control_target("dial", LEVEL).unwrap();
+        let clock = publisher.control_target("clock", ControlIndex(0)).unwrap();
+        let mut request = Request::new(target, RequestValue::Value(RtValue::F32(1.0)));
+        let beat = Predicate::edges(clock.module_idx as u32, 0, 2);
+        let condition = Condition::all(&[beat]).unwrap().delayed(OFFSET);
+        request.when = When::Condition(condition);
+        rig.live.requests.submit(request).unwrap()
+    };
+    let due = nth_beat(&oracle, 2) + u64::from(OFFSET);
+    // Past the beat, so the condition is met, and short of its offset.
+    let met = nth_beat(&oracle, 2) / 64 + 2;
+    assert!(met * 64 < due);
+    render_counted(&mut rig, met as usize);
+    rig.live
+        .edit(|change| {
+            change.remove("clock");
+            Ok(())
+        })
+        .unwrap();
+    let out = render_counted(&mut rig, 20);
+    assert_eq!(
+        outcomes_of(&mut rig, id),
+        [(id, Outcome::Applied { at: due })]
+    );
+    let at = (due - met * 64) as usize;
+    assert_eq!((out[at - 1], out[at]), (0.25, 1.0), "the dial alone");
 }
 
 #[test]
