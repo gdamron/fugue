@@ -1,8 +1,10 @@
 //! Wasmtime-backed Fugue module components.
 
+use std::any::Any;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 use wasmtime::component::{Component, ComponentExportIndex, Instance, Linker, TypedFunc};
@@ -12,12 +14,20 @@ use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::pkg::{EntrySpec, PackageManifest};
 use crate::{Module, MAX_BLOCK};
 
+use failure::{FailureSignal, Reason};
 use host::{HostState, OutputBlocks};
 
+mod failure;
 mod host;
 mod world;
 
+pub use failure::WasmModuleHandle;
+
 const CACHE_VERSION: &str = "v1";
+
+/// Names the directory that holds compiled components, in place of
+/// `~/.fugue/cache/wasm`.
+pub const CACHE_DIR_ENV: &str = "FUGUE_WASM_CACHE_DIR";
 
 /// Registry factory for manifest-backed Wasm modules.
 pub struct WasmModuleFactory;
@@ -58,10 +68,13 @@ impl ModuleFactory for WasmModuleFactory {
             .get("manifest")
             .and_then(|value| value.as_str())
             .ok_or_else(|| "wasm_module config requires a `manifest` path".to_string())?;
-        let module = load_manifest_module(manifest, sample_rate)?;
+        let (module, handle) = load_manifest_parts(Path::new(manifest), sample_rate)?;
         Ok(ModuleBuildResult {
-            module,
-            handles: Vec::new(),
+            module: GraphModule::Module(Box::new(module)),
+            handles: vec![(
+                "handle".to_string(),
+                Arc::new(handle) as Arc<dyn Any + Send + Sync>,
+            )],
             control_surface: None,
             sink: None,
         })
@@ -73,7 +86,15 @@ pub fn load_manifest_module(
     manifest_path: impl AsRef<Path>,
     sample_rate: u32,
 ) -> Result<GraphModule, Box<dyn Error>> {
-    let manifest_path = manifest_path.as_ref();
+    let (module, _) = load_manifest_parts(manifest_path.as_ref(), sample_rate)?;
+    Ok(GraphModule::Module(Box::new(module)))
+}
+
+/// [`load_manifest_module`], with the handle that reads the module's failure.
+fn load_manifest_parts(
+    manifest_path: &Path,
+    sample_rate: u32,
+) -> Result<(WasmModule, WasmModuleHandle), Box<dyn Error>> {
     let manifest = crate::pkg::parse_path(manifest_path)?;
     let EntrySpec::Module { wasm } = &manifest.entry else {
         return Err("manifest is not a module package".into());
@@ -82,7 +103,7 @@ pub fn load_manifest_module(
         .parent()
         .ok_or_else(|| "manifest path has no parent directory".to_string())?;
     let wasm_path = root.join(wasm);
-    load_component_module(&wasm_path, sample_rate, "{}", &manifest)
+    load_component_parts(&wasm_path, sample_rate, "{}", &manifest)
 }
 
 /// Loads a `.fugue-module.wasm` component as a graph module.
@@ -92,9 +113,21 @@ pub fn load_component_module(
     config_json: &str,
     manifest: &PackageManifest,
 ) -> Result<GraphModule, Box<dyn Error>> {
-    let mut module = WasmModule::load(wasm_path.as_ref(), sample_rate, config_json, manifest)?;
-    module.init_ports()?;
+    let (module, _) = load_component_parts(wasm_path.as_ref(), sample_rate, config_json, manifest)?;
     Ok(GraphModule::Module(Box::new(module)))
+}
+
+/// [`load_component_module`], with the handle that reads the module's failure.
+fn load_component_parts(
+    wasm_path: &Path,
+    sample_rate: u32,
+    config_json: &str,
+    manifest: &PackageManifest,
+) -> Result<(WasmModule, WasmModuleHandle), Box<dyn Error>> {
+    let mut module = WasmModule::load(wasm_path, sample_rate, config_json, manifest)?;
+    module.init_ports()?;
+    let handle = module.handle();
+    Ok((module, handle))
 }
 
 /// Guest export `set-input-block(index, values)`.
@@ -127,6 +160,8 @@ pub struct WasmModule {
     /// call, so we stop calling into it instead of paying full call cost
     /// per block.
     failed: bool,
+    /// Where a failure is signalled for control threads to read.
+    failure: FailureSignal,
 }
 
 impl WasmModule {
@@ -184,11 +219,18 @@ impl WasmModule {
             input_blocks: Vec::new(),
             input_connected: Vec::new(),
             failed: false,
+            failure: FailureSignal::default(),
         })
+    }
+
+    /// Reads this module's failure from a control thread.
+    pub fn handle(&self) -> WasmModuleHandle {
+        WasmModuleHandle::new(self.failure.clone())
     }
 
     fn init_ports(&mut self) -> Result<(), Box<dyn Error>> {
         self.name = self.call_string("name")?;
+        self.failure.name(&self.name);
         self.inputs = self.call_string_list("inputs")?;
         self.outputs = self.call_string_list("outputs")?;
         self.input_blocks = vec![[0.0; MAX_BLOCK]; self.inputs.len()];
@@ -236,8 +278,10 @@ impl WasmModule {
 
     /// Latches the module as failed after a guest trap or error, zeroing all
     /// outputs so downstream modules don't hold a stale sustained value.
-    fn fail(&mut self, export: &str, error: &dyn std::fmt::Display) -> bool {
-        eprintln!("{}", failure_message(&self.name, export, error));
+    /// Runs on the audio thread: the failure is signalled for a control
+    /// thread to report, never printed here.
+    fn fail(&mut self, export: &'static str, reason: Reason) -> bool {
+        self.failure.record(export, reason);
         for block in &mut self.store.data_mut().outputs.blocks {
             block.fill(0.0);
         }
@@ -267,8 +311,8 @@ impl Module for WasmModule {
                 .call(&mut self.store, (index as u32, values))
             {
                 Ok((Ok(()),)) => {}
-                Ok((Err(error),)) => return self.fail("set-input-block", &error),
-                Err(error) => return self.fail("set-input-block", &error),
+                Ok((Err(error),)) => return self.fail("set-input-block", Reason::Guest(error)),
+                Err(error) => return self.fail("set-input-block", Reason::Trap(error)),
             }
         }
 
@@ -279,7 +323,7 @@ impl Module for WasmModule {
         self.store.data_mut().outputs.end();
         match processed {
             Ok((active,)) => active,
-            Err(error) => self.fail("process", &error),
+            Err(error) => self.fail("process", Reason::Trap(error)),
         }
     }
 
@@ -334,10 +378,16 @@ impl Module for WasmModule {
     }
 }
 
-/// Names the guest's reason: `{error:#}` prints wasmtime's whole context
-/// chain, whose outermost link is only the wasm backtrace.
-fn failure_message(name: &str, export: &str, error: &dyn std::fmt::Display) -> String {
-    format!("wasm module '{name}' failed in `{export}`: {error:#}; muting output")
+impl Drop for WasmModule {
+    /// Reports a failure nobody read, once the module is retired off the
+    /// audio thread.
+    fn drop(&mut self) {
+        if !crate::audio_thread::on_audio_thread() {
+            if let Some(message) = self.failure.message() {
+                eprintln!("{message}");
+            }
+        }
+    }
 }
 
 fn component_engine() -> Result<Engine, Box<dyn Error>> {
@@ -398,7 +448,11 @@ fn engine_compatibility_tag(engine: &Engine) -> u64 {
     hasher.finish()
 }
 
+/// `$FUGUE_WASM_CACHE_DIR` when set, otherwise `~/.fugue/cache/wasm`.
 fn fugue_cache_dir() -> Result<PathBuf, Box<dyn Error>> {
+    if let Some(dir) = std::env::var_os(CACHE_DIR_ENV) {
+        return Ok(PathBuf::from(dir));
+    }
     let home = std::env::var_os("HOME").ok_or_else(|| "HOME is not set".to_string())?;
     Ok(PathBuf::from(home).join(".fugue/cache/wasm"))
 }
@@ -437,6 +491,16 @@ fn missing_export(name: &str) -> String {
 
 #[cfg(test)]
 pub(crate) mod alloc_tests;
+#[cfg(test)]
+pub(crate) mod failure_tests;
+
+#[cfg(test)]
+impl WasmModule {
+    /// Leaves the guest no fuel, so its next call traps.
+    pub(crate) fn run_out_of_fuel(&mut self) {
+        self.store.set_fuel(0).expect("fuel is enabled");
+    }
+}
 
 #[cfg(test)]
 mod tests {

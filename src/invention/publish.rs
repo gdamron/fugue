@@ -331,9 +331,12 @@ impl LiveGraph {
     /// The same cadence adopts a timed edit once it lands (see `timed`), and
     /// queues the note offs the request channel holds for want of room
     /// (see `held`).
-    /// The thread ends once every clone of this graph is gone. Returns false
-    /// when no thread could start.
-    pub(crate) fn start_reclaimer(&self) -> bool {
+    /// The thread ends once every clone of this graph is gone.
+    ///
+    /// # Errors
+    ///
+    /// The operating system's refusal when no thread could start.
+    pub(crate) fn start_reclaimer(&self) -> std::io::Result<()> {
         let (adopter, held) = (self.adopter(), self.held_flush());
         Reclaimer::spawn(&self.reclaimer, move || {
             adopter.tick();

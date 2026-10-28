@@ -12,6 +12,10 @@ fn loads_fixture_component_and_processes_audio_block() {
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
+    // Compiled components go in a tempdir, not under `~/.fugue`.
+    let cache = tempfile::tempdir().expect("cache tempdir");
+    std::env::set_var(fugue::WASM_CACHE_DIR_ENV, cache.path());
+
     fn repo_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
     }

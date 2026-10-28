@@ -1,9 +1,9 @@
 //! Marks the audio thread so debug builds catch work that must never run
-//! there.
+//! there, and release builds can refuse it.
 //!
-//! `SignalGraph::process_block` runs inside an [`AudioThreadScope`]. Two
-//! kinds of check read it, both panicking in debug builds and compiled out
-//! of release builds:
+//! `SignalGraph::process_block` runs inside an [`AudioThreadScope`], a
+//! thread-local flag set and cleared with a plain store. Two kinds of check
+//! panic in debug builds and are compiled out of release builds:
 //!
 //! - dropping a request payload (`crate::payload`), which must be retired
 //!   to a control thread instead;
@@ -11,21 +11,23 @@
 //!   or freeing a request queue, resolving a request's target under the
 //!   publisher lock, or taking a [`ControlLock`]. A module's `process()`
 //!   reaching one would risk a dropout.
+//!
+//! The flag itself is kept in release builds too, for the few places that
+//! can decline to do control-only work instead of panicking (see
+//! [`on_audio_thread`]): a held submission (`control_request::backlog`)
+//! refuses rather than take a lock or allocate.
 
 use std::marker::PhantomData;
 use std::sync::{LockResult, Mutex, MutexGuard, TryLockResult};
 
-#[cfg(debug_assertions)]
 thread_local! {
     static ON_AUDIO_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Marks the current thread as the audio thread until dropped. Saves and
-/// restores the previous state, so scopes nest. A no-op in release builds;
-/// never allocates.
+/// restores the previous state, so scopes nest. Never allocates.
 #[must_use = "the scope ends when this value is dropped"]
 pub(crate) struct AudioThreadScope {
-    #[cfg(debug_assertions)]
     outer: bool,
     /// Tied to the thread whose flag it set.
     _not_send: PhantomData<*const ()>,
@@ -35,7 +37,6 @@ impl AudioThreadScope {
     #[inline]
     pub(crate) fn enter() -> Self {
         Self {
-            #[cfg(debug_assertions)]
             outer: ON_AUDIO_THREAD.with(|flag| flag.replace(true)),
             _not_send: PhantomData,
         }
@@ -45,19 +46,16 @@ impl AudioThreadScope {
 impl Drop for AudioThreadScope {
     #[inline]
     fn drop(&mut self) {
-        #[cfg(debug_assertions)]
         ON_AUDIO_THREAD.with(|flag| flag.set(self.outer));
     }
 }
 
 /// Whether the current thread is inside an [`AudioThreadScope`] and not
-/// already unwinding. Always false in release builds.
+/// already unwinding. A thread-local read and an atomic load, in release
+/// builds too.
 #[inline]
 pub(crate) fn on_audio_thread() -> bool {
-    #[cfg(debug_assertions)]
-    return ON_AUDIO_THREAD.try_with(std::cell::Cell::get) == Ok(true) && !std::thread::panicking();
-    #[cfg(not(debug_assertions))]
-    false
+    ON_AUDIO_THREAD.try_with(std::cell::Cell::get) == Ok(true) && !std::thread::panicking()
 }
 
 /// Panics in debug builds when control-only code (`what`) runs inside an
@@ -65,7 +63,7 @@ pub(crate) fn on_audio_thread() -> bool {
 /// point.
 #[inline]
 pub(crate) fn debug_assert_control_thread(what: &str) {
-    if on_audio_thread() {
+    if cfg!(debug_assertions) && on_audio_thread() {
         panic!("{what} called on the audio thread: it is control-only");
     }
 }

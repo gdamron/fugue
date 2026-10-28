@@ -79,6 +79,7 @@ mod tests {
 
     #[test]
     fn loading_a_first_world_guest_is_refused_before_it_runs() {
+        let _cache = super::super::alloc_tests::temp_cache();
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("old.fugue-module.wasm");
         std::fs::write(&path, FIRST_WORLD_GUEST).expect("write guest");

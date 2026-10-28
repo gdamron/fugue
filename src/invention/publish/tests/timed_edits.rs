@@ -355,7 +355,7 @@ fn a_landing_block_takes_no_lock() {
 #[test]
 fn the_reclaimer_thread_adopts_a_landed_edit_on_its_own() {
     let mut rig = beat_rig(120.0);
-    assert!(rig.live.start_reclaimer());
+    rig.live.start_reclaimer().expect("a reclaimer thread");
     rig.render(1);
     let id = remove_dial(&rig, EditTime::AfterSamples(10)).unwrap();
     render_counted(&mut rig, 1);
