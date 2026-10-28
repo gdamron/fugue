@@ -307,6 +307,10 @@ pub(crate) struct Checked<'a> {
     /// recompiled with these and published just ahead of the write (see
     /// `publish::retarget`).
     pub(crate) targets: Vec<String>,
+    /// The most ramps the payload's schedule can run at once: on a live
+    /// graph, a drain with less room for its tables' ramps takes more with
+    /// a topology published just ahead of the write, as for `targets`.
+    pub(crate) ramps: usize,
     /// Records the write where it commits: under the publisher on a live
     /// graph, so a graph change sees every write submitted before it
     /// recorded, and none after.
@@ -759,7 +763,8 @@ impl DeclaredSurface {
                 let recompile = match &mut checked {
                     Some(checked) => {
                         let targets = std::mem::take(&mut checked.targets);
-                        port.retarget.prepare(&publisher, &port.module_id, targets)
+                        let written = (targets, checked.ramps);
+                        port.retarget.prepare(&publisher, &port.module_id, written)
                     }
                     None => None,
                 };
@@ -968,6 +973,8 @@ impl DeclaredSurface {
                             if let Some(checked) = checked {
                                 (checked.record)();
                                 graph.recompile_if_retargeted(&module_id);
+                                // On this thread, under the render's lock.
+                                graph.fit_table_ramps();
                             }
                         }
                         applied
@@ -1191,6 +1198,8 @@ pub(crate) fn bind_offline(
             surface.bind(offline_route(graph, id), instance.module_mut());
         }
     }
+    // Bound, they play the schedules they were built with.
+    locked.fit_table_ramps();
 }
 
 /// Adds a bare `module` to an offline render's `graph` as `module_id` in one

@@ -25,13 +25,31 @@ struct EdgeRamp {
 }
 
 /// The ramps of every table played on edges. Single-threaded (the audio
-/// thread), allocated once on a control thread and never grown.
-pub(super) struct EdgeRamps(Vec<EdgeRamp>);
+/// thread), allocated on a control thread and never grown in place: more
+/// room is handed over (see [`Self::take_room`]).
+pub(crate) struct EdgeRamps(Vec<EdgeRamp>);
 
 impl EdgeRamps {
     /// Room for [`RAMP_CAPACITY`] ramps. Allocates: control thread.
     pub(super) fn new() -> Self {
-        Self(Vec::with_capacity(RAMP_CAPACITY))
+        Self::with_room(RAMP_CAPACITY)
+    }
+
+    /// Room for `room` ramps. Allocates: control thread.
+    pub(crate) fn with_room(room: usize) -> Self {
+        Self(Vec::with_capacity(room))
+    }
+
+    /// Takes `room`'s room, when it has more, moving every ramp running
+    /// into it, in order: `room` is left holding this one's, to free off
+    /// the audio thread. Allocation- and free-free.
+    pub(super) fn take_room(&mut self, room: &mut EdgeRamps) {
+        let free = room.0.capacity() - room.0.len();
+        if room.0.capacity() <= self.0.capacity() || self.0.len() > free {
+            return;
+        }
+        room.0.append(&mut self.0);
+        std::mem::swap(&mut self.0, &mut room.0);
     }
 
     /// Ends table `table`'s ramps on targets `mine` takes.
@@ -119,7 +137,7 @@ impl EdgeRamps {
         let Some(from) = entry.target.current() else {
             return true;
         };
-        if self.0.len() >= RAMP_CAPACITY {
+        if self.0.len() >= self.0.capacity() {
             beat_ramps.crowded().record();
             entry.target.write(entry.value);
             return true;

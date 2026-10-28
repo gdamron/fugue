@@ -32,7 +32,7 @@ use super::graph::{RoutingConnection, SignalGraph, MAX_INSTALLS_PER_BLOCK};
 use super::orchestration::ModulePorts;
 use super::runtime::{ControlSurfaceInstance, GraphCommandError};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState};
-use crate::control_request::{Outcome, RequestId, RequestSender};
+use crate::control_request::{EventCounter, Outcome, RequestId, RequestSender};
 use crate::modules::dac::Settle;
 use crate::ModuleRegistry;
 
@@ -100,6 +100,9 @@ pub(crate) struct LiveGraph {
     /// Held across an authored write and its record (see
     /// [`Self::authoring`]).
     authoring: Arc<Mutex<()>>,
+    /// The drain's count of tables' ramps that found no room and jumped
+    /// (see `control_request::Ramps::crowded`).
+    ramps_crowded: Arc<EventCounter>,
 }
 
 /// Settles a live graph whose backend never renders on its own, so that
@@ -254,6 +257,9 @@ impl LiveGraph {
         settle: Option<Settle>,
     ) -> Self {
         let (publisher, ends) = Publisher::link(graph);
+        let ramps_crowded = graph.requests.as_ref().map_or_else(Arc::default, |drain| {
+            Arc::clone(drain.watches.ramps.crowded())
+        });
         let publisher = Arc::new(Mutex::new(publisher));
         let reclaimer = Arc::new(Reclaimer::new(ends.retired, ends.payloads));
         // Whoever drops the graph closes the publisher to submissions first
@@ -292,6 +298,7 @@ impl LiveGraph {
             registry: LiveRegistry::new(registry),
             settler,
             authoring: Arc::default(),
+            ramps_crowded,
         };
         // Every module the graph starts with runs from here on.
         let port = live.port();
@@ -300,7 +307,16 @@ impl LiveGraph {
                 surface.bind(port.to(id), instance.module_mut());
             }
         }
+        // Bound, they play the schedules they were built with.
+        live.publisher.lock().unwrap().fit_table_ramps(graph);
         live
+    }
+
+    /// How many tables' ramps found no room in the drain and jumped to
+    /// their values since the graph went live: past the room's limit (see
+    /// `control_request::RampRoom`), or while the room could not grow yet.
+    pub(crate) fn table_ramp_jumps(&self) -> u64 {
+        u64::from(self.ramps_crowded.count())
     }
 
     /// The registry edits build modules against now: the latest one a

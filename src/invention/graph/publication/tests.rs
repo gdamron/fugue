@@ -103,6 +103,7 @@ fn publication(next: Vec<(&str, Next)>, edges: Vec<RoutingConnection>) -> Box<Pu
         generation: 0,
         handovers: Vec::new(),
         fate: None,
+        ramp_room: None,
     })
 }
 

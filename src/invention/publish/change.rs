@@ -62,6 +62,9 @@ pub(crate) struct TopologyMirror {
     /// Each module's control targets as the topology last published was
     /// compiled with them (see `change::order`).
     pub(crate) targets: order::Targets,
+    /// The room for tables' ramps the drain holds once the topology last
+    /// published installs (see `change::ramp_room`); 0 for the least.
+    pub(crate) table_ramps: usize,
 }
 
 impl TopologyMirror {
@@ -84,6 +87,7 @@ impl TopologyMirror {
             timelines: Vec::new(),
             watches: Vec::new(),
             targets,
+            table_ramps: 0,
         };
         mirror.settle_timelines();
         mirror
@@ -185,6 +189,10 @@ pub(crate) struct GraphChange {
     /// Control targets a live schedule write leaves its scheduler writing
     /// (see [`Self::retarget`]), ahead of its surface reporting them.
     retargets: order::Targets,
+    /// The most ramps at once a live schedule write leaves its scheduler
+    /// running (see [`Self::write_ramps`]), ahead of its surface recording
+    /// it.
+    ramps_written: IndexMap<String, usize>,
     block_size: usize,
 }
 
@@ -206,6 +214,7 @@ impl GraphChange {
             discarded: Vec::new(),
             rescheduling: Rescheduling::default(),
             retargets: order::Targets::new(),
+            ramps_written: IndexMap::new(),
             block_size,
         }
     }
@@ -404,7 +413,9 @@ impl GraphChange {
         self.mirror.targets = self.targets_now();
         self.keep_orders_inaudible();
         self.mirror.settle_timelines();
-        let publication = build_publication(&self.mirror, &mut instances, self.block_size);
+        let ramp_room = self.grow_ramp_room();
+        let mut publication = build_publication(&self.mirror, &mut instances, self.block_size);
+        publication.ramp_room = ramp_room;
         PreparedChange {
             base_generation: self.base_generation,
             mirror: self.mirror,
@@ -554,6 +565,7 @@ fn build_publication(
         generation: 0,
         handovers: Vec::new(),
         fate: None,
+        ramp_room: None,
     })
 }
 
@@ -561,6 +573,7 @@ fn build_publication(
 #[cfg_attr(not(test), allow(dead_code))]
 mod offline;
 mod order;
+mod ramp_room;
 mod rebind;
 pub(crate) use offline::edit_offline;
 pub(crate) use rebind::Rescheduling;

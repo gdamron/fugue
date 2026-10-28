@@ -231,3 +231,45 @@ fn running_a_table_s_ramps_neither_allocates_nor_frees() {
     assert_eq!((allocs, frees), (0, 0));
     assert!(ramps.is_empty());
 }
+
+#[test]
+fn more_room_handed_over_keeps_the_ramps_running_and_fits_more() {
+    let (mut store, _outcomes) = store();
+    let mut ramps = Ramps::new(2);
+    let controls = [number(0.0), number(0.0), number(0.0), number(0.0)];
+    let refs: Vec<&Automation> = controls.iter().collect();
+    let mut host = host(&refs);
+    assert!(begin(&mut ramps, &mut host, 0));
+    assert!(begin(&mut ramps, &mut host, 1));
+    let mut room = Ramps::with_tables(2, 4);
+    let ((), allocs, frees) = allocator_events(|| ramps.take_room(&mut room));
+    assert_eq!((allocs, frees), (0, 0), "handed over whole");
+    assert_eq!((ramps.table_room(), room.table_room()), (4, 2));
+    assert!(room.is_empty(), "the room left holds no ramp");
+    assert!(begin(&mut ramps, &mut host, 2));
+    assert!(begin(&mut ramps, &mut host, 3));
+    let mut crowded = EventCursor::new();
+    assert_eq!(crowded.take(ramps.crowded()), 0, "none jumped");
+    // The ramps taken over run on to their ends.
+    let mut seen = Vec::new();
+    run(
+        &mut ramps,
+        &mut host,
+        &mut store,
+        400,
+        &controls[0],
+        &mut seen,
+    );
+    assert_eq!(seen.last().map(|&(_, value)| value), Some(1.0));
+    assert!(ramps.is_empty());
+}
+
+#[test]
+fn less_room_or_as_much_is_left_where_it_is() {
+    let mut ramps = Ramps::new(2);
+    for tables in [1, 2] {
+        let mut room = Ramps::with_tables(2, tables);
+        ramps.take_room(&mut room);
+        assert_eq!((ramps.table_room(), room.table_room()), (2, tables));
+    }
+}

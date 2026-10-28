@@ -100,7 +100,7 @@ pub(crate) use pending::{expired, Outcome, Outcomes, PendingStore, Refusal};
 pub(crate) use queue::{bounded, QueueConsumer, QueueProducer};
 pub(crate) use ramps::Ramps;
 #[cfg(test)]
-pub(crate) use ramps::{ramp_value, BeatRamp, RAMP_CAPACITY};
+pub(crate) use ramps::{ramp_value, BeatRamp, RAMP_CAPACITY, TABLE_RAMP_LIMIT};
 pub(crate) use request::{
     BeatSpec, BeatTime, ControlIndex, ControlTarget, Intent, Request, RequestId, RequestValue,
     RtValue, Source, When,
@@ -109,12 +109,14 @@ pub(crate) use sender::{request_channel, QueueFull, RequestSender, ReservedQueue
 pub(crate) use staged::{
     contest, flush_staged, flush_staged_before, flush_watched, stage_write, stand, Applying, Before,
 };
-pub(crate) use table::{BeatTable, Counted, Player, TableEntry, TableTarget, TableValue};
+pub(crate) use table::{
+    most_ramps, table_ramps, BeatTable, Counted, Player, TableEntry, TableTarget, TableValue,
+};
 pub(crate) use timeline::{first_sample_reaching, Timeline, BEFORE_START};
 pub(crate) use transport::Transport;
 #[cfg(test)]
 pub(crate) use watch::CURSOR_CAPACITY;
-pub(crate) use watch::{BeatHost, EdgeHost, Ports, StepClock, Watches};
+pub(crate) use watch::{BeatHost, EdgeHost, Ports, RampRoom, StepClock, Watches};
 
 #[cfg(test)]
 mod loom_tests;

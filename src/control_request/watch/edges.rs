@@ -28,7 +28,7 @@
 //! Measured in edges (see [`ramps`]). An entry on a control ends the
 //! table's ramp there, and the drain's ramps in beats.
 
-use self::ramps::EdgeRamps;
+pub(super) use self::ramps::EdgeRamps;
 use super::BeatHost;
 use crate::control_request::hold::FrameScope;
 use crate::control_request::ramps::Ramps;
@@ -180,6 +180,12 @@ impl EdgeCursors {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// Takes `room` for its tables' ramps, when it has more (see
+    /// [`EdgeRamps::take_room`]). Allocation- and free-free.
+    pub(super) fn take_room(&mut self, room: &mut EdgeRamps) {
+        self.ramps.take_room(room);
     }
 
     /// Whether it plays table `table`.

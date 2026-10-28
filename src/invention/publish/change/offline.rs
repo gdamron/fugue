@@ -52,7 +52,8 @@ pub(crate) fn edit_offline(
 ) -> Result<Committed, GraphCommandError> {
     let (directory, module_ports, state) = mirrors;
     let mut locked = graph.lock().unwrap();
-    let mirror = TopologyMirror::of(&locked.modules, &locked.edges);
+    let mut mirror = TopologyMirror::of(&locked.modules, &locked.edges);
+    mirror.table_ramps = locked.fit_table_ramps();
     let mut change = GraphChange::new(0, mirror, directory.clone(), locked.block_size);
     // A replaced render takes no edit; what `edit` built is dropped.
     let checked = edit(&mut change).and_then(|()| match locked.retired {

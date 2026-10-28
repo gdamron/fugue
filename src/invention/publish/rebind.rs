@@ -40,6 +40,7 @@ impl Packed {
 /// to record once it has published. Refuses the change when one no longer
 /// resolves; nothing has changed then.
 pub(super) fn pack(prepared: &mut PreparedChange) -> Result<Packed, GraphCommandError> {
+    prepared.refit_ramp_room();
     let rescheduling = std::mem::take(&mut prepared.rescheduling);
     let Some(publication) = prepared.publication.as_mut() else {
         return Ok(Packed::default());

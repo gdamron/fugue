@@ -78,3 +78,15 @@ fn a_table_reads_its_entries_in_place_and_hears_whether_it_is_played() {
     assert!(table.entry(2).is_none());
     table.set_played(super::Player::Clock);
 }
+
+#[test]
+fn most_ramps_counts_the_most_overlapping_ends_included() {
+    assert_eq!(most_ramps([]), 0);
+    assert_eq!(most_ramps([(0, 0), (1, 0)]), 0, "no ramp");
+    assert_eq!(most_ramps([(0, 4), (1, 1), (2, 1)]), 3);
+    // One ending on the step another starts still runs there.
+    assert_eq!(most_ramps([(0, 2), (2, 2), (4, 2)]), 2);
+    assert_eq!(most_ramps([(0, 2), (3, 2)]), 1);
+    assert_eq!(most_ramps((0..65).map(|_| (1, 4))), 65);
+    assert_eq!(most_ramps([(u64::MAX, 4), (u64::MAX, 1)]), 2);
+}
