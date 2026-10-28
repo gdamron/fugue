@@ -160,9 +160,10 @@ struct Slot {
     /// The hold word the write took, and the one it replaced.
     hold: AtomicU64,
     prev: AtomicU64,
-    /// The value of a write due earlier that gave way to it here
-    /// ([`EMPTY`] when none), and its due sample: in force between the
-    /// two, for an event due there ([`Before::event`]).
+    /// The value of a write due earlier that gave way or lost to it here
+    /// at its sample ([`EMPTY`] when none; a fresh stage clears it), and
+    /// its due sample: in force between the two, for an event due there
+    /// ([`Before::event`]).
     earlier: AtomicU64,
     earlier_due: AtomicU64,
 }
@@ -326,7 +327,6 @@ impl Staged {
     fn take(&self, position: usize) -> Option<Write> {
         let control = ControlIndex(self.order.get(position)?.load(Relaxed));
         let slot = self.slots.get(usize::from(control.0))?;
-        slot.earlier.store(EMPTY, Relaxed);
         if slot.held.swap(EMPTY, Relaxed) == EMPTY {
             return None;
         }
