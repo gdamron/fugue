@@ -268,6 +268,8 @@ pub(crate) struct Resolved {
     pub(crate) index: ControlIndex,
     pub(crate) raw: RtValue,
     pub(crate) event: bool,
+    /// Whether the control is reserved (see `ControlDecl::reserved`).
+    pub(crate) reserved: bool,
     /// Its key and value as reads list it pending.
     pub(crate) shown: Option<(String, ControlValue)>,
 }
@@ -464,12 +466,14 @@ impl DeclaredSurface {
         }
         let index = self.index(key)?;
         let raw = self.coerce(index, value)?;
-        let event = self.table.decl(index).is_some_and(|(decl, _)| decl.event);
+        let decl = self.table.decl(index).map(|(decl, _)| decl);
+        let (event, reserved) = decl.map_or((false, false), |decl| (decl.event, decl.reserved));
         let shown = self.table.key(index).zip(self.table.value(index, raw));
         Ok(Resolved {
             index,
             raw,
             event,
+            reserved,
             shown,
         })
     }
@@ -821,12 +825,13 @@ impl DeclaredSurface {
                     Some(time) => {
                         let conditions = match &request.value {
                             RequestValue::Payload(_) => Err(PAYLOAD_UNCHAINED),
-                            _ if port.requests.watchers_full() => Err(CHAINS_FULL),
+                            _ if port.requests.watchers_full(reserved) => Err(CHAINS_FULL),
                             _ => Ok(()),
                         };
                         let module = port.module_id.as_str();
                         let locked = (&mut *publisher, &mut *pending);
-                        let resolved = timed_write::resolve(time, module, locked, conditions)?;
+                        let resolved =
+                            timed_write::resolve(time, module, locked, (conditions, reserved))?;
                         // Counted from now as the sender would count it,
                         // so the log knows the sample it is due on.
                         request.when = match resolved.when {

@@ -213,12 +213,14 @@ impl RequestSender {
     }
 
     /// Whether [`CONDITION_CAPACITY`](super::CONDITION_CAPACITY) requests
-    /// timed by a condition are in flight, so a front door refuses one more
-    /// before submitting it. Exact while submissions are serialized, as a
-    /// live graph's are (under its publisher): the audio thread only
-    /// releases, so a stale count only refuses conservatively.
-    pub(crate) fn watchers_full(&self) -> bool {
-        self.shared.watches.full()
+    /// timed by a condition are in flight (or
+    /// [`CONDITION_ROOM`](super::CONDITION_ROOM), for a `reserved` one), so
+    /// a front door refuses one more before submitting it. Exact while
+    /// submissions are serialized, as a live graph's are (under its
+    /// publisher): the audio thread only releases, so a stale count only
+    /// refuses conservatively.
+    pub(crate) fn watchers_full(&self, reserved: bool) -> bool {
+        self.shared.watches.full(reserved)
     }
 
     /// Notes that timed edit `id`, queued through this channel, was

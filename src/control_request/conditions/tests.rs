@@ -501,10 +501,10 @@ fn the_sender_counts_the_conditions_in_flight() {
     let edge = [Predicate::edges(0, 0, 1)];
     let (sender, _consumer) = request_channel(4 * CONDITION_CAPACITY, Default::default());
     for id in 0..CONDITION_CAPACITY as u64 {
-        assert!(!sender.watchers_full());
+        assert!(!sender.watchers_full(false));
         sender.submit(request(id, &edge)).unwrap();
     }
-    assert!(sender.watchers_full());
+    assert!(sender.watchers_full(false));
     // A request timed otherwise is not counted.
     sender
         .submit(Request::new(
@@ -513,7 +513,7 @@ fn the_sender_counts_the_conditions_in_flight() {
         ))
         .unwrap();
     sender.watch_slots().release();
-    assert!(!sender.watchers_full());
+    assert!(!sender.watchers_full(false));
     assert_eq!(sender.watch_slots().taken(), CONDITION_CAPACITY - 1);
 }
 
@@ -607,3 +607,5 @@ fn a_request_waiting_on_one_already_applied_applies_late() {
     let late = Outcome::AppliedLate { at: 64, due: 3 };
     assert_eq!(log(&outcomes), [(1, applied), (2, late)]);
 }
+
+mod reserve;

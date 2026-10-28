@@ -9,7 +9,7 @@ use super::timed_status::{CancelCause, Ledger};
 use crate::audio_thread::debug_assert_control_thread;
 use crate::control_request::{
     outcome_channel_reserving, request_channel, ControlIndex, ControlTarget, OutcomeReceiver,
-    QueueFull, Request, RequestSender, RequestValue, CONDITION_CAPACITY,
+    QueueFull, Request, RequestSender, RequestValue, CONDITION_ROOM, WAITING_RESERVE,
 };
 use crate::invention::graph::{
     AudioLink, InputWrite, Publication, RequestDrain, SignalGraph, MAX_INPUT_PORT_NAME,
@@ -33,22 +33,27 @@ pub(crate) const INPUT_QUEUE_CAPACITY: usize = 256;
 /// has room and the link can retire the publication an edit replaces.
 pub(crate) const REQUEST_QUEUE_CAPACITY: usize = 256;
 
-/// Queue slots beyond [`REQUEST_QUEUE_CAPACITY`] that only edits may take,
-/// so a flood of control requests never shuts out a reload or an edit.
-/// As many again, so the queue is a power of two; edits fill it only while
-/// installs are deferred. Each queued edit keeps what its change built
-/// (sample buffers, say) alive until it installs and retires, so an audio
-/// side that is alive but not rendering holds up to this many before
+/// Queue slots beyond [`REQUEST_QUEUE_CAPACITY`] that only edits and
+/// reserved requests may take, so a flood of control requests never shuts
+/// out a reload, an edit or the end of a note. Three times as many, so the
+/// queue is a power of two; edits fill it only while installs are
+/// deferred, and leave [`RESERVED_ROOM`] of it free. Each queued edit keeps
+/// what its change built (sample buffers, say) alive until it installs and
+/// retires, so an audio side that is alive but not rendering holds up to
+/// `REQUEST_QUEUE_CAPACITY + EDIT_RESERVE - RESERVED_ROOM` before
 /// publishing is refused with `QueueFull`.
-pub(crate) const EDIT_RESERVE: usize = REQUEST_QUEUE_CAPACITY;
+pub(crate) const EDIT_RESERVE: usize = 3 * REQUEST_QUEUE_CAPACITY;
 
 /// Slots of the [`EDIT_RESERVE`] edits leave free for reserved control
 /// requests (`Request::reserved`: note offs), which may take any slot, so
-/// edits queued behind a stalled install never shut out the end of a note.
-pub(crate) const RESERVED_ROOM: usize = 128;
+/// edits queued behind a stalled install never shut out the end of a note:
+/// enough for every voice of 40 sixteen-voice instruments to end at once.
+/// It makes the queue 1024 slots of a request (176 bytes) each: about
+/// 180 KB a live graph, twice what it would be without it.
+pub(crate) const RESERVED_ROOM: usize = 640;
 
 /// The request queue's size: control requests and the edits' reserve.
-const QUEUE_SLOTS: usize = REQUEST_QUEUE_CAPACITY + EDIT_RESERVE;
+pub(crate) const QUEUE_SLOTS: usize = REQUEST_QUEUE_CAPACITY + EDIT_RESERVE;
 
 // The queue rounds its size up to a power of two, and the reserve and the
 // drain's pop budget both assume it holds exactly these slots.
@@ -68,7 +73,7 @@ pub(crate) const BEAT_WATCH_CAPACITY: usize = 64;
 /// Popped requests waiting on the audio thread: timed, watching a clock, or
 /// waiting on a condition.
 pub(crate) const WAITING_CAPACITY: usize =
-    PENDING_REQUEST_CAPACITY + BEAT_WATCH_CAPACITY + CONDITION_CAPACITY;
+    PENDING_REQUEST_CAPACITY + BEAT_WATCH_CAPACITY + WAITING_RESERVE + CONDITION_ROOM;
 
 /// Request outcomes the audio thread may queue before a control thread
 /// receives them; beyond that they are counted dropped. Enough for every
@@ -79,10 +84,10 @@ pub(crate) const OUTCOME_QUEUE_CAPACITY: usize = WAITING_CAPACITY + REQUEST_QUEU
 /// Outcome slots beyond [`OUTCOME_QUEUE_CAPACITY`] only timed requests'
 /// outcomes may take, so none is dropped however many untimed ones a slow
 /// control thread leaves unreceived: every timed write the front doors keep
-/// waiting (`timed_write::TIMED_WRITE_CAPACITY`), and as many again for the
+/// waiting (`timed_write::TIMED_WRITE_ROOM`), and as many again for the
 /// timed edits, their kept copies and chained writes, made without that
 /// check. The control side then never has to guess whether one applied.
-pub(crate) const TIMED_OUTCOME_RESERVE: usize = 2 * super::timed_write::TIMED_WRITE_CAPACITY;
+pub(crate) const TIMED_OUTCOME_RESERVE: usize = 2 * super::timed_write::TIMED_WRITE_ROOM;
 
 /// Payload retirements the request drain's retirer can hold while the
 /// reclaimer is behind: enough for every pending request and a full queue,

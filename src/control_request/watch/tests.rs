@@ -335,7 +335,7 @@ fn a_full_store_refuses_another_watch() {
     let (mut store, outcomes) = store();
     let mut watches = Watches::new(1);
     watches.insert(request(1, 1, 4.0), 0, &mut store.outcomes);
-    assert!(watches.is_full());
+    assert!(watches.is_full(false));
     watches.insert(request(2, 1, 4.0), 0, &mut store.outcomes);
     assert_eq!(
         log(&outcomes),
@@ -565,4 +565,5 @@ fn a_grid_follows_the_clock_s_new_beat_0_after_a_reset() {
 mod cursor;
 mod ramp;
 mod ramps;
+mod reserve;
 mod table_ramps;
