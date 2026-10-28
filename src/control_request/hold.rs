@@ -89,6 +89,12 @@ impl Rank {
     /// A user's write at priority 0: an offline render's control write.
     pub(crate) const USER: Self = Self::new(Source::User, 0);
 
+    /// Above every rank a write takes.
+    pub(crate) const MAX: Self = Self {
+        tier: u8::MAX,
+        priority: i16::MAX,
+    };
+
     pub(crate) const fn new(source: Source, priority: i16) -> Self {
         let tier = match source {
             Source::User | Source::Agent => 2,

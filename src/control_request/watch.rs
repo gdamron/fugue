@@ -563,6 +563,7 @@ fn on_beat(id: RequestId, now: u64) -> Applying {
         id,
         timed: true,
         at: now,
+        due: now,
     }
 }
 

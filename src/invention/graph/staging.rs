@@ -4,7 +4,7 @@
 use super::{Publication, SignalGraph};
 use crate::control_request::{
     contest, flush_staged, flush_staged_before, flush_watched, stage_write, stand, Applying,
-    ControlTarget, Outcome, Outcomes, Ramps, RequestValue, Standing,
+    Before, ControlTarget, Outcome, Outcomes, Ramps, RequestValue, Standing,
 };
 
 impl SignalGraph {
@@ -71,7 +71,8 @@ impl SignalGraph {
     /// [`Self::apply_now`] for the request `applying` names, if any: a
     /// value or payload write weighed against the one standing on its
     /// control at the sample, after the weaker writes staged on its module
-    /// and before the stronger, as if each applied on time.
+    /// and before the stronger, as if each applied on time; an event (no
+    /// standing) after those due no later than it, before those due after.
     fn apply_at_once(
         &mut self,
         target: &ControlTarget,
@@ -85,10 +86,13 @@ impl SignalGraph {
             .filter(|_| !matches!(value, RequestValue::Edit(_)));
         let index = target.module_idx;
         if let Some((_, instance)) = self.modules.get_index_mut(index) {
-            let than = weighed.map(|(applying, standing)| (standing, applying));
+            let event =
+                applying.filter(|_| standing.is_none() && matches!(value, RequestValue::Value(_)));
+            let than = (weighed.map(|(applying, standing)| Before::write(standing, applying)))
+                .or(event.map(Before::event));
             flush_staged_before(instance.module_mut(), than, outcomes);
-            // Only the stronger writes at its sample wait to run after it.
-            let at = weighed.map(|(applying, _)| applying.at);
+            // Only the writes at its sample it runs before wait for it.
+            let at = than.map(Before::at);
             debug_assert!(
                 (instance.module().declared())
                     .is_none_or(|(_, cells)| cells.staged.waits_only_at(at)),

@@ -37,6 +37,44 @@ pub(crate) struct Applying {
     pub(crate) timed: bool,
     /// The sample it applies at, reported late when due before it.
     pub(crate) at: u64,
+    /// The sample it was due at.
+    pub(crate) due: u64,
+}
+
+/// Where a write applied at once runs among the writes staged on its
+/// module at its sample ([`flush_staged_before`]): after those weaker than
+/// `key` (by due sample, rank and receipt), before the stronger.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Before {
+    at: u64,
+    key: (u64, Rank, u64),
+}
+
+impl Before {
+    /// For a write of `standing`, weighed as [`contest`] weighs it.
+    pub(crate) fn write(standing: Standing, applying: Applying) -> Self {
+        let key = (standing.due, standing.rank, applying.id.0);
+        Self {
+            at: applying.at,
+            key,
+        }
+    }
+
+    /// For an event, which holds nothing: after every write staged at its
+    /// sample due no later than it, before those due after it, so it reads
+    /// the values in force at its own due sample.
+    pub(crate) fn event(applying: Applying) -> Self {
+        let key = (applying.due, Rank::MAX, u64::MAX);
+        Self {
+            at: applying.at,
+            key,
+        }
+    }
+
+    /// The sample it applies at.
+    pub(crate) fn at(self) -> u64 {
+        self.at
+    }
 }
 
 /// The request applying, whether its write was just staged, how many wait,
@@ -235,18 +273,17 @@ impl Staged {
         self.len.store(len + 1, Relaxed);
     }
 
-    /// Whether the `position`th write staged is stronger than one of
-    /// `than` at its sample, moving it to place `kept` if so.
-    fn keeps(&self, position: usize, kept: usize, than: Option<(Standing, Applying)>) -> bool {
-        let (Some((standing, applying)), Some(control)) = (than, self.order.get(position)) else {
+    /// Whether the `position`th write staged runs after `than`, at its
+    /// sample, moving it to place `kept` if so.
+    fn keeps(&self, position: usize, kept: usize, than: Option<Before>) -> bool {
+        let (Some(than), Some(control)) = (than, self.order.get(position)) else {
             return false;
         };
         let control = control.load(Relaxed);
-        let mine = (standing.due, standing.rank, applying.id.0);
         // One that gave way stands no more (its hold is 0).
         let stronger = (self.slots.get(usize::from(control)))
-            .and_then(|slot| slot.standing_at(applying.at))
-            .is_some_and(|theirs| theirs > mine);
+            .and_then(|slot| slot.standing_at(than.at))
+            .is_some_and(|theirs| theirs > than.key);
         if stronger {
             self.order[kept].store(control, Relaxed);
         }
@@ -445,12 +482,11 @@ pub(crate) fn flush_watched<M: Module + ?Sized>(module: &mut M, outcomes: &mut O
     }
 }
 
-/// [`flush_staged`], but a write staged at `applying`'s sample stronger
-/// than one of `standing` (by due sample, rank and receipt) stays staged,
-/// to run after it. Allocation- and lock-free.
+/// [`flush_staged`], but a write staged at `than`'s sample that runs after
+/// it ([`Before`]) stays staged. Allocation- and lock-free.
 pub(crate) fn flush_staged_before<M: Module + ?Sized>(
     module: &mut M,
-    than: Option<(Standing, Applying)>,
+    than: Option<Before>,
     outcomes: &mut Outcomes,
 ) {
     if outcomes.staged() == 0 {

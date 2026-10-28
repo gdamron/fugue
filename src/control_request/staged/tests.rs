@@ -34,6 +34,7 @@ fn applying(id: u64, at: u64) -> Applying {
         id: RequestId(id),
         timed: false,
         at,
+        due: at,
     }
 }
 

@@ -13,6 +13,7 @@ mod catalog;
 mod declared;
 mod declared_routes;
 mod drops;
+mod events_across_edits;
 mod front_door_sources;
 mod held_requests;
 mod inputs;
