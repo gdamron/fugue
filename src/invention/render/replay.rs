@@ -26,6 +26,13 @@
 //! an automation-tier request (which takes a control back from a hold) is
 //! counted unlogged, not replayed as a hold.
 //!
+//! A logged payload write (a step sequencer's `pattern`) is written again
+//! as its text through its control's front door, off the graph's lock, as
+//! a front door writes an offline render: its codec builds the payload on
+//! the control thread, and the render's graph keeps it at once, before the
+//! requests logged after it. It holds its control from the sample it was
+//! due at, as a scalar does.
+//!
 //! A timed edit that landed lands on the same sample, after every request
 //! logged at or before it, as the live landing came after every request due
 //! at its segment start; the render makes it through the offline edit path
@@ -43,10 +50,11 @@ use indexmap::IndexMap;
 use crate::control_request::{take_automation, ControlIndex, RtValue};
 use crate::invention::graph::SignalGraph;
 use crate::invention::runtime::ControlSurfaceInstance;
-use crate::{ModuleRegistry, RequestLog};
+use crate::{LoggedValue, ModuleRegistry, RequestLog};
 
 mod edits;
 mod latches;
+mod payloads;
 
 pub(super) use edits::DueEdit;
 
@@ -63,9 +71,29 @@ struct Due {
     /// The surface whose undeclared aliases a development's key also writes,
     /// as live, once its declared part applies.
     follow: Option<ControlSurfaceInstance>,
-    value: RtValue,
+    value: DueValue,
     /// The clock it applied on the beat of, which it latches first.
     latch: Option<String>,
+}
+
+/// What a logged request writes.
+enum DueValue {
+    /// A value, applied to its declared control.
+    Scalar(RtValue),
+    /// A payload control's text, written through its front door.
+    Payload(String),
+}
+
+impl From<&LoggedValue> for DueValue {
+    fn from(value: &LoggedValue) -> Self {
+        match *value {
+            LoggedValue::Number(number) => Self::Scalar(RtValue::F32(number)),
+            LoggedValue::Integer(number) => Self::Scalar(RtValue::I32(number)),
+            LoggedValue::Index(number) => Self::Scalar(RtValue::U32(number)),
+            LoggedValue::Bool(flag) => Self::Scalar(RtValue::Bool(flag)),
+            LoggedValue::Text(ref text) => Self::Payload(text.clone()),
+        }
+    }
 }
 
 /// What a render does next while it replays.
@@ -74,6 +102,8 @@ pub(super) enum Next {
     Render(usize),
     /// Land the next timed edit (see [`Replay::take_edit`]) first.
     Edit,
+    /// Write the next payload (see [`Replay::take_payload`]) first.
+    Payload,
 }
 
 /// The requests and timed edits a render still has to apply, in log order.
@@ -130,7 +160,7 @@ impl Replay {
                     key: request.key.clone(),
                     control: None,
                     follow: None,
-                    value: request.value.into(),
+                    value: DueValue::from(&request.value),
                     latch,
                 }
             })
@@ -166,12 +196,19 @@ impl Replay {
                 break;
             }
             let surface = surfaces.get(&due.module_id);
-            due.control = (surface.and_then(|surface| surface.declaration(&due.key)))
-                .map(|declaration| declaration.index);
-            due.follow = (surface.filter(|_| due.control.is_some()))
-                .filter(|surface| surface.writes_undeclared(&due.key))
-                .cloned();
-            if due.control.is_none() {
+            // A payload's front door resolves it as it writes it.
+            let declared = match due.value {
+                DueValue::Payload(_) => surface.is_some_and(|surface| surface.declares(&due.key)),
+                DueValue::Scalar(_) => {
+                    due.control = (surface.and_then(|surface| surface.declaration(&due.key)))
+                        .map(|declaration| declaration.index);
+                    due.follow = (surface.filter(|_| due.control.is_some()))
+                        .filter(|surface| surface.writes_undeclared(&due.key))
+                        .cloned();
+                    due.control.is_some()
+                }
+            };
+            if !declared {
                 missing.get_or_insert(self.resolved);
             }
             self.resolved += 1;
@@ -204,6 +241,20 @@ impl Replay {
     pub(super) fn landed(&mut self, surfaces: &IndexMap<String, ControlSurfaceInstance>) {
         let through = self.edits.get(self.next_edit).map(|edit| edit.sample);
         self.resolve_through(surfaces, through);
+    }
+
+    /// The payload write [`Self::apply_due`] stopped at, its clock already
+    /// latched: its module, control and text, for the render to write
+    /// through the control's front door, and the sample it was due at,
+    /// which it holds from.
+    pub(super) fn take_payload(&mut self) -> Option<(String, String, String, u64)> {
+        let due = self.due.get_mut(self.next)?;
+        let DueValue::Payload(text) = &mut due.value else {
+            return None;
+        };
+        let text = std::mem::take(text);
+        self.next += 1;
+        Some((due.module_id.clone(), due.key.clone(), text, due.due))
     }
 
     /// Fails naming the first clock a logged beat names that keeps no beat
@@ -241,14 +292,18 @@ impl Replay {
             if let Some(clock) = &due.latch {
                 latch(graph, clock);
             }
-            let applied = due.control.map(|control| {
-                graph.apply_control_due(&due.module_id, control, due.value, due.due)
-            });
+            let value = match due.value {
+                DueValue::Scalar(value) => value,
+                // Written off the graph's lock (see `take_payload`).
+                DueValue::Payload(_) => return Next::Payload,
+            };
+            let applied = due
+                .control
+                .map(|control| graph.apply_control_due(&due.module_id, control, value, due.due));
             // A development's undeclared aliases took the value as live wrote
             // it, unlogged (the log is not exact); one refusing it counts.
-            let follow = |surface: &ControlSurfaceInstance| {
-                surface.follow_declared(&due.key, due.value).is_ok()
-            };
+            let follow =
+                |surface: &ControlSurfaceInstance| surface.follow_declared(&due.key, value).is_ok();
             let event = |control| graph.is_event(&due.module_id, control);
             let fired =
                 matches!(applied, Some(Ok(_))) && due.due < now && due.control.is_some_and(event);
@@ -299,5 +354,7 @@ mod landing_tests;
 mod latch_tests;
 #[cfg(test)]
 mod mixed_tests;
+#[cfg(test)]
+mod payload_tests;
 #[cfg(test)]
 mod tests;

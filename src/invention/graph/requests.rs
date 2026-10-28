@@ -955,18 +955,21 @@ impl SignalGraph {
 
     /// Keeps `payload` as declared payload control `control` of module
     /// `module_id` at once, as [`Self::apply_control`] applies a value of
-    /// `rank`, holding it, or losing, as that does. Control thread: the
-    /// value it replaces, or a payload refused or lost, is dropped here.
+    /// `rank`, holding it, or losing, as that does: from the sample it was
+    /// `due` at, when earlier, as a request applied late does. Control
+    /// thread: the value it replaces, or a payload refused or lost, is
+    /// dropped here.
     pub(crate) fn apply_payload(
         &mut self,
         module_id: &str,
         control: ControlIndex,
         payload: Payload,
-        rank: Rank,
+        (rank, due): (Rank, Option<u64>),
     ) -> Result<bool, Refusal> {
+        let now = self.current_sample;
         let standing = Standing {
             rank,
-            due: self.current_sample,
+            due: due.map_or(now, |due| due.min(now)),
         };
         let instance = self.modules.get_mut(module_id).ok_or(Refusal::TargetGone)?;
         if admits_hold(instance.module(), control, standing).is_err() {

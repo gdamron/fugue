@@ -44,10 +44,9 @@
 //!   came): [`RequestLog::full`], [`RequestLog::lost`];
 //! - a write reached the graph without a request (an input write, or a
 //!   control a module has not yet moved onto declared controls), or applied
-//!   a payload (a step sequencer's `pattern`), which a [`LoggedValue`]
-//!   cannot carry, or applied a request at the automation tier, which a
-//!   replay (holding every logged write above automation) cannot
-//!   reproduce: [`RequestLog::unlogged`];
+//!   a request at the automation tier, which a replay (holding every
+//!   logged write above automation) cannot reproduce:
+//!   [`RequestLog::unlogged`];
 //! - the graph was edited, reloaded or given an edit batch at once during
 //!   the session (a replay runs against the invention as loaded):
 //!   [`RequestLog::edits`]. A timed one is logged with its outcome instead
@@ -58,6 +57,11 @@
 //! - a repeating beat grid applied (it reports its first application
 //!   only), or latched its clock on a beat it lost and never applied
 //!   (counted in [`RequestLog::unlogged`]).
+//!
+//! A payload write (a step sequencer's `pattern`) is logged as the text its
+//! control reads back ([`LoggedValue::Text`]), which its codec made
+//! canonical, and a replay writes that text again through the control's
+//! front door, so it is built as live built it.
 //!
 //! A write's hold against a control scheduler is no exception: a replay
 //! holds each control as the session did (see the replay's docs).
@@ -90,8 +94,9 @@ pub const REQUEST_LOG_CAPACITY: usize = 16_384;
 /// The most timed edits a session log records before it stops.
 pub const TIMED_EDIT_LOG_CAPACITY: usize = 1_024;
 
-/// A value a request applied, exactly as the module received it.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// A value a request applied, exactly as the module received it, or, for a
+/// payload, as its control reads it back.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum LoggedValue {
@@ -100,6 +105,10 @@ pub enum LoggedValue {
     /// A choice's position, or another unsigned control value.
     Index(u32),
     Bool(bool),
+    /// A payload control's write (a step sequencer's `pattern`), as the
+    /// text it reads back: canonical, as its codec made it, so writing it
+    /// again builds the same payload.
+    Text(String),
 }
 
 impl From<RtValue> for LoggedValue {
@@ -109,17 +118,6 @@ impl From<RtValue> for LoggedValue {
             RtValue::I32(number) => Self::Integer(number),
             RtValue::U32(number) => Self::Index(number),
             RtValue::Bool(flag) => Self::Bool(flag),
-        }
-    }
-}
-
-impl From<LoggedValue> for RtValue {
-    fn from(value: LoggedValue) -> Self {
-        match value {
-            LoggedValue::Number(number) => Self::F32(number),
-            LoggedValue::Integer(number) => Self::I32(number),
-            LoggedValue::Index(number) => Self::U32(number),
-            LoggedValue::Bool(flag) => Self::Bool(flag),
         }
     }
 }
@@ -203,9 +201,8 @@ pub struct RequestLog {
     #[serde(default)]
     pub lost: u64,
     /// Writes that reached the graph without a logged request: input
-    /// writes, writes to controls not declared, applied payload writes
-    /// (a step sequencer's `pattern`), which a [`LoggedValue`] cannot carry,
-    /// applied automation-tier requests, which a replay cannot hold as
+    /// writes, writes to controls not declared, applied automation-tier
+    /// requests, which a replay cannot hold as
     /// they held, and repeating beat grids that never applied but latched
     /// their clock on a beat they lost, or are still waiting at export and
     /// may have, which they do not report beat by beat.

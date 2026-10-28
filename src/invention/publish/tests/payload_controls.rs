@@ -129,26 +129,27 @@ fn a_payload_rebuilds_from_the_text_a_write_records() {
     assert_eq!(surface.get_control("notes").unwrap(), "[1.0,2.0]".into());
 }
 
-/// The session log cannot carry a payload, so an applied payload write is
-/// counted unlogged and the log reports it cannot replay exactly; scalar
-/// writes beside it are logged as usual.
+/// An applied payload write is logged as the text it reads back, beside
+/// the scalar writes, and leaves the log exact.
 #[test]
-fn an_applied_payload_write_marks_the_request_log_inexact() {
+fn an_applied_payload_write_is_logged_as_its_text() {
     let mut rig = rig();
     write(&rig, "tape", "gain", 0.5.into());
     assert_eq!(counted_block(&mut rig), (0, 0));
     let before = rig.live.request_log();
     assert_eq!((before.requests.len(), before.unlogged), (1, 0));
 
-    write(&rig, "tape", "notes", "[1]".into());
+    write(&rig, "tape", "notes", " [1] ".into());
     assert_eq!(counted_block(&mut rig), (0, 0));
     let after = rig.live.request_log();
-    assert_eq!((after.requests.len(), after.unlogged), (1, 1));
-    // Only the payload changed what the log can account for (the rig's
-    // own edit already counts as one).
+    assert_eq!(after.unlogged, 0);
+    let logged = &after.requests[1];
+    assert_eq!((&*logged.module_id, &*logged.key), ("tape", "notes"));
+    assert_eq!(logged.value, crate::LoggedValue::Text("[1.0]".into()));
+    assert_eq!(read(&rig, "tape", "notes"), "[1.0]".into(), "as it reads");
+    // Only the rig's own edit keeps it inexact, as before the write.
     assert_eq!(
         (after.edits, after.lost, after.full),
         (before.edits, before.lost, before.full)
     );
-    assert!(!after.is_exact(), "a replay would miss the pattern");
 }
