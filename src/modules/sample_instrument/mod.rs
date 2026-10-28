@@ -72,7 +72,7 @@ use crate::control_request::{
     local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable, Refusal,
     RtValue,
 };
-use crate::dsp::LinearRamp;
+use crate::dsp::{declick_step, LinearRamp};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::module_config::{finite_f32, whole_number, whole_number_in, ConfigKey, ConfigReader};
 use crate::modules::mixer::gain_ramp_frames;
@@ -84,9 +84,9 @@ use crate::{ControlMeta, Module};
 pub use self::controls::{LoopSpec, ZoneSpec};
 pub use self::voice::MAX_VOICES;
 
-use self::controls::{held_release, RELEASE_RANGE};
 use self::controls::{control_at, index_of, midi_note, InstrumentControl, ZoneAudio};
-use self::voice::{note_from_freq, resolve_zone, Voice, ZoneRuntime, DECLICK_SECONDS};
+use self::controls::{held_release, RELEASE_RANGE};
+use self::voice::{note_from_freq, resolve_zone, Voice, ZoneRuntime};
 
 mod controls;
 mod inputs;
@@ -296,7 +296,7 @@ pub struct SampleInstrument {
     /// by the voice count once silent zones are dropped, as only a sounding
     /// zone glides; preallocated.
     gliding: Vec<usize>,
-    /// Release fade, in seconds.
+    /// Release fade, in seconds; 0 stops a note at once, along the declick.
     release: f32,
     /// Whether a note off written since the last block waits for its
     /// release fade (see [`Module::finish_events`]).
@@ -306,7 +306,8 @@ pub struct SampleInstrument {
     /// Allocation ordinal handed to the next note-on (steal-oldest order).
     next_started: u64,
     sample_rate: f32,
-    /// Per-frame decay of a stolen voice's declick ramp, fixed at build.
+    /// Per-frame progress of the declick (a stolen voice's fade, and a
+    /// release of 0), fixed at build.
     declick_step: f32,
     last_gate: f32,
 }
@@ -363,7 +364,7 @@ impl SampleInstrument {
             fresh_notes: false,
             next_started: 0,
             sample_rate: sample_rate as f32,
-            declick_step: 1.0 / (DECLICK_SECONDS * sample_rate as f32).max(1.0),
+            declick_step: declick_step(sample_rate as f32),
             last_gate: 0.0,
         }
     }
@@ -445,9 +446,16 @@ impl SampleInstrument {
         control_at(index, self.zones.len())
     }
 
-    /// The release fade's per-frame slope.
-    fn release_step(&self) -> f32 {
-        1.0 / (self.release.max(RELEASE_RANGE.0) * self.sample_rate)
+    /// The release fade's per-frame slope, and whether it follows the
+    /// declick's curve: a release of 0 stops a note as a steal does.
+    fn release_fade(&self) -> (f32, bool) {
+        if self.release <= 0.0 {
+            return (self.declick_step, true);
+        }
+        (
+            1.0 / (self.release.max(RELEASE_RANGE.0) * self.sample_rate),
+            false,
+        )
     }
 
     /// Starts a note, returning the voice it took.
@@ -522,7 +530,7 @@ impl SampleInstrument {
     /// started held voice instead; the explicit `note_off` control stays
     /// strictly keyed, so releasing a note the pool already stole is a
     /// no-op rather than cutting an unrelated held note.
-    fn note_off(&mut self, note: u8, release_step: f32, fallback_newest: bool) {
+    fn note_off(&mut self, note: u8, (step, curved): (f32, bool), fallback_newest: bool) {
         let mut matched = None;
         let mut newest_held: Option<(usize, u64)> = None;
         for (index, voice) in self.voices.iter().enumerate() {
@@ -541,7 +549,7 @@ impl SampleInstrument {
             .filter(|_| fallback_newest)
             .map(|(index, _)| index);
         if let Some(index) = matched.or(fallback) {
-            self.voices[index].release(release_step);
+            self.voices[index].release(step, curved);
         }
     }
 }
@@ -552,7 +560,7 @@ impl Module for SampleInstrument {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        let release_step = self.release_step();
+        let release = self.release_fade();
         // A note off written for this sample fades over the release in
         // force as it sounds: one written beside it applies, whichever
         // came first, and one written later never reaches back.
@@ -564,7 +572,7 @@ impl Module for SampleInstrument {
             if gate > 0.5 && self.last_gate <= 0.5 {
                 self.note_on(self.inputs.frequency(i), self.inputs.velocity(i));
             } else if gate <= 0.5 && self.last_gate > 0.5 {
-                self.note_off(note_from_freq(self.inputs.frequency(i)), release_step, true);
+                self.note_off(note_from_freq(self.inputs.frequency(i)), release, true);
             }
             self.last_gate = gate;
 
@@ -636,9 +644,9 @@ impl Module for SampleInstrument {
             }
         }
         if std::mem::take(&mut self.releasing) {
-            let release_step = self.release_step();
+            let (step, curved) = self.release_fade();
             for voice in self.voices.iter_mut() {
-                voice.take_release(release_step);
+                voice.take_release(step, curved);
             }
         }
     }
@@ -670,7 +678,7 @@ impl Module for SampleInstrument {
             Some(InstrumentControl::NoteOff) => {
                 let note = midi_note(number).ok_or(Refusal::Invalid)?;
                 // Its fade is set as the block starts (see `process`).
-                self.note_off(note, 0.0, false);
+                self.note_off(note, (0.0, false), false);
                 self.releasing = true;
                 Ok(RtValue::F32(0.0))
             }

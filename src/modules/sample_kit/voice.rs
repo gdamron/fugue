@@ -1,13 +1,9 @@
 //! A sample kit slot's one voice, and the short fade a retrigger gives the
 //! sound it cuts off.
 
-use crate::dsp::LinearRamp;
+use crate::dsp::{declick_gain, declick_step, LinearRamp};
 use crate::modules::sample_loading::SampleData;
 use crate::payload::Shared;
-
-/// How long a retriggered slot's old sound fades out under its new play:
-/// long enough not to click, short enough to hear as the same hit.
-pub(super) const DECLICK_SECONDS: f32 = 0.003;
 
 /// Which of a voice's handles a fading tail reads.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -58,7 +54,7 @@ pub(super) struct Voice {
     /// The loudest level among the fades the residual holds, which bounds
     /// it.
     residual_amp: f32,
-    /// The tail's fade per frame.
+    /// The fades' progress per frame (see [`declick_gain`]).
     declick_step: f32,
 }
 
@@ -87,12 +83,12 @@ impl Voice {
             residual: (0.0, 0.0),
             residual_gain: 0.0,
             residual_amp: 0.0,
-            declick_step: 1.0 / (DECLICK_SECONDS * sample_rate as f32).max(1.0),
+            declick_step: declick_step(sample_rate as f32),
         }
     }
 
     /// Plays the slot from its start. A sound still playing fades out over
-    /// [`DECLICK_SECONDS`] instead of stopping dead.
+    /// the shared 3 ms declick instead of stopping dead.
     pub(super) fn start(&mut self) {
         // A voice that has sounded nothing yet (played again at the
         // instant it started) has nothing to fade.
@@ -129,8 +125,12 @@ impl Voice {
     /// fold of a sample within full scale never reaches.
     fn keep_residual(&mut self) {
         let (l, r) = self.tail_frame();
-        let gain = self.residual_gain;
-        let held = if gain > 0.0 { self.residual_amp } else { 0.0 };
+        let gain = declick_gain(self.residual_gain);
+        let held = if self.residual_gain > 0.0 {
+            self.residual_amp
+        } else {
+            0.0
+        };
         let amp = self.tail.amp.max(held);
         let bound = |v: f32| v.max(-amp).min(amp);
         self.residual = (
@@ -149,7 +149,7 @@ impl Voice {
             return (0.0, 0.0);
         }
         let (l, r) = sample.frame_at(tail.position);
-        let amp = tail.amp * tail.gain;
+        let amp = tail.amp * declick_gain(tail.gain);
         (l * amp, r * amp)
     }
 
@@ -199,8 +199,9 @@ impl Voice {
     fn fade_out(&mut self) -> (f32, f32) {
         let (mut left, mut right) = (0.0, 0.0);
         if self.residual_gain > 0.0 {
-            left = self.residual.0 * self.residual_gain;
-            right = self.residual.1 * self.residual_gain;
+            let gain = declick_gain(self.residual_gain);
+            left = self.residual.0 * gain;
+            right = self.residual.1 * gain;
             self.residual_gain = (self.residual_gain - self.declick_step).max(0.0);
         }
         if self.tail.gain <= 0.0 {

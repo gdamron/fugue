@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use crate::dsp::declick_gain;
 use crate::modules::sample_loading::SampleData;
 use crate::payload::Shared;
 
@@ -12,13 +13,6 @@ use super::controls::{ScaledLoop, ZoneAudio};
 
 /// Upper bound on pool voices; bounds per-block work.
 pub const MAX_VOICES: usize = 16;
-
-/// Crossfade applied when a note takes over a sounding voice. The stolen
-/// note keeps being read through this window while it fades, so both the
-/// amplitude and the slope stay continuous — freezing its last value
-/// instead would remove the step but leave an audible slope kink. Short
-/// enough not to smear the new note's attack.
-pub const DECLICK_SECONDS: f32 = 0.003;
 
 /// A zone as the audio thread sees it: the swappable audio plus the fixed
 /// keymap data, with the root's frequency precomputed at build time. The
@@ -92,6 +86,9 @@ pub(crate) struct Voice {
     /// large share of a tiny slope, and the tail-fit test relies on it).
     release_gain: f64,
     release_step: f64,
+    /// Whether the release is a stop at once: it eases out along the
+    /// declick's curve rather than straight down.
+    release_curved: bool,
     /// Allocation ordinal for steal-oldest.
     pub started: u64,
     /// The note this voice was playing before it was stolen, still being
@@ -129,6 +126,7 @@ impl Voice {
             wraps: true,
             release_gain: 1.0,
             release_step: 0.0,
+            release_curved: false,
             started: 0,
             fade_sample: None,
             fade_position: 0.0,
@@ -152,7 +150,11 @@ impl Voice {
     /// The release fade's gain on this frame.
     #[inline]
     pub fn release_gain(&self) -> f32 {
-        self.release_gain as f32
+        if self.release_curved {
+            declick_gain(self.release_gain as f32)
+        } else {
+            self.release_gain as f32
+        }
     }
 
     /// The loop this voice wraps this pass, if any.
@@ -166,7 +168,10 @@ impl Voice {
     }
 
     /// Moves the note currently on this voice into the crossfade slot, to be
-    /// read and faded over `step` per frame. Called just before
+    /// read and faded along the declick (`step` of its progress per frame).
+    /// The stolen note keeps being read while it fades, so the amplitude
+    /// and the slope stay continuous; freezing its last value would remove
+    /// the step but leave an audible slope kink. Called just before
     /// [`Self::start`] takes the voice for a new note. `amp` is the gain the
     /// old note was being mixed at.
     pub fn begin_steal_fade(&mut self, amp: f32, step: f32) {
@@ -201,7 +206,7 @@ impl Voice {
         }
 
         let (l, r) = read(sample, self.fade_loop, self.fade_position);
-        let amp = self.fade_amp * self.fade_gain;
+        let amp = self.fade_amp * declick_gain(self.fade_gain);
         self.fade_position = wrap(self.fade_loop, self.fade_position + self.fade_ratio);
         self.fade_gain -= self.fade_step;
         if self.fade_gain <= 0.0 {
@@ -234,6 +239,7 @@ impl Voice {
         self.wraps = true;
         self.release_gain = 1.0;
         self.release_step = 0.0;
+        self.release_curved = false;
         self.started = started;
     }
 
@@ -254,20 +260,23 @@ impl Voice {
         self.fade_loop = audio.loop_region;
     }
 
-    /// Begins the release phase: the fade below takes `1/step` frames, and
-    /// the sustain loop wraps only while the fade would outlast the rest of
-    /// the sample (see [`Self::still_wraps`]).
-    pub fn release(&mut self, step: f32) {
+    /// Begins the release phase: the fade below takes `1/step` frames,
+    /// along the declick's curve when `curved`, and the sustain loop wraps
+    /// only while the fade would outlast the rest of the sample (see
+    /// [`Self::still_wraps`]).
+    pub fn release(&mut self, step: f32, curved: bool) {
         self.held = false;
         self.release_step = f64::from(step);
+        self.release_curved = curved;
         self.wraps = self.still_wraps();
     }
 
     /// Sets the fade of a release begun with no step yet (a note off
     /// waiting for the release in force as it sounds).
-    pub fn take_release(&mut self, step: f32) {
+    pub fn take_release(&mut self, step: f32, curved: bool) {
         if self.active && !self.held && self.release_step == 0.0 {
             self.release_step = f64::from(step);
+            self.release_curved = curved;
             self.wraps = self.still_wraps();
         }
     }

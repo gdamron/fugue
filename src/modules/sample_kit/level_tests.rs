@@ -5,9 +5,9 @@ use super::tests::{build_kit, write_level_wav, TOL};
 use crate::alloc_counter::allocator_events;
 use crate::audio_thread::AudioThreadScope;
 use crate::control_request::RtValue;
+use crate::dsp::DECLICK_SECONDS;
 use crate::modules::mixer::gain_ramp_frames;
 use crate::modules::sample_kit::controls::{index_of, KitControl};
-use crate::modules::sample_kit::voice::DECLICK_SECONDS;
 
 const RATE: u32 = 44_100;
 

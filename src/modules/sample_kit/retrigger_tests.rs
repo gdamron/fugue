@@ -2,10 +2,10 @@
 //! stopping it dead, and a swap during that fade leaves it on its buffer.
 
 use super::tests::{build_kit, write_level_wav, write_levels_wav, TOL};
-use super::voice::DECLICK_SECONDS;
 use crate::alloc_counter::allocator_events;
 use crate::audio_thread::AudioThreadScope;
 use crate::control_request::RtValue;
+use crate::dsp::{declick_gain, declick_step, DECLICK_SECONDS};
 use crate::modules::sample_kit::controls::{index_of, KitControl};
 use crate::modules::sample_loading::load_cached_sample;
 use crate::payload::Payload;
@@ -41,6 +41,17 @@ fn worst_bend(frames: &[f32]) -> f32 {
 
 fn declick_frames() -> u32 {
     (DECLICK_SECONDS * RATE as f32).ceil() as u32 + 1
+}
+
+/// Checks a fade of `level` over `floor`, from its first frame, follows
+/// the declick's curve: a straight fade misses it by up to a tenth of
+/// `level`.
+fn follows_the_declick(fade: &[f32], level: f32, floor: f32) {
+    let step = declick_step(RATE as f32);
+    for (frame, &value) in fade.iter().enumerate() {
+        let expected = floor + level * declick_gain(1.0 - frame as f32 * step);
+        assert!((value - expected).abs() < 1e-3, "frame {frame}: {fade:?}");
+    }
 }
 
 #[test]
@@ -101,12 +112,12 @@ fn a_retrigger_inside_the_fade_carries_the_first_fade_on() {
     });
     assert_eq!((allocs, frees), (0, 0));
     // A sine at 220 Hz moves by at most 0.016 a frame; the fades add their
-    // slope (0.004 each).
+    // slope, up to 0.006 each at the middle of the declick's curve.
     let jump = frames
         .windows(2)
         .map(|w| (w[1] - w[0]).abs())
         .fold(0.0, f32::max);
-    assert!(jump < 0.03, "{jump}");
+    assert!(jump < 0.035, "{jump}");
     let _ = std::fs::remove_file(path);
 }
 
@@ -143,11 +154,8 @@ fn a_swap_during_the_fade_leaves_it_on_the_buffer_it_was_reading() {
     assert_eq!((allocs, frees), (0, 0));
     let mut fade = vec![first, kit.get_output("audio_left").unwrap()];
     fade.extend(heard(&mut kit, declick_frames()));
-    // The kick fades on evenly to the quiet sample alone.
-    let step = 0.5 / (DECLICK_SECONDS * RATE as f32);
-    for pair in fade.windows(2).take(declick_frames() as usize - 2) {
-        assert!((pair[0] - pair[1] - step).abs() < 1e-3, "{fade:?}");
-    }
+    // The kick eases out along the declick to the quiet sample alone.
+    follows_the_declick(&fade, 0.5, 0.125);
     assert!((fade.last().unwrap() - 0.125).abs() < TOL, "{fade:?}");
     drop(retired);
     for path in [kick, quiet, quieter] {
@@ -182,10 +190,7 @@ fn a_retrigger_and_a_swap_at_one_instant_play_the_new_sample_over_the_fade() {
         (fade[0] - 0.625).abs() < TOL,
         "kick fading over quiet: {fade:?}"
     );
-    let step = 0.5 / (DECLICK_SECONDS * RATE as f32);
-    for pair in fade.windows(2).take(declick_frames() as usize - 2) {
-        assert!((pair[0] - pair[1] - step).abs() < 1e-3, "{fade:?}");
-    }
+    follows_the_declick(&fade, 0.5, 0.125);
     assert!((fade.last().unwrap() - 0.125).abs() < TOL, "{fade:?}");
     drop(retired);
     for path in [kick, quiet] {
@@ -228,10 +233,7 @@ fn a_swap_mid_fade_while_playing_moves_the_fade_with_the_ringing_sound() {
     let payload = Payload::from_arc(load_cached_sample(quiet.to_str().unwrap(), RATE).unwrap());
     let retired = kit.apply_payload(asset, payload).ok().unwrap();
     fade.extend(heard(&mut kit, declick_frames()));
-    let step = 0.5 / (DECLICK_SECONDS * RATE as f32);
-    for pair in fade.windows(2).take(declick_frames() as usize - 2) {
-        assert!((pair[0] - pair[1] - step).abs() < 1e-3, "{fade:?}");
-    }
+    follows_the_declick(&fade, 0.5, 0.5);
     assert!((fade.last().unwrap() - 0.5).abs() < TOL, "{fade:?}");
     play(&mut kit);
     heard(&mut kit, declick_frames());
@@ -296,5 +298,27 @@ fn a_level_drop_then_a_quick_double_play_keeps_the_louder_fade() {
         let jump = worst_fade_jump(&frames, 44, 0.5 * quieter);
         assert!(jump < 0.05, "level {quieter}: {jump}");
     }
+    let _ = std::fs::remove_file(held);
+}
+
+#[test]
+fn fades_folded_by_quick_retriggers_ease_out_along_the_declick() {
+    let held = write_level_wav(0.5, RATE as usize);
+    let (mut kit, _surface) = build_kit(one_slot(&held));
+    play(&mut kit);
+    heard(&mut kit, 100);
+    // Two plays 10 frames apart inside the fade: each folds what was
+    // fading into the residual, which eases out along the curve.
+    for _ in 0..2 {
+        play(&mut kit);
+        heard(&mut kit, 10);
+    }
+    play(&mut kit);
+    let fade = heard(&mut kit, declick_frames());
+    let ten = declick_gain(1.0 - 10.0 * declick_step(RATE as f32));
+    let first = 0.5 * ten;
+    let second = (first + 0.5) * ten;
+    // What fades: the third play's tail (0.5) and the residual.
+    follows_the_declick(&fade, 0.5 + second, 0.5);
     let _ = std::fs::remove_file(held);
 }
