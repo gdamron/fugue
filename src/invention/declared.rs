@@ -50,7 +50,7 @@ use super::graph::GraphCommand;
 use super::graph::SignalGraph;
 use super::publish::{
     kept_until, timed_write, Authoring, CancelCause, PendingLog, PendingWrite, Publisher, Retarget,
-    Settler, Touched, WriteTime,
+    Settler, WriteTime,
 };
 use super::runtime::ControlSurfaceInstance;
 #[cfg(test)]
@@ -839,7 +839,7 @@ impl DeclaredSurface {
                     }
                     None => None,
                 };
-                let (source, when) = (request.source, request.when);
+                let (source, when, ttl) = (request.source, request.when, request.ttl);
                 // A timed write is never kept: the later of it and the
                 // edit plays (see `publish::timed_write`).
                 let kept = match (&request.value, authored) {
@@ -857,27 +857,23 @@ impl DeclaredSurface {
                     }
                     _ => None,
                 };
-                let (safe, copy) = (kept.map(|(safe, _)| safe), kept.and_then(|(_, copy)| copy));
-                let id = match port.requests.submit(request) {
+                let (safe, kept) = (kept.map(|(safe, _)| safe), kept.and_then(|(_, kept)| kept));
+                let submitted = match kept {
+                    Some(kept) => port.requests.submit_as(kept.write, request),
+                    None => port.requests.submit(request),
+                };
+                let id = match submitted {
                     Ok(id) => id,
                     // Never, as `keep_authored` kept it only with room for
-                    // this write too, but a write kept and not made is not
-                    // to play: the edit is cancelled, the copy with it.
-                    // Landed already, the copy plays: it is the write.
-                    Err(_) => match (copy, authored) {
-                        (Some(copy), Some(key)) => {
-                            let cause = || CancelCause::AuthoredWrite {
-                                module_id: port.module_id.clone(),
-                                key: key.to_string(),
-                                touches: Touched::Written,
-                            };
-                            if publisher.cancel_timed(cause) {
-                                return Err(QUEUE_FULL.into());
-                            }
-                            copy
+                    // this write too. A write not made is not to play: its
+                    // copy, waiting on it, is refused at the drain's next
+                    // segment start, and the edit is left alone.
+                    Err(_) => {
+                        if let Some(kept) = kept {
+                            port.requests.cancelled(kept.write);
                         }
-                        _ => return Err(QUEUE_FULL.into()),
-                    },
+                        return Err(QUEUE_FULL.into());
+                    }
                 };
                 // Under the publisher's lock, so reads report the last write
                 // submitted.
@@ -894,6 +890,7 @@ impl DeclaredSurface {
                         beat,
                         source,
                         when,
+                        expires: port.requests.expires_by(ttl),
                         announced: options.announced,
                         awaited: options.awaited,
                         // Safe from the timed edit it was kept over, or that
@@ -905,14 +902,14 @@ impl DeclaredSurface {
                     };
                     // The copy applying, too, is this write's, though only the
                     // write is announced: the copy is the edit's.
-                    if let Some(copy) = copy.filter(|copy| *copy != id) {
+                    if let Some(kept) = kept {
                         let copy_write = PendingWrite {
-                            when: safe.map_or(when, kept_until),
+                            when: safe.map_or(when, |edit| kept_until(edit, id)),
                             announced: false,
                             awaited: false,
                             ..write.clone()
                         };
-                        pending.submitted(copy, copy_write);
+                        pending.submitted(kept.copy, copy_write);
                     }
                     pending.submitted(id, write);
                 }

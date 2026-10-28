@@ -47,7 +47,7 @@ impl Drop for Tracked {
 }
 
 /// A stand-in module that keeps its current value as a `Shared<T>`.
-struct Module<T> {
+struct Module<T: Send + Sync + 'static> {
     current: Shared<T>,
 }
 

@@ -310,6 +310,7 @@ fn submit_timed(running: &RunningInvention, id: &str, key: &str, value: f32, whe
             beat: None,
             source: crate::control_request::Source::User,
             when: crate::control_request::When::Now,
+            expires: None,
             announced: false,
             awaited: false,
             authored: None,

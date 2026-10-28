@@ -150,19 +150,24 @@ impl Transport {
     }
 
     /// Publishes the count after a block. Audio thread only: wait-free,
-    /// allocation- and lock-free.
+    /// allocation- and lock-free. `Release`, so every outcome the block
+    /// sent is received by a reader that saw the count first (see
+    /// [`Self::rendered`]).
     #[inline]
     pub(crate) fn publish(&self, rendered: u64) {
-        self.rendered.store(rendered, Ordering::Relaxed);
+        self.rendered.store(rendered, Ordering::Release);
     }
 
     /// Samples rendered as of the latest block the audio thread finished:
     /// the earliest sample a request submitted now can apply at. The audio
     /// thread may be part way into the next block, so a request timed close
     /// to this can still arrive after its sample and apply late.
+    ///
+    /// `Acquire`: every outcome the blocks up to it sent is in the outcome
+    /// queue for a receiver reading after this, unless dropped there.
     #[inline]
     pub(crate) fn rendered(&self) -> u64 {
-        self.rendered.load(Ordering::Relaxed)
+        self.rendered.load(Ordering::Acquire)
     }
 }
 
