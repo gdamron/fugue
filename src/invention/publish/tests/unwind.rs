@@ -1,6 +1,7 @@
 //! A module panicking in a render: everything the render held stays with
 //! the graph for teardown on a control thread, nothing is freed on the
-//! rendering thread, and every later submission is refused at once.
+//! rendering thread, every later submission is refused at once, and every
+//! write still waiting is settled refused.
 //!
 //! The module panics with `resume_unwind`, which unwinds exactly as a
 //! panic does but runs no panic hook, so the hook's printing does not
@@ -9,11 +10,15 @@
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use super::super::announce::Progress;
+use super::super::{EditState, EditTime};
 use super::requests::try_submit_value;
 use super::requests::{hook, submit};
 use super::*;
 use crate::alloc_counter::foreign_frees;
-use crate::control_request::{ControlIndex, Refusal, Request, RequestSender, RequestValue, When};
+use crate::control_request::{
+    ControlIndex, Outcome, Refusal, Request, RequestSender, RequestValue, When,
+};
 use crate::payload::{Payload, Retired};
 use crate::{GraphModule, Module, ModuleBuildResult, ModuleFactory, MAX_BLOCK};
 
@@ -267,13 +272,24 @@ fn a_panic_in_process_refuses_later_submissions() {
     assert_refused(&mut rig);
 }
 
+/// A payload that says when it is freed.
+struct Flagged(Arc<AtomicBool>);
+
+impl Drop for Flagged {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
 /// A module panics in `apply_payload` with the payload it was handed: the
-/// unwind leaks it rather than freeing it on the rendering thread.
+/// unwind sets it aside rather than freeing it on the rendering thread, and
+/// the graph keeps it until its teardown frees it.
 #[test]
-fn a_panic_applying_a_payload_does_not_free_it() {
+fn a_panic_applying_a_payload_keeps_it_for_teardown() {
     let (mut rig, armed) = fragile_rig();
     rig.graph.request_hook = None;
-    let payload = Payload::owned(Box::new([0.0f32; 64]));
+    let freed = Arc::new(AtomicBool::new(false));
+    let payload = Payload::owned(Box::new(Flagged(Arc::clone(&freed))));
     let request = RequestValue::Payload(payload);
     try_submit_value(&rig, "fragile", 0, request, When::Now).unwrap();
     armed.apply_payload.store(true, Ordering::SeqCst);
@@ -283,5 +299,72 @@ fn a_panic_applying_a_payload_does_not_free_it() {
         0,
         "freed on the rendering thread"
     );
+    assert_eq!(rig.graph.caught.iter().flatten().count(), 1, "kept");
     assert_refused(&mut rig);
+    assert!(!freed.load(Ordering::SeqCst));
+
+    let Rig { graph, live, .. } = rig;
+    drop(graph);
+    drop(live);
+    assert!(freed.load(Ordering::SeqCst), "the payload leaked");
+}
+
+/// Writes waiting as a render panics, one due in the panicking block and
+/// one later, are settled refused (`Refusal::Stopped`): neither is listed
+/// as waiting until the invention stops.
+#[test]
+fn writes_waiting_as_a_render_panics_settle_refused() {
+    let (mut rig, armed) = fragile_rig();
+    let start = rig.graph.current_sample;
+    let later = When::AtSample(start + 64 * 100);
+    let waiting = submit(&rig, "fragile", 0, 0.25, later);
+    let applying = submit(&rig, "fragile", 0, 0.5, When::AtSample(start + 10));
+    for id in [waiting, applying] {
+        let write = super::lost_outcomes::write(0.5, later);
+        rig.live.pending.lock().unwrap().submitted(id, write);
+    }
+    armed.set_input.store(true, Ordering::SeqCst);
+
+    assert_eq!(
+        panicking_block(&mut rig),
+        0,
+        "freed on the rendering thread"
+    );
+    let stopped = Progress::Settled(Outcome::Refused(Refusal::Stopped));
+    assert_eq!(rig.live.progress(waiting), stopped);
+    assert_eq!(rig.live.progress(applying), stopped);
+    assert!(rig.live.pending_requests().is_empty());
+}
+
+/// A timed edit waiting as untimed outcomes are lost, then as a render
+/// panics, is settled refused (`Refusal::Stopped`): whether the loss was
+/// taken before the panic (clearing the log's edits, the waiting one
+/// left to the publisher) or with it.
+#[test]
+fn a_timed_edit_waiting_past_lost_outcomes_settles_stopped_as_a_render_panics() {
+    for taken_before in [true, false] {
+        let (mut rig, armed) = fragile_rig();
+        let far = EditTime::AtSample(rig.graph.current_sample + 48_000 * 60);
+        let mut change = rig.live.begin();
+        change.remove("fragile");
+        let prepared = change.prepare().unwrap();
+        let id = rig.live.commit_when(prepared, far, None, |_| {}).unwrap();
+        // More untimed outcomes than the queue holds, none received.
+        for _ in 0..8 {
+            for value in 0..200 {
+                submit(&rig, "fragile", 0, value as f32, When::Now);
+            }
+            rig.render(8);
+        }
+        if taken_before {
+            let status = rig.live.timed_status(id).unwrap();
+            assert_eq!(status.state, EditState::Queued, "the waiting edit stays");
+        }
+        armed.set_input.store(true, Ordering::SeqCst);
+        submit(&rig, "fragile", 0, 0.5, When::Now);
+        panicking_block(&mut rig);
+
+        let stopped = EditState::Refused(Refusal::Stopped);
+        assert_eq!(rig.live.timed_status(id).unwrap().state, stopped);
+    }
 }

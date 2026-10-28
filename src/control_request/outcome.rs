@@ -1,5 +1,6 @@
 //! Outcomes on their way back from the audio thread.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use super::event::EventCounter;
@@ -28,14 +29,21 @@ pub(crate) fn outcome_channel_reserving(
 ) -> (OutcomeSender, OutcomeReceiver) {
     let queue = Ring::with_capacity(capacity + timed);
     let dropped = Arc::new(EventCounter::new());
+    let ended = Arc::new(AtomicBool::new(false));
     let producer = Producer::claim(Arc::clone(&queue));
     let untimed_room = producer.capacity() - timed;
     let sender = OutcomeSender {
         producer,
         untimed_room,
         dropped: Arc::clone(&dropped),
+        ended: Arc::clone(&ended),
     };
-    (sender, OutcomeReceiver { queue, dropped })
+    let receiver = OutcomeReceiver {
+        queue,
+        dropped,
+        ended,
+    };
+    (sender, receiver)
 }
 
 /// The audio side's end: the pending store's `Outcomes` sends every
@@ -46,6 +54,7 @@ pub(crate) struct OutcomeSender {
     /// requests' alone.
     untimed_room: usize,
     dropped: Arc<EventCounter>,
+    ended: Arc<AtomicBool>,
 }
 
 impl OutcomeSender {
@@ -69,6 +78,15 @@ impl OutcomeSender {
             self.dropped.record();
         }
     }
+
+    /// Says no outcome will come after those sent so far: the audio side
+    /// has failed (a module panicked), so what still waits never settles
+    /// there. `Release`, so a receiver that sees it receives every outcome
+    /// sent before (see [`OutcomeReceiver::ended`]). Wait-free,
+    /// allocation-, free- and lock-free.
+    pub(crate) fn end(&self) {
+        self.ended.store(true, Ordering::Release);
+    }
 }
 
 /// The control side's end, for front doors that report what became of the
@@ -78,6 +96,7 @@ impl OutcomeSender {
 pub(crate) struct OutcomeReceiver {
     queue: Arc<Ring<Settled>>,
     dropped: Arc<EventCounter>,
+    ended: Arc<AtomicBool>,
 }
 
 impl OutcomeReceiver {
@@ -91,5 +110,13 @@ impl OutcomeReceiver {
     /// `EventCursor`).
     pub(crate) fn dropped(&self) -> &EventCounter {
         &self.dropped
+    }
+
+    /// Whether the audio side has sent its last outcome
+    /// ([`OutcomeSender::end`]). Read it before receiving: once it is
+    /// true, every outcome that will ever come is then in the queue, or
+    /// dropped.
+    pub(crate) fn ended(&self) -> bool {
+        self.ended.load(Ordering::Acquire)
     }
 }

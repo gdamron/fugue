@@ -26,7 +26,9 @@
 //!
 //! A payload moved into the panicking module itself (`apply_payload`, a
 //! handover) is beyond the graph's reach: the unwind drops it inside the
-//! module, so it is leaked there instead (`crate::payload::RenderScope`).
+//! module, so it is set aside there instead (`crate::payload::RenderScope`),
+//! and the graph keeps it from there as the panic leaves the block
+//! ([`SignalGraph::keep_caught`]).
 //!
 //! Catching costs nothing until something panics. The unwind then goes on
 //! through [`resume_unwind`], which runs no panic hook again.
@@ -36,6 +38,7 @@ use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use super::publication::{AudioLink, Publication};
 use super::requests::RequestDrain;
 use super::SignalGraph;
+use crate::payload::take_caught;
 
 impl SignalGraph {
     /// Runs `body` on the graph and `taken`, something taken out of the
@@ -97,12 +100,26 @@ impl SignalGraph {
     }
 
     /// Fails the graph as a panic leaves a block: closes its request queue,
-    /// so every later submission is refused, and has every later block
+    /// so every later submission is refused, ends its outcomes, so the
+    /// control side settles what still waits, and has every later block
     /// render silence. Lock-free, and neither allocates nor frees.
     pub(super) fn fail(&mut self) {
         self.failed = true;
         if let Some(drain) = &self.requests {
             drain.close();
+        }
+    }
+
+    /// Keeps, for teardown, what the unwind just caught set aside as it
+    /// dropped it (see `crate::payload::take_caught`). Past room for
+    /// [`CAUGHT`], which one panic never fills, the rest is leaked rather
+    /// than freed here. Allocation-, free- and lock-free.
+    pub(super) fn keep_caught(&mut self) {
+        for retired in take_caught().into_iter().flatten() {
+            match self.caught.iter_mut().find(|slot| slot.is_none()) {
+                Some(slot) => *slot = Some(retired),
+                None => std::mem::forget(retired),
+            }
         }
     }
 }

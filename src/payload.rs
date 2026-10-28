@@ -43,8 +43,9 @@
 //! Release builds rely on this discipline; debug builds enforce it: inside
 //! an [`AudioThreadScope`](crate::audio_thread::AudioThreadScope) (which
 //! `SignalGraph::process_block` enters), dropping a `Payload`, `Shared<T>`
-//! or [`Retired`] panics. A render that panics leaks, rather than frees,
-//! a `Payload` or `Shared<T>` it drops while unwinding ([`RenderScope`]).
+//! or [`Retired`] panics. A render that panics sets a `Payload` or
+//! `Shared<T>` it drops while unwinding aside for the graph to keep until
+//! its teardown, rather than free it ([`RenderScope`]).
 //!
 //! # Backpressure: defer at apply
 //!
@@ -77,7 +78,7 @@ use crate::audio_thread::on_audio_thread;
 use crate::spsc::{Producer, Ring};
 
 mod rendering;
-pub(crate) use rendering::{LeakOnUnwind, RenderScope};
+pub(crate) use rendering::{take_caught, RenderScope, RetireOnUnwind, CAUGHT};
 
 /// Retirements an engine's [`RetireQueue`] holds before its [`Retirer`]
 /// starts holding them. The reclaimer drains every few tens of ms.
@@ -190,7 +191,7 @@ impl Drop for Payload {
     fn drop(&mut self) {
         if self.0.is_some() {
             if rendering::unwinding_a_render() {
-                return std::mem::forget(self.0.take());
+                return rendering::catch(Retired::from(Self(self.0.take())));
             }
             debug_assert_off_audio_thread("a Payload");
         }
@@ -199,7 +200,7 @@ impl Drop for Payload {
 
 /// The typed handle a module keeps. `Clone` is a reference-count increment;
 /// an audio-side clone must be retired, not dropped.
-pub(crate) struct Shared<T>(Option<Arc<T>>);
+pub(crate) struct Shared<T: Send + Sync + 'static>(Option<Arc<T>>);
 
 impl<T: Send + Sync + 'static> Shared<T> {
     /// A module's initial value. Control thread only: allocates.
@@ -214,13 +215,13 @@ impl<T: Send + Sync + 'static> Shared<T> {
     }
 }
 
-impl<T> Clone for Shared<T> {
+impl<T: Send + Sync + 'static> Clone for Shared<T> {
     fn clone(&self) -> Self {
         Self(self.0.clone())
     }
 }
 
-impl<T> Deref for Shared<T> {
+impl<T: Send + Sync + 'static> Deref for Shared<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -228,11 +229,11 @@ impl<T> Deref for Shared<T> {
     }
 }
 
-impl<T> Drop for Shared<T> {
+impl<T: Send + Sync + 'static> Drop for Shared<T> {
     fn drop(&mut self) {
         if self.0.is_some() {
             if rendering::unwinding_a_render() {
-                return std::mem::forget(self.0.take());
+                return rendering::catch(Retired::from(take(&mut self.0)));
             }
             debug_assert_off_audio_thread("a Shared value");
         }

@@ -37,8 +37,9 @@ pub(crate) enum Refusal {
     /// It waited on another request applying, which settled without
     /// applying.
     ChainBroken,
-    /// The invention stopped before it applied: refused by the host once
-    /// the audio thread is gone, never by the audio thread.
+    /// The invention stopped before it applied, or its audio did as a
+    /// module panicked: refused by the host once the audio thread is gone
+    /// or has failed, never by the audio thread.
     Stopped,
 }
 
@@ -117,6 +118,12 @@ impl Outcomes {
         if request.value.is_payload() {
             self.reserved += MAX_RETIRES_PER_REQUEST;
         }
+    }
+
+    /// Says no outcome will come after those sent so far (see
+    /// [`OutcomeSender::end`]). Allocation-, free- and lock-free.
+    pub(crate) fn end(&self) {
+        self.sender.end();
     }
 
     /// The single exit point: every request the drain takes leaves through
