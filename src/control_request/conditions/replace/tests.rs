@@ -157,9 +157,10 @@ fn a_kept_copy_applies_as_the_edit_lands_once_its_write_applied() {
 }
 
 /// Plays edit 7 landing at 70 with a copy kept over it (write 10 applied
-/// first) and the edit's own `write` waiting beside it (queued first, or
-/// after the copy when `copy_first`): what settled, and how many requests
-/// reached the module.
+/// first) and `write`, waiting on the edit alone, beside it: received
+/// first (the edit's own), or after the copy when `copy_first` (one
+/// scheduled after the edit). What settled, and how many requests reached
+/// the module.
 fn land_beside(write: Request, copy_first: bool) -> (Vec<(u64, Outcome)>, usize) {
     let (mut store, outcomes) = store();
     let (mut conditions, slots) = table(4);
@@ -185,27 +186,41 @@ fn land_beside(write: Request, copy_first: bool) -> (Vec<(u64, Outcome)>, usize)
     (settled.collect(), host.applied.len())
 }
 
-/// As the edit lands, its own write gives way to the copy before either
-/// reaches the module, so one setter runs (a reverb retunes once).
+const LANDED: Outcome = Outcome::Applied { at: 70 };
+
+/// As the edit lands, its own write gives way to the copy received after
+/// it before either reaches the module, so one setter runs (a reverb
+/// retunes once).
 #[test]
 fn an_edits_write_gives_way_to_the_copy_landing_with_it() {
-    for copy_first in [false, true] {
-        let (settled, applied) = land_beside(request(1, &AFTER), copy_first);
-        let landed = Outcome::Applied { at: 70 };
-        assert_eq!(settled, [(1, Outcome::Superseded), (2, landed)]);
-        assert_eq!(applied, 1);
-    }
+    let (settled, applied) = land_beside(request(1, &AFTER), false);
+    assert_eq!(settled, [(1, Outcome::Superseded), (2, LANDED)]);
+    assert_eq!(applied, 1);
 }
 
-/// An edit's write that outranks the copy plays, and the copy gives way.
+/// A write scheduled after the edit, received after the copy, is the later
+/// write: it plays, and the copy gives way.
 #[test]
-fn an_edits_write_outranking_the_copy_plays_in_its_place() {
+fn a_write_scheduled_after_the_copy_plays_in_its_place() {
+    let (settled, applied) = land_beside(request(1, &AFTER), true);
+    assert_eq!(settled, [(2, Outcome::Superseded), (1, LANDED)]);
+    assert_eq!(applied, 1);
+}
+
+/// Rank decides before receipt order: a write outranking the copy plays
+/// whenever it came, and one the copy outranks gives way.
+#[test]
+fn the_higher_rank_plays_as_the_edit_lands_whichever_came_first() {
     for copy_first in [false, true] {
         let mut write = request(1, &AFTER);
         write.priority = 1;
         let (settled, applied) = land_beside(write, copy_first);
-        let landed = Outcome::Applied { at: 70 };
-        assert_eq!(settled, [(2, Outcome::Superseded), (1, landed)]);
+        assert_eq!(settled, [(2, Outcome::Superseded), (1, LANDED)]);
+        assert_eq!(applied, 1);
+        let mut write = request(1, &AFTER);
+        write.priority = -1;
+        let (settled, applied) = land_beside(write, copy_first);
+        assert_eq!(settled, [(1, Outcome::Superseded), (2, LANDED)]);
         assert_eq!(applied, 1);
     }
 }

@@ -6,7 +6,8 @@
 //! author's value whenever the audio thread takes the write: before the
 //! landing, after it, or held back by a full pending store, and the copy
 //! applying is the write's own, never counted lost. A write that loses at
-//! its own sample is not re-asserted as the edit lands. When it cannot
+//! its own sample is not re-asserted as the edit lands, and one chained
+//! to the edit after it plays in its place. When it cannot
 //! be kept (no room for requests waiting on conditions, or for the copy and
 //! the write both), the whole edit is cancelled instead, as before; a write
 //! refused outright leaves the edit alone.
@@ -179,6 +180,29 @@ fn a_kept_write_refuses_no_later_request_chained_to_the_landing() {
     request.when = When::Condition(landed);
     rig.live.requests.submit(request).unwrap();
     rig.render(2);
+    assert_eq!(
+        playing(&rig, "osc2", "frequency"),
+        ControlValue::Number(700.0)
+    );
+}
+
+/// A request chained to the edit before it lands, after a kept write, is
+/// the later write: it plays as the edit lands, and the copy gives way.
+#[test]
+fn a_request_chained_to_the_edit_after_a_kept_write_plays_as_it_lands() {
+    let mut rig = Rig::new(BASE);
+    let id = queue_writing(&rig, 440.0);
+    write(&rig, "osc2", "frequency", 660.0, ControlWriteIntent::Author);
+    assert_eq!(kept(&rig, id), ["osc2.frequency"]);
+    rig.render(1);
+    let mut request = Request::new(
+        frequency_target(&rig, "osc2"),
+        RequestValue::Value(RtValue::F32(700.0)),
+    );
+    request.when = When::Condition(Condition::all(&[Predicate::Applied(id)]).unwrap());
+    rig.live.requests.submit(request).unwrap();
+    rig.render(BLOCKS);
+    assert_eq!(state_of(&rig, id), EditState::Adopted);
     assert_eq!(
         playing(&rig, "osc2", "frequency"),
         ControlValue::Number(700.0)
