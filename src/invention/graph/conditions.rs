@@ -120,11 +120,7 @@ impl ConditionHost for Superseding<'_> {
         value: RequestValue,
         outcomes: &mut Outcomes,
     ) -> Result<(), Outcome> {
-        let applied = self.graph.stage(target, standing, value, outcomes);
-        if applied.is_ok() {
-            self.ramps.supersede(target, &*self.graph);
-        }
-        applied
+        (self.graph).stage_over_ramps(target, standing, value, outcomes, self.ramps)
     }
 
     fn finish_events(&mut self) {

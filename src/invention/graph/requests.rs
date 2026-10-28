@@ -716,14 +716,10 @@ impl SignalGraph {
             .start(now, drain.installed, &*self, outcomes);
         self.apply_conditions(drain, None, now);
         let ramps = &mut drain.watches.ramps;
+        // At a ramp's own rank and sample, a write leaves the hold as the
+        // ramp took it: it ends the ramp itself.
         while (drain.pending).apply_due(now, drain.installed, |target, standing, value, report| {
-            let applied = self.stage(target, standing, value, report);
-            // At a ramp's own rank and sample, it leaves the hold as the
-            // ramp took it: end the ramp here.
-            if applied.is_ok() {
-                ramps.supersede(target, &*self);
-            }
-            applied
+            self.stage_over_ramps(target, standing, value, report, ramps)
         }) {
             self.finish_events();
         }

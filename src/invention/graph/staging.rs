@@ -3,7 +3,7 @@
 
 use super::SignalGraph;
 use crate::control_request::{
-    flush_staged, stage_write, ControlTarget, Outcome, Outcomes, RequestValue, Standing,
+    flush_staged, stage_write, ControlTarget, Outcome, Outcomes, Ramps, RequestValue, Standing,
 };
 
 impl SignalGraph {
@@ -29,6 +29,38 @@ impl SignalGraph {
                 }
             }
         }
+        self.apply_now(target, standing, value, outcomes)
+    }
+
+    /// [`Self::stage`], ending the request ramps on `target` once it
+    /// applies. A write to a ramping control applies at once, so one its
+    /// module refuses leaves the ramp running.
+    pub(super) fn stage_over_ramps(
+        &mut self,
+        target: &ControlTarget,
+        standing: Option<Standing>,
+        value: RequestValue,
+        outcomes: &mut Outcomes,
+        ramps: &mut Ramps,
+    ) -> Result<(), Outcome> {
+        let applied = match ramps.ramping(target, &*self) {
+            true => self.apply_now(target, standing, value, outcomes),
+            false => self.stage(target, standing, value, outcomes),
+        };
+        if applied.is_ok() {
+            ramps.supersede(target, &*self);
+        }
+        applied
+    }
+
+    /// Applies a request at once, after what is staged on its module.
+    fn apply_now(
+        &mut self,
+        target: &ControlTarget,
+        standing: Option<Standing>,
+        value: RequestValue,
+        outcomes: &mut Outcomes,
+    ) -> Result<(), Outcome> {
         self.flush_module(target.module_idx, outcomes);
         self.apply_ranked(target, standing, value, &mut outcomes.retirer)
     }
