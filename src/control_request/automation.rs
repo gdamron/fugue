@@ -359,7 +359,7 @@ impl Automation {
             .cells
             .automation
             .written(self.index)
-            .or_else(|| self.cells.load(self.index))?;
+            .or_else(|| self.cells.current(self.index))?;
         match value {
             RtValue::F32(value) => Some(value),
             RtValue::I32(value) => Some(value as f32),

@@ -20,10 +20,9 @@ use super::publication::Publication;
 use super::requests::RequestDrain;
 use super::SignalGraph;
 use crate::control_request::{
-    ConditionHost, ControlIndex, ControlTarget, Outcome, Ramps, RequestValue, RtValue, Standing,
-    Watches,
+    ConditionHost, ControlIndex, ControlTarget, Outcome, Outcomes, Ramps, RequestValue, RtValue,
+    Standing, Watches,
 };
-use crate::payload::Retirer;
 
 /// The segment being processed: its first sample, its length, and how many
 /// process groups have computed it.
@@ -82,9 +81,11 @@ impl ConditionHost for SignalGraph {
         target: &ControlTarget,
         standing: Option<Standing>,
         value: RequestValue,
-        retirer: &mut Retirer,
+        outcomes: &mut Outcomes,
     ) -> Result<(), Outcome> {
-        self.apply_ranked(target, standing, value, retirer)
+        // Requests apply through `Superseding`, which stages; this host
+        // applies at once, as it always has.
+        self.apply_now(target, standing, value, outcomes)
     }
 }
 
@@ -119,13 +120,9 @@ impl ConditionHost for Superseding<'_> {
         target: &ControlTarget,
         standing: Option<Standing>,
         value: RequestValue,
-        retirer: &mut Retirer,
+        outcomes: &mut Outcomes,
     ) -> Result<(), Outcome> {
-        let applied = self.graph.apply_ranked(target, standing, value, retirer);
-        if applied.is_ok() {
-            self.ramps.supersede(target, &*self.graph);
-        }
-        applied
+        (self.graph).stage_over_ramps(target, standing, value, outcomes, self.ramps)
     }
 
     fn finish_events(&mut self) {
@@ -182,6 +179,8 @@ impl SignalGraph {
                 let Watches { edges, ramps, .. } = &mut drain.watches;
                 to = to.min(edges.play(module, from, self, ramps));
             }
+            // The drain is out: `process_span` cannot flush.
+            self.flush_module(module, &mut drain.pending.outcomes);
             self.process_span(module, from, to);
             from = to;
         }

@@ -716,14 +716,10 @@ impl SignalGraph {
             .start(now, drain.installed, &*self, outcomes);
         self.apply_conditions(drain, None, now);
         let ramps = &mut drain.watches.ramps;
-        while (drain.pending).apply_due(now, drain.installed, |target, standing, value, retirer| {
-            let applied = self.apply_ranked(target, standing, value, retirer);
-            // At a ramp's own rank and sample, it leaves the hold as the
-            // ramp took it: end the ramp here.
-            if applied.is_ok() {
-                ramps.supersede(target, &*self);
-            }
-            applied
+        // At a ramp's own rank and sample, a write leaves the hold as the
+        // ramp took it: it ends the ramp itself.
+        while (drain.pending).apply_due(now, drain.installed, |target, standing, value, report| {
+            self.stage_over_ramps(target, standing, value, report, ramps)
         }) {
             self.finish_events();
         }
@@ -840,6 +836,12 @@ impl SignalGraph {
         if let Some(hook) = self.request_hook {
             return hook(self, module_idx, control, value, retirer);
         }
+        debug_assert!(
+            (self.modules.get_index(module_idx))
+                .and_then(|(_, instance)| instance.module().declared())
+                .is_none_or(|(_, cells)| cells.staged.is_empty()),
+            "applied past a write staged before it"
+        );
         match value {
             RequestValue::Value(value) => {
                 let (_, instance) = self

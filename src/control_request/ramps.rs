@@ -316,6 +316,17 @@ impl Ramps {
         self.entries.push(Running::new(on, clock, ramp, 0));
     }
 
+    /// Whether a request's ramp still runs on a control `target` reaches.
+    pub(crate) fn ramping(&self, target: &ControlTarget, host: &impl BeatHost) -> bool {
+        self.entries.iter().any(|running| {
+            let on = match &running.on {
+                RampOn::Request { target: on, .. } if !running.ended => on,
+                _ => return false,
+            };
+            host.overlaps(on, target)
+        })
+    }
+
     /// Ends every request's ramp on a control `target` reaches: another
     /// write applied to it. (A table's ramp on a declared control ends as
     /// a write above automation holds the control.) Allocation- and
