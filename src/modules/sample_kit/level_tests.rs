@@ -7,6 +7,7 @@ use crate::audio_thread::AudioThreadScope;
 use crate::control_request::RtValue;
 use crate::modules::mixer::gain_ramp_frames;
 use crate::modules::sample_kit::controls::{index_of, KitControl};
+use crate::modules::sample_kit::voice::DECLICK_SECONDS;
 
 const RATE: u32 = 44_100;
 
@@ -101,7 +102,9 @@ fn a_play_while_the_slot_glides_starts_at_the_level_written() {
     kit.set_control("level.0", 0.5).unwrap();
     heard(&mut kit, 2);
     play(&mut kit);
-    let first = heard(&mut kit, 1)[0];
-    assert!((first - 0.25).abs() < TOL, "{first}");
+    // Past the fade of the sound it cut off.
+    let declick = (DECLICK_SECONDS * RATE as f32).ceil() as u32 + 1;
+    let after = *heard(&mut kit, declick).last().unwrap();
+    assert!((after - 0.25).abs() < TOL, "{after}");
     let _ = std::fs::remove_file(path);
 }

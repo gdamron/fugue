@@ -24,7 +24,7 @@ fn temp_wav_path() -> PathBuf {
 }
 
 /// A mono WAV holding exactly `levels` as its frames.
-fn write_levels_wav(levels: &[f32]) -> PathBuf {
+pub(super) fn write_levels_wav(levels: &[f32]) -> PathBuf {
     let path = temp_wav_path();
     let spec = hound::WavSpec {
         channels: 1,
@@ -167,10 +167,11 @@ fn test_replay_restarts_slot() {
     kit.process(1);
     assert!((kit.get_output("audio_left").unwrap() - 0.1).abs() < TOL);
 
-    // Replay: playback restarts from the first frame (per-slot choke).
+    // Replay: playback restarts from the first frame (per-slot choke),
+    // over the start of the cut-off sound's fade.
     kit.set_input("play", 36.0).unwrap();
     kit.process(1);
-    assert!((kit.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
+    assert!((kit.get_output("audio_left").unwrap() - 0.6).abs() < TOL);
 
     let _ = std::fs::remove_file(path);
 }
