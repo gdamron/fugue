@@ -88,7 +88,7 @@ impl Voice {
     }
 
     /// Plays the slot from its start. A sound still playing fades out over
-    /// [`crate::dsp::DECLICK_SECONDS`] instead of stopping dead.
+    /// the shared 3 ms declick instead of stopping dead.
     pub(super) fn start(&mut self) {
         // A voice that has sounded nothing yet (played again at the
         // instant it started) has nothing to fade.

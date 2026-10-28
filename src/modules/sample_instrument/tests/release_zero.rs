@@ -109,3 +109,43 @@ fn a_release_of_zero_written_by_automation_holds_the_steal_fade() {
     ends_over_the_steal_fade(&mut instrument);
     let _ = std::fs::remove_file(path);
 }
+
+/// A rebuild hands the instrument the release it reads back. A stop at
+/// once reads back 0, so it still eases out along the curve, while a
+/// positive release of the declick's own length still fades straight down,
+/// as it always has.
+#[test]
+fn a_rebuild_keeps_a_stop_at_once_apart_from_a_release_of_its_length() {
+    let path = write_level_wav(0.4, 44_100);
+    let config = |release: f32| {
+        serde_json::json!({
+            "release": release,
+            "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
+        })
+    };
+    for (written, curved) in [(0.0, true), (DECLICK_SECONDS, false)] {
+        let (mut instrument, _surface) = build_instrument(config(5.0));
+        instrument.set_control("release", written).unwrap();
+        let held = instrument.get_control("release").unwrap();
+        let (mut rebuilt, _surface) = build_instrument(config(held));
+        rebuilt.set_control("note_on", 60.0).unwrap();
+        run(&mut rebuilt, 2);
+        let held_at = rebuilt.get_output("audio_left").unwrap();
+        rebuilt.set_control("note_off", 60.0).unwrap();
+        run(&mut rebuilt, 1);
+        let first = rebuilt.get_output("audio_left").unwrap();
+        run(&mut rebuilt, 1);
+        let second = rebuilt.get_output("audio_left").unwrap();
+        assert_eq!(first, held_at, "{written}: the fade starts at full");
+        let drop = first - second;
+        // A straight fade's first drop is its whole slope; the curve's is
+        // about 3 steps squared of it.
+        let straight = held_at / (DECLICK_SECONDS * RATE);
+        if curved {
+            assert!(drop < 0.05 * straight, "{written}: dropped {drop}");
+        } else {
+            assert!((drop - straight).abs() < 1e-5, "{written}: dropped {drop}");
+        }
+    }
+    let _ = std::fs::remove_file(path);
+}
