@@ -322,6 +322,7 @@ const PAIR: &str = r#"{
 
 #[test]
 fn a_developments_implicit_key_is_not_restored_by_one_write() {
+    let _ungoverned = crate::pkg::lock::ungoverned_here();
     // One write cannot put back two inner values, and a development's
     // config applies after a validation build reads it: reloading keeps
     // what was written rather than restoring a value the file never plays.

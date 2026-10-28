@@ -383,14 +383,17 @@ pub fn govern(lock: Governance) -> Governance {
 /// only this thread's: a candidate document builds under its own lock while
 /// the running session, its scripts included, keeps the session's.
 pub fn govern_here<T>(lock: Governance, body: impl FnOnce() -> T) -> T {
-    struct Restore(Option<Governance>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            HERE.with(|here| *here.borrow_mut() = self.0.take());
-        }
-    }
     let _restore = Restore(HERE.with(|here| here.borrow_mut().replace(lock)));
     body()
+}
+
+/// Gives this thread back the lock that governed it before, when dropped.
+struct Restore(Option<Governance>);
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        HERE.with(|here| *here.borrow_mut() = self.0.take());
+    }
 }
 
 /// The lockfile that governs package resolution on this thread now, if any:
@@ -457,6 +460,18 @@ pub(crate) fn with_governing(lock: FrozenLock, body: impl FnOnce()) {
     if let Err(panic) = result {
         std::panic::resume_unwind(panic);
     }
+}
+
+/// Test-only: keeps this thread ungoverned until the guard drops, whatever
+/// lock a test running beside it makes the process's ([`with_governing`]).
+/// A test that builds a package loader or a development instance and then
+/// reloads it holds one: a lock governing the build but not the reload, or
+/// the reload but not the build, rebuilds the module (see
+/// [`changes_policy`]).
+#[cfg(test)]
+#[must_use]
+pub(crate) fn ungoverned_here() -> impl Drop {
+    Restore(HERE.with(|here| here.borrow_mut().replace(None)))
 }
 
 #[cfg(test)]

@@ -56,6 +56,7 @@ fn assert_same_file(left: ControlValue, right: ControlValue) {
 
 #[test]
 fn a_live_relative_write_loads_the_file_the_saved_document_loads() {
+    let _ungoverned = crate::pkg::lock::ungoverned_here();
     let dir = tempfile::tempdir().unwrap();
     let (original, relative) = layout(dir.path());
     for (module, key) in modules(&original) {
@@ -218,6 +219,7 @@ fn package_refs_urls_and_rooted_paths_pass_through() {
 /// so the saved document loads that file.
 #[test]
 fn a_relative_write_folded_into_a_timed_reload_from_elsewhere_keeps_its_file() {
+    let _ungoverned = crate::pkg::lock::ungoverned_here();
     let dir = tempfile::tempdir().unwrap();
     let (original, relative) = layout(dir.path());
     let kit = |asset: &str| json!({ "type": "sample_kit", "config": { "samples": [{ "key": 36, "asset": asset }] } });

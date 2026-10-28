@@ -232,6 +232,7 @@ fn changed_development_definition_swaps_only_its_instances() {
 
 #[test]
 fn unchanged_development_definition_leaves_instances_untouched() {
+    let _ungoverned = crate::pkg::lock::ungoverned_here();
     let mut running = start(DEV_BASE);
 
     // Reload the identical document: nothing to do.
@@ -555,6 +556,7 @@ fn reload_checks_the_document_without_live_builds() {
 /// only the second file rebuilds only the second sibling's instance.
 #[test]
 fn reload_detects_a_change_to_either_siblings_nested_definition() {
+    let _ungoverned = crate::pkg::lock::ungoverned_here();
     let dir = tempfile::tempdir().unwrap();
     let voice = |frequency: f64| {
         serde_json::json!({

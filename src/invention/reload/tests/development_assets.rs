@@ -62,6 +62,7 @@ fn an_exposed_asset_that_names_no_audio_is_not_read_as_one() {
 
 #[test]
 fn an_exposed_asset_that_names_an_inner_sample_still_resolves() {
+    let _ungoverned = crate::pkg::lock::ungoverned_here();
     let dir = tempfile::tempdir().unwrap();
     let wav = constant_wav(dir.path(), 0.5, 4_800);
     let player = json!({ "id": "a", "type": "sample_player", "config": {} });

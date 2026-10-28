@@ -60,6 +60,7 @@ fn sampler(type_id: &str, asset: &str) -> (serde_json::Value, &'static str, (&'s
 /// Writes `asset.0` from a sample at 0.5 to one at 0.25, then checks the
 /// written sample is what plays after each way the module can be built again.
 fn written_asset_survives(type_id: &str) {
+    let _ungoverned = crate::pkg::lock::ungoverned_here();
     let dir = tempfile::tempdir().unwrap();
     let original = constant_wav(dir.path(), 0.5, 48_000);
     let written = constant_wav(dir.path(), 0.25, 48_000);
@@ -210,6 +211,7 @@ fn a_batch_sample_that_does_not_load_keeps_the_slots_sample() {
 /// document keeps the module, and a batch's write is no rebuild.
 #[test]
 fn a_write_over_an_older_saves_top_level_asset_keeps_the_module() {
+    let _ungoverned = crate::pkg::lock::ungoverned_here();
     let dir = tempfile::tempdir().unwrap();
     let original = constant_wav(dir.path(), 0.5, 48_000);
     let written = constant_wav(dir.path(), 0.25, 48_000);
@@ -285,6 +287,7 @@ fn a_write_to_a_referenced_entry_leaves_the_reference_whole() {
 /// it, so a reload of the saved document naming the ref keeps the module.
 #[test]
 fn a_written_package_ref_reloads_without_rebuilding() {
+    let _ungoverned = crate::pkg::lock::ungoverned_here();
     let dir = tempfile::tempdir().unwrap();
     let original = constant_wav(dir.path(), 0.5, 48_000);
     let package = dir.path().join("packs/fugue.test.kit/1.0.0");
