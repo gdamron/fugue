@@ -192,6 +192,19 @@ fn a_note_off_between_two_staged_releases_fades_over_the_earlier() {
     assert_eq!(settled[0], [Outcome::Superseded]);
 }
 
+/// A release before the edit, one due before it behind (losing to it),
+/// then a note off due between them: it fades over the one behind.
+#[test]
+fn a_note_off_after_a_release_that_lost_behind_an_edit_fades_over_it() {
+    let settled = sounds_as_without_edits(&[
+        Step::Release(Due::Late(2)),
+        Step::Edit(add_osc),
+        Step::Release(Due::Late(6)),
+        Step::NoteOff(Due::Late(4)),
+    ]);
+    assert_eq!(settled[1], [Outcome::Superseded]);
+}
+
 /// Two releases before the edit, then a note off due before both behind
 /// it: the old release ends the note.
 #[test]

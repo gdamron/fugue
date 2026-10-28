@@ -184,6 +184,17 @@ impl Slot {
         (self.at.load(Relaxed) >= since).then(|| (due, rank, self.id.load(Relaxed)))
     }
 
+    /// Keeps `value`, due at `due` and losing to the write here, for an
+    /// event due between them to read ([`Staged::earlier_by`]) while that
+    /// one stays staged, unless one kept is due later still.
+    fn keep_earlier(&self, due: u64, value: RtValue) {
+        let kept = self.earlier.load(Relaxed) != EMPTY && self.earlier_due.load(Relaxed) > due;
+        if !kept {
+            self.earlier.store(encode(value), Relaxed);
+            self.earlier_due.store(due, Relaxed);
+        }
+    }
+
     /// Settles the write staged here at `at` as losing to one of
     /// `winner`'s, its setter never run; the winner takes its hold over,
     /// as it would from one applied. Whether one was staged.
@@ -446,7 +457,12 @@ pub(crate) fn stage_write<M: Module + ?Sized>(
     if earlier {
         flush_staged(module, outcomes);
     }
-    let listed = contest(&*module, control, standing, applying, outcomes)?;
+    let listed = contest(&*module, control, standing, applying, outcomes).inspect_err(|_| {
+        let slots = module.declared().map(|(_, cells)| &cells.staged.slots);
+        if let Some(slot) = slots.and_then(|slots| slots.get(usize::from(control.0))) {
+            slot.keep_earlier(standing.due, value);
+        }
+    })?;
     // Automation still waiting was written before this sample.
     take_automation(module);
     let Some((table, cells)) = module.declared() else {
@@ -463,6 +479,8 @@ pub(crate) fn stage_write<M: Module + ?Sized>(
     let prev = if listed {
         slot.prev.load(Relaxed)
     } else {
+        // Only a write given way at this sample is read in its place.
+        slot.earlier.store(EMPTY, Relaxed);
         prev
     };
     slot.value.store(encode(value), Relaxed);
