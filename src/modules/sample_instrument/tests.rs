@@ -660,10 +660,6 @@ fn test_config_validation_errors() {
             serde_json::json!({ "voice_count": 99 }),
             "'voice_count' expects a whole number from 1 to",
         ),
-        (
-            serde_json::json!({ "release": -1.0 }),
-            "'release' must be a positive number",
-        ),
     ];
 
     for (config, expected) in cases {
@@ -844,4 +840,5 @@ fn the_retired_spellings_are_refused() {
 
 mod levels;
 mod release_order;
+mod release_zero;
 mod swaps;

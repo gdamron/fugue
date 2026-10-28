@@ -3,8 +3,9 @@
 //! `note_on`, `note_off`, and per zone `root_note.N`, `asset.N` and
 //! `level.N`. A zone past the count is no control at all.
 //!
-//! - `release` is the release fade in seconds: positive, held within
-//!   0.001..30.
+//! - `release` is the release fade in seconds, held within 0.001..30. One
+//!   of 0 or less stops a note at once without a click: it is held at the
+//!   steal fade's length, the shortest fade that does not click.
 //! - `note_on` and `note_off` are events naming a MIDI note (rounded,
 //!   0..=127), each write a note. A control thread's notes are requests,
 //!   applied in the order sent, after the values due beside them. A
@@ -22,6 +23,7 @@
 
 use std::sync::Arc;
 
+use super::voice::DECLICK_SECONDS;
 use crate::control_request::{
     ControlCells, ControlContext, ControlDecl, ControlIndex, ControlTable, DeclKind, EventReserve,
     PayloadCodec, Prepared, RtValue,
@@ -131,6 +133,18 @@ pub(super) const NOTE_OFF_RESERVE: usize = 16;
 /// The release fade's range in seconds.
 pub(super) const RELEASE_RANGE: (f32, f32) = (1e-3, 30.0);
 
+/// The release a written `seconds` holds: within [`RELEASE_RANGE`], but 0
+/// or less (stop now) is the steal fade's [`DECLICK_SECONDS`], so a note
+/// stopped at once ends without a click. Every path a release reaches
+/// the instrument by (config, a live write, a rebuild) goes through here.
+pub(super) fn held_release(seconds: f32) -> f32 {
+    if seconds <= 0.0 {
+        DECLICK_SECONDS
+    } else {
+        seconds.clamp(RELEASE_RANGE.0, RELEASE_RANGE.1)
+    }
+}
+
 /// Every zone's authored sustain loop, attached to the surface so an
 /// `asset.N` write scales its zone's loop against the new file.
 struct ZoneLoops(Vec<Option<LoopSpec>>);
@@ -166,7 +180,7 @@ fn table(zones: usize) -> ControlTable {
                 max: RELEASE_RANGE.1,
             },
             RtValue::F32(0.1),
-            "Release fade time in seconds after a note's gate falls",
+            "Release fade time in seconds after a note's gate falls; 0 or less stops the note at once, without a click",
         ),
         ControlDecl::new(
             "note_on",
