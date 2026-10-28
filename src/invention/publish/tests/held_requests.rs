@@ -1,8 +1,6 @@
 //! The request channel's backlog on a graph with no clock: reserved
 //! requests that find the queue full are held, and a settle queues them.
 
-use std::sync::atomic::Ordering;
-
 use super::null_backend::{null_linked, OSCILLATOR};
 use super::*;
 use crate::control_request::{Request, RequestValue, RtValue, BACKLOG_CAPACITY};
@@ -32,9 +30,9 @@ fn a_settle_queues_what_the_channel_held() {
         let request = reserved(&live, 100.0 + n as f32);
         live.requests.submit(request).unwrap();
     }
-    assert!(live.requests.holding().load(Ordering::Acquire), "held");
+    assert!(live.requests.holding().any(), "held");
     live.settle();
-    assert!(!live.requests.holding().load(Ordering::Acquire));
+    assert!(!live.requests.holding().any());
     let last = 100.0 + (writes - 1) as f32;
     assert_eq!(
         surface.get_control("frequency").unwrap(),

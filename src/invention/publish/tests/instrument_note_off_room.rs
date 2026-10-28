@@ -15,7 +15,6 @@ use crate::control_request::{
 };
 use crate::invention::publish::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
 use serde_json::json;
-use std::sync::atomic::Ordering;
 
 const NOTE_ON: ControlIndex = ControlIndex(1);
 
@@ -258,17 +257,14 @@ fn nothing_overtakes_a_held_note_off() {
     for n in 0..offs - 1 {
         set(&rig, "note_off", (((60 + n) % 128) as f32).into()).unwrap();
     }
-    assert!(rig.live.requests.holding().load(Ordering::Acquire), "held");
+    assert!(rig.live.requests.holding().any(), "held");
     // The audio thread frees room, which nothing has filled from the
     // backlog yet.
     rig.live.reclaim();
     rig.render(1);
-    assert!(rig.live.requests.holding().load(Ordering::Acquire));
+    assert!(rig.live.requests.holding().any());
     set(&rig, "note_off", 61.0.into()).unwrap();
-    assert!(
-        !rig.live.requests.holding().load(Ordering::Acquire),
-        "queued"
-    );
+    assert!(!rig.live.requests.holding().any(), "queued");
     let mut applied = Vec::new();
     for _ in 0..64 {
         rig.live.reclaim();
@@ -308,7 +304,7 @@ fn a_note_off_held_across_a_timed_edit_still_ends_its_note() {
     }
     // Note offs for a note not sounding, until one is held.
     let holding = rig.live.requests.holding();
-    while !holding.load(Ordering::Acquire) {
+    while !holding.any() {
         set(&rig, "note_off", 61.0.into()).unwrap();
     }
     set(&rig, "note_off", 60.0.into()).unwrap();
@@ -322,10 +318,7 @@ fn a_note_off_held_across_a_timed_edit_still_ends_its_note() {
         matches!(landed, Some((_, Outcome::Applied { .. }))),
         "{landed:?}"
     );
-    assert!(
-        holding.load(Ordering::Acquire),
-        "nothing queued what is held"
-    );
+    assert!(holding.any(), "nothing queued what is held");
     rig.live.held_flush().tick();
     let heard = rig.render(2);
     assert!(
@@ -336,4 +329,54 @@ fn a_note_off_held_across_a_timed_edit_still_ends_its_note() {
     assert!(!outcomes(&mut rig)
         .iter()
         .any(|(_, outcome)| *outcome == gone));
+}
+
+/// A timed edit lands and is adopted, and an immediate edit is queued
+/// before the audio thread lets the timed edit's bridge go. Note offs then
+/// fill the queue behind the immediate edit, and some are held. They are
+/// tagged for the graph that edit installs, so they keep no bridge, which
+/// would block the install: the edit installs, they are queued, and the
+/// note ends.
+#[test]
+fn note_offs_held_behind_an_edit_after_a_timed_one_let_it_install() {
+    use crate::invention::publish::timed::EditTime;
+    let dir = tempfile::tempdir().unwrap();
+    let mut rig = sounding(dir.path());
+    let spare = rig.build("spare", "oscillator", json!({}));
+    let mut change = rig.live.begin();
+    change.upsert("spare", spare);
+    let at = EditTime::AtSample(rig.graph.current_sample + 64);
+    (rig.live)
+        .commit_when(change.prepare().unwrap(), at, None, |state| {
+            state.document = None;
+        })
+        .unwrap();
+    rig.render(2);
+    assert!(rig.module_ids().contains(&"spare".to_string()), "landed");
+    rig.live.adopt_landed();
+    let osc = rig.build("osc3", "oscillator", json!({}));
+    {
+        let mut publisher = rig.live.publisher().lock().unwrap();
+        let mut change = rig.live.change_on(&publisher);
+        change.upsert("osc3", osc);
+        assert!(publisher.publish(change.prepare().unwrap()).is_ok());
+    }
+    let holding = rig.live.requests.holding();
+    while !holding.any() {
+        set(&rig, "note_off", 61.0.into()).unwrap();
+    }
+    set(&rig, "note_off", 60.0.into()).unwrap();
+    let held = rig.live.held_flush();
+    let (mut heard, mut settled) = (Vec::new(), Vec::new());
+    for _ in 0..16 {
+        rig.live.reclaim();
+        held.tick();
+        heard = rig.render(1);
+        settled.extend(outcomes(&mut rig));
+    }
+    assert!(rig.module_ids().contains(&"osc3".to_string()), "installed");
+    assert!(!holding.any(), "queued");
+    assert!(heard.iter().all(|level| level.abs() < TOL), "{heard:?}");
+    let gone = Outcome::Refused(Refusal::TargetGone);
+    assert!(!settled.iter().any(|(_, outcome)| *outcome == gone));
 }

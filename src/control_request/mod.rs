@@ -78,7 +78,7 @@ mod sync {
 }
 
 pub(crate) use automation::{take_automation, Automation, EventReserve};
-pub(crate) use backlog::BACKLOG_CAPACITY;
+pub(crate) use backlog::{Held, BACKLOG_CAPACITY};
 pub(crate) use cells::{apply_declared, ControlCells};
 pub(crate) use condition::{Condition, Edge, Join, Predicate, GATE_LEVEL, MAX_PARTS};
 pub(crate) use conditions::{

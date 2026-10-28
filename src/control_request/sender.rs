@@ -1,6 +1,6 @@
 //! Submitting requests to the audio thread.
 
-use super::backlog::{hold, Backlog};
+use super::backlog::{hold, Backlog, Held};
 use super::conditions::WatchSlots;
 use super::event::EventCounter;
 use super::queue::{bounded, QueueConsumer, QueueProducer};
@@ -77,24 +77,24 @@ pub(crate) struct ReservedQueued {
     queued: AtomicU64,
     /// Written by the drain alone.
     taken: AtomicU64,
-    /// Whether the channel holds any for want of room (see `backlog`).
-    held: Arc<AtomicBool>,
+    /// What the channel holds for want of room (see `backlog`).
+    held: Arc<Held>,
 }
 
 impl ReservedQueued {
     /// Counts for a channel whose backlog sets `held`.
-    fn holding(held: Arc<AtomicBool>) -> Self {
+    fn holding(held: Arc<Held>) -> Self {
         Self {
             held,
             ..Self::default()
         }
     }
 
-    /// Whether the channel holds any on the control side, to queue once
-    /// there is room: they may be tagged with a generation the queue has
-    /// drained, so the drain keeps that generation's bridge for them.
-    pub(crate) fn held(&self) -> bool {
-        self.held.load(Ordering::Acquire)
+    /// Whether the channel holds one tagged `generation` or older on the
+    /// control side, to queue once there is room: the drain keeps that
+    /// generation's bridge for it.
+    pub(crate) fn held_through(&self, generation: u64) -> bool {
+        self.held.through(generation)
     }
 
     /// The drain took one.
@@ -264,7 +264,7 @@ impl RequestSender {
 
     /// Whether the channel holds any request (see [`Self::flushed`]), for a
     /// tick to read without a lock.
-    pub(crate) fn holding(&self) -> Arc<AtomicBool> {
+    pub(crate) fn holding(&self) -> Arc<Held> {
         self.shared.backlog.flag()
     }
 

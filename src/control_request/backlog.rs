@@ -19,7 +19,7 @@ use std::collections::VecDeque;
 use std::sync::MutexGuard;
 
 use super::request::Request;
-use super::sync::{Arc, AtomicBool, Ordering};
+use super::sync::{Arc, AtomicU64, Ordering};
 use crate::audio_thread::ControlLock;
 
 /// Reserved requests a channel holds at most while its queue is full: as
@@ -27,23 +27,51 @@ use crate::audio_thread::ControlLock;
 /// sixteen-voice instruments. Past it, one is refused `QueueFull`.
 pub(crate) const BACKLOG_CAPACITY: usize = 1024;
 
+/// The oldest graph generation a held request is tagged for, or none,
+/// read without the lock. Requests are tagged as they are submitted, under
+/// the publisher, so the oldest held is the first.
+#[derive(Debug)]
+pub(crate) struct Held(AtomicU64);
+
+/// No request is held.
+const NONE: u64 = u64::MAX;
+
+impl Default for Held {
+    fn default() -> Self {
+        Self(AtomicU64::new(NONE))
+    }
+}
+
+impl Held {
+    /// Whether any request is held.
+    pub(crate) fn any(&self) -> bool {
+        self.0.load(Ordering::Acquire) != NONE
+    }
+
+    /// Whether a request tagged `generation` or older is held.
+    pub(crate) fn through(&self, generation: u64) -> bool {
+        self.0.load(Ordering::Acquire) <= generation
+    }
+}
+
 /// The held requests, oldest first.
 #[derive(Default)]
 pub(super) struct Backlog {
     held: ControlLock<VecDeque<Request>>,
-    /// Whether any is held, read without the lock: a submission with none
-    /// held checks nothing more.
-    waiting: Arc<AtomicBool>,
+    /// What is held, read without the lock: a submission with none held
+    /// checks nothing more.
+    waiting: Arc<Held>,
 }
 
 impl Backlog {
     /// Whether any request is held.
     pub(super) fn waiting(&self) -> bool {
-        self.waiting.load(Ordering::Acquire)
+        self.waiting.any()
     }
 
-    /// The flag [`Self::waiting`] reads, for a tick that flushes.
-    pub(super) fn flag(&self) -> Arc<AtomicBool> {
+    /// What [`Self::waiting`] reads, for a tick that flushes and for the
+    /// drain.
+    pub(super) fn flag(&self) -> Arc<Held> {
         Arc::clone(&self.waiting)
     }
 
@@ -56,7 +84,10 @@ impl Backlog {
 
     /// Notes what `held` (this backlog's, locked) holds now.
     pub(super) fn update(&self, held: &VecDeque<Request>) {
-        self.waiting.store(!held.is_empty(), Ordering::Release);
+        let oldest = held
+            .front()
+            .map_or(NONE, |request| request.target.generation);
+        self.waiting.0.store(oldest, Ordering::Release);
     }
 }
 

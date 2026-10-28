@@ -3,23 +3,23 @@
 //! audio thread as it frees room whether or not anything else is
 //! submitted.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use super::{LiveGraph, Publisher};
+use crate::control_request::Held;
 
 /// Queues what the channel holds on each tick. Holds the live graph weakly,
 /// so the thread never keeps it alive.
 pub(crate) struct HeldFlush {
     /// Whether the channel holds any: checked first, so a tick costs one
     /// atomic load while it holds none.
-    holding: Arc<AtomicBool>,
+    holding: Arc<Held>,
     publisher: Weak<Mutex<Publisher>>,
 }
 
 impl HeldFlush {
     pub(crate) fn tick(&self) {
-        if !self.holding.load(Ordering::Acquire) {
+        if !self.holding.any() {
             return;
         }
         let Some(publisher) = self.publisher.upgrade() else {

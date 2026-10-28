@@ -441,13 +441,13 @@ fn reserved_requests_past_a_full_queue_are_held_and_queued_in_order() {
     let mut ids: Vec<_> = (0..7)
         .map(|n| sender.submit(reserved(n as f32)).unwrap())
         .collect();
-    assert!(sender.holding().load(Ordering::Acquire), "three held");
+    assert!(sender.holding().any(), "three held");
     // One that is not reserved is refused as a full queue refuses it.
     assert!(sender.submit(request(9.0)).is_err());
     let mut popped = vec![consumer.pop().unwrap().id, consumer.pop().unwrap().id];
     // Room for two: two of those held go first, and the next is held.
     ids.push(sender.submit(reserved(7.0)).unwrap());
-    assert!(sender.holding().load(Ordering::Acquire), "two held");
+    assert!(sender.holding().any(), "two held");
     popped.extend(std::iter::from_fn(|| {
         consumer.pop().map(|request| request.id)
     }));
@@ -465,8 +465,8 @@ fn a_closed_queue_drops_what_was_held() {
     for n in 0..6 {
         sender.submit(reserved(n as f32)).unwrap();
     }
-    assert!(sender.holding().load(Ordering::Acquire));
+    assert!(sender.holding().any());
     consumer.close();
     assert!(sender.submit(reserved(9.0)).is_err());
-    assert!(!sender.holding().load(Ordering::Acquire), "dropped");
+    assert!(!sender.holding().any(), "dropped");
 }
