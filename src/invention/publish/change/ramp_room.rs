@@ -77,8 +77,10 @@ impl PreparedChange {
 }
 
 /// The most ramps the tables of `mirror`'s modules can run at once, summed:
-/// each scheduler's schedule as a live write leaves it (`written`), else as
-/// the change writes it (`schedules`), else as its surface last recorded.
+/// each scheduler's schedule as a live write leaves it (`written`, handed
+/// over with the publication), else the more of what its surface last
+/// recorded and what the change writes it (`schedules`), as either may
+/// play while the publication installs.
 fn table_ramps(
     mirror: &TopologyMirror,
     surfaces: &SurfaceMap,
@@ -86,12 +88,13 @@ fn table_ramps(
     schedules: &HashMap<String, String>,
 ) -> usize {
     let ramps = |id: &String| {
-        let rewritten =
-            (schedules.get(id)).and_then(|json| ControlSchedulerControls::schedule_ramps(json));
-        written.get(id).copied().or(rewritten).unwrap_or_else(|| {
+        written.get(id).copied().unwrap_or_else(|| {
             let surface = surfaces.get(id).and_then(|surface| surface.as_any());
             let controls = surface.and_then(|any| any.downcast_ref::<ControlSchedulerControls>());
-            controls.map_or(0, ControlSchedulerControls::table_ramps)
+            let recorded = controls.map_or(0, ControlSchedulerControls::table_ramps);
+            let json = schedules.get(id);
+            let rewritten = json.and_then(|json| ControlSchedulerControls::schedule_ramps(json));
+            recorded.max(rewritten.unwrap_or(0))
         })
     };
     mirror.modules.keys().map(ramps).sum()

@@ -298,3 +298,23 @@ fn a_change_publishing_after_a_write_that_fit_takes_the_room_both_need() {
     glides(&render_counted(&mut rig, 2 * BLOCKS));
     assert_eq!(rig.live.table_ramp_jumps(), 0);
 }
+
+#[test]
+fn a_schedule_an_edit_shrinks_keeps_its_room_until_the_shrink_lands() {
+    let dials = RAMP_CAPACITY + 1;
+    let heard_dial = dials - 1;
+    let mut rig = linked(dials, Steps::Clock, schedule(dials, 0..heard_dial));
+    render_counted(&mut rig, 1);
+    let mut change = rig.live.begin();
+    let config = serde_json::json!({ "schedule": schedule(dials, [heard_dial]) });
+    change.upsert("sched2", rig.build("sched2", "control_scheduler", config));
+    change
+        .connect(edge("steps", "beat", "sched2", "clock"))
+        .unwrap();
+    change.reschedule("sched", &still(0..heard_dial).to_string());
+    // Not packed: no target of it is rebuilt, so the old one plays on
+    // until a write replaces it, after the change publishes.
+    rig.live.commit(change.prepare().unwrap()).unwrap();
+    glides(&render_counted(&mut rig, 2 * BLOCKS));
+    assert_eq!(rig.live.table_ramp_jumps(), 0);
+}
