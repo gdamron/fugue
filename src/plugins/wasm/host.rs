@@ -235,8 +235,13 @@ mod tests {
     fn emit(store: &mut wasmtime::Store<HostState>, emit: &Emit, index: u32, len: u32) -> String {
         match emit.call(&mut *store, (index, len)) {
             Ok(()) => String::new(),
-            // As the module prints it when it fails.
-            Err(error) => super::super::failure_message("emitter", "process", &error),
+            // As the module reports it when it fails.
+            Err(error) => {
+                let signal = super::super::failure::FailureSignal::default();
+                signal.name("emitter");
+                signal.record("process", super::super::failure::Reason::Trap(error));
+                signal.message().expect("a recorded failure")
+            }
         }
     }
 

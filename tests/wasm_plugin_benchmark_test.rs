@@ -93,6 +93,9 @@ fn render_wasm(component: &[u8], manifest: &fugue::PackageManifest) -> Duration 
 #[test]
 #[ignore = "local performance check; run with --ignored --nocapture"]
 fn wasm_fixture_oscillator_overhead_is_within_target() {
+    // Compiled components go in a tempdir, not under `~/.fugue`.
+    let cache = tempfile::tempdir().expect("cache tempdir");
+    std::env::set_var(fugue::WASM_CACHE_DIR_ENV, cache.path());
     let root = repo_root();
     let component = fixture_component(&root);
     let manifest = fixture_manifest();

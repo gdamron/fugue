@@ -390,7 +390,7 @@ impl Drop for Retirer {
 /// thread is already unwinding.
 #[inline]
 fn debug_assert_off_audio_thread(what: &str) {
-    if on_audio_thread() {
+    if cfg!(debug_assertions) && on_audio_thread() {
         panic!("{what} was dropped on the audio thread: retire it instead");
     }
 }
