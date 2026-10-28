@@ -129,11 +129,7 @@ impl InventionBuilder {
         // runtime can be saved back to disk without inlining `$asset`
         // references or losing developments, title, and the exposed sections.
         let document = invention.clone();
-        let invention = resolve_invention_assets(invention)?;
-        let loaded = match &self.loaded {
-            Some(loaded) => loaded.clone(),
-            None => Arc::new(LoadedDevelopments::load(&invention)?),
-        };
+        let (invention, loaded) = resolve_invention_assets(invention, self.loaded.clone())?;
         let development_definitions = DevelopmentDefinitions::of(loaded.clone());
         self.register_developments(&invention, &loaded)?;
         self.validate_invention(&invention)?;
@@ -446,14 +442,23 @@ pub(crate) fn load_development_definition(
 /// cache → relative to the invention file → absolute; see
 /// `crate::invention::audio_assets`). Configs are compared post-resolution at
 /// runtime, so reload resolves the new document the same way before diffing.
+///
+/// Returns the document with the developments it declares, `loaded` when
+/// given, otherwise loaded here: a development instance's config holds the
+/// controls its development exposes, which name audio only as declared.
 pub(crate) fn resolve_invention_assets(
     mut invention: Invention,
-) -> Result<Invention, Box<dyn std::error::Error>> {
+    loaded: Option<Arc<LoadedDevelopments>>,
+) -> Result<(Invention, Arc<LoadedDevelopments>), Box<dyn std::error::Error>> {
     resolve_json_assets(&mut invention)?;
+    let loaded = match loaded {
+        Some(loaded) => loaded,
+        None => Arc::new(LoadedDevelopments::load(&invention)?),
+    };
     // After `$asset` expansion, so an audio ref may itself come from a
     // shared JSON asset.
-    crate::invention::audio_assets::resolve_audio_assets(&mut invention)?;
-    Ok(invention)
+    crate::invention::audio_assets::resolve_audio_assets(&mut invention, &loaded)?;
+    Ok((invention, loaded))
 }
 
 /// The `$asset` half of [`resolve_invention_assets`]: loads declared JSON

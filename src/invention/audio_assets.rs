@@ -1,4 +1,4 @@
-//! Load-time resolution of module `asset` config references (FUG-130).
+//! Load-time resolution of module `asset` config references.
 //!
 //! The invention format lets any module config reference an audio asset under
 //! a top-level `asset` key — or, for multi-sample modules like `sample_kit`
@@ -28,6 +28,7 @@
 use std::borrow::Cow;
 
 use super::format::Invention;
+use super::reload::LoadedDevelopments;
 use crate::ControlValue;
 
 /// Whether `key` is a control that names an audio asset: a module's `asset`,
@@ -60,7 +61,10 @@ pub(crate) fn stored_asset_write<'a>(key: &str, value: &'a ControlValue) -> Cow<
     }
 }
 
+mod developments;
 mod live;
+
+pub(crate) use developments::audio_slots;
 pub(crate) use live::{
     is_relative_path, rebase_asset_write, resolve_asset_write, resolve_checked_asset_write,
 };
@@ -73,6 +77,7 @@ pub(crate) use live::{
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn resolve_audio_assets(
     invention: &mut Invention,
+    developments: &LoadedDevelopments,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::pkg::AudioAssetRef;
 
@@ -85,7 +90,7 @@ pub(crate) fn resolve_audio_assets(
 
     for module in &mut invention.modules {
         let module_id = module.id.clone();
-        for value in module_asset_values(&mut module.config) {
+        for value in audio_slots(module, developments) {
             let asset: AudioAssetRef = serde_json::from_value(value.clone()).map_err(|err| {
                 format!(
                     "module '{}': invalid asset reference {}: {}",
@@ -106,12 +111,13 @@ pub(crate) fn resolve_audio_assets(
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn resolve_audio_assets(
     invention: &mut Invention,
+    developments: &LoadedDevelopments,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::pkg::AudioAssetRef;
 
     for module in &mut invention.modules {
         let module_id = module.id.clone();
-        for value in module_asset_values(&mut module.config) {
+        for value in audio_slots(module, developments) {
             let asset: AudioAssetRef = serde_json::from_value(value.clone()).map_err(|err| {
                 format!(
                     "module '{}': invalid asset reference {}: {}",
@@ -133,6 +139,13 @@ pub(crate) fn resolve_audio_assets(
 pub(crate) fn module_asset_values(
     config: &mut serde_json::Value,
 ) -> impl Iterator<Item = &mut serde_json::Value> {
+    module_asset_slots(config).map(|(_, value)| value)
+}
+
+/// [`module_asset_values`], each with the top-level key it lies under.
+pub(super) fn module_asset_slots(
+    config: &mut serde_json::Value,
+) -> impl Iterator<Item = (&'static str, &mut serde_json::Value)> {
     let (asset, samples, zones) = match config.as_object_mut() {
         Some(object) => {
             // Split borrows: `remove`-free simultaneous access needs raw
@@ -152,14 +165,19 @@ pub(crate) fn module_asset_values(
         }
         None => (None, None, None),
     };
+    (asset.map(|value| ("asset", value)).into_iter())
+        .chain(entries("samples", samples))
+        .chain(entries("zones", zones))
+}
 
-    asset.into_iter().chain(
-        samples
-            .into_iter()
-            .flatten()
-            .chain(zones.into_iter().flatten())
-            .filter_map(|entry| entry.as_object_mut()?.get_mut("asset")),
-    )
+/// The `asset` value of each entry of `list`, under `key`.
+fn entries<'a>(
+    key: &'static str,
+    list: Option<&'a mut Vec<serde_json::Value>>,
+) -> impl Iterator<Item = (&'static str, &'a mut serde_json::Value)> {
+    (list.into_iter().flatten())
+        .filter_map(|entry| entry.as_object_mut()?.get_mut("asset"))
+        .map(move |value| (key, value))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -375,7 +393,7 @@ mod tests {
             tmp.path(),
             serde_json::json!({ "path": "./loops/melody.wav" }),
         );
-        resolve_audio_assets(&mut invention).unwrap();
+        resolve_audio_assets(&mut invention, &Default::default()).unwrap();
         assert_eq!(
             resolved_asset(&invention),
             tmp.path().join("./loops/melody.wav").to_string_lossy()
@@ -388,14 +406,14 @@ mod tests {
     fn absolute_and_url_paths_pass_through() {
         let tmp = tempfile::tempdir().unwrap();
         let mut invention = invention_with_asset(tmp.path(), serde_json::json!("/abs/kick.wav"));
-        resolve_audio_assets(&mut invention).unwrap();
+        resolve_audio_assets(&mut invention, &Default::default()).unwrap();
         assert_eq!(resolved_asset(&invention), "/abs/kick.wav");
 
         let mut invention = invention_with_asset(
             tmp.path(),
             serde_json::json!("https://example.com/kick.wav"),
         );
-        resolve_audio_assets(&mut invention).unwrap();
+        resolve_audio_assets(&mut invention, &Default::default()).unwrap();
         assert_eq!(resolved_asset(&invention), "https://example.com/kick.wav");
     }
 
@@ -411,7 +429,7 @@ mod tests {
                 &inv_dir,
                 serde_json::json!("fugue.drums.808@1.2.0:kick/long.wav"),
             );
-            resolve_audio_assets(&mut invention).unwrap();
+            resolve_audio_assets(&mut invention, &Default::default()).unwrap();
             let resolved = resolved_asset(&invention).to_string();
             // Built with the resolver's own joins so separators match the
             // platform (the file path segment stays `/`-separated as
@@ -437,7 +455,7 @@ mod tests {
 
             // Re-resolving the resolved document is a no-op (reload path).
             let before = fs::read(inv_dir.join(LOCKFILE_NAME)).unwrap();
-            resolve_audio_assets(&mut invention).unwrap();
+            resolve_audio_assets(&mut invention, &Default::default()).unwrap();
             assert_eq!(resolved_asset(&invention), resolved);
             assert_eq!(fs::read(inv_dir.join(LOCKFILE_NAME)).unwrap(), before);
         });
@@ -473,7 +491,7 @@ mod tests {
 
             let mut invention =
                 invention_with_asset(&inv_dir, serde_json::json!("fugue.drums.808@^1.2:kick.wav"));
-            resolve_audio_assets(&mut invention).unwrap();
+            resolve_audio_assets(&mut invention, &Default::default()).unwrap();
             assert!(resolved_asset(&invention).contains("1.2.0"));
 
             let lock = Lockfile::read(&inv_dir.join(LOCKFILE_NAME)).unwrap();
@@ -494,7 +512,7 @@ mod tests {
                 tmp.path(),
                 serde_json::json!("fugue.drums.808@1.2.0:kick.wav"),
             );
-            let err = resolve_audio_assets(&mut invention)
+            let err = resolve_audio_assets(&mut invention, &Default::default())
                 .unwrap_err()
                 .to_string();
             assert!(err.contains("module 'kick'"), "{err}");
@@ -506,7 +524,7 @@ mod tests {
     fn invalid_asset_shape_errors() {
         let tmp = tempfile::tempdir().unwrap();
         let mut invention = invention_with_asset(tmp.path(), serde_json::json!(42));
-        let err = resolve_audio_assets(&mut invention)
+        let err = resolve_audio_assets(&mut invention, &Default::default())
             .unwrap_err()
             .to_string();
         assert!(err.contains("invalid asset reference"), "{err}");
@@ -533,7 +551,7 @@ mod tests {
             });
             let mut invention = Invention::from_json(&json.to_string()).unwrap();
             invention.source_path = Some(inv_dir.join("groove.json"));
-            resolve_audio_assets(&mut invention).unwrap();
+            resolve_audio_assets(&mut invention, &Default::default()).unwrap();
 
             let samples = invention.modules[0].config["samples"].as_array().unwrap();
             assert_eq!(
@@ -575,7 +593,7 @@ mod tests {
             });
             let mut invention = Invention::from_json(&json.to_string()).unwrap();
             invention.source_path = Some(inv_dir.join("nocturne.json"));
-            resolve_audio_assets(&mut invention).unwrap();
+            resolve_audio_assets(&mut invention, &Default::default()).unwrap();
 
             let zones = invention.modules[0].config["zones"].as_array().unwrap();
             assert_eq!(

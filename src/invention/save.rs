@@ -6,7 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::invention::audio_assets::{is_relative_path, module_asset_values};
+use crate::invention::audio_assets::{audio_slots, is_relative_path, module_asset_values};
+use crate::invention::reload::LoadedDevelopments;
 use crate::Invention;
 
 impl Invention {
@@ -44,10 +45,7 @@ impl Invention {
         let Some(source_dir) = self.source_path.as_deref().and_then(Path::parent) else {
             return Ok(document);
         };
-        let target_dir = match target.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => std::path::absolute(parent)?,
-            _ => std::env::current_dir()?,
-        };
+        let target_dir = absolute_dir(target.parent())?;
 
         for spec in &mut document.developments {
             if let Some(dev_path) = spec.path.as_mut() {
@@ -58,9 +56,28 @@ impl Invention {
             asset.path = rebase(&asset.path, source_dir, &target_dir)?;
         }
         // A module's audio asset: a relative path, written as text or as a
-        // `{ "path": ... }` object. Package refs and URLs are left alone.
+        // `{ "path": ... }` object. Package refs and URLs are left alone, as
+        // is a development instance's key its development exposes as no
+        // asset. When the declarations no longer load, which of an
+        // instance's keys name audio is unknown: a save into another
+        // directory is refused rather than rebasing one that does not, and a
+        // save beside the source keeps every module's paths as authored.
+        let developments = match LoadedDevelopments::load(self) {
+            Ok(developments) => developments,
+            Err(error) if self.modules.iter().any(|module| self.holds_slots(module)) => {
+                if absolute_dir(Some(source_dir))? == target_dir {
+                    return Ok(document);
+                }
+                let reason = format!(
+                    "cannot save into another directory: a development instance's asset keys \
+                     are read as its development declares them, which does not load: {error}"
+                );
+                return Err(reason.into());
+            }
+            Err(_) => LoadedDevelopments::default(),
+        };
         for module in &mut document.modules {
-            for value in module_asset_values(&mut module.config) {
+            for value in audio_slots(module, &developments) {
                 let path = match value {
                     serde_json::Value::String(path) => path,
                     serde_json::Value::Object(object) => match object.get_mut("path") {
@@ -75,6 +92,27 @@ impl Invention {
             }
         }
         Ok(document)
+    }
+}
+
+impl Invention {
+    /// Whether `module` is an instance of one of this document's
+    /// developments with a key an asset may lie under.
+    fn holds_slots(&self, module: &crate::invention::ModuleSpec) -> bool {
+        let instance = (self.developments.iter()).any(|spec| spec.name == module.module_type);
+        instance
+            && module_asset_values(&mut module.config.clone())
+                .next()
+                .is_some()
+    }
+}
+
+/// A file's directory as an absolute path: the current directory when the
+/// file was named without one.
+fn absolute_dir(parent: Option<&Path>) -> std::io::Result<PathBuf> {
+    match parent {
+        Some(parent) if !parent.as_os_str().is_empty() => std::path::absolute(parent),
+        _ => std::env::current_dir(),
     }
 }
 
@@ -224,5 +262,13 @@ mod tests {
         let saved = Invention::from_file(&target.to_string_lossy()).unwrap();
         let dev_path = PathBuf::from(saved.developments[0].path.as_deref().unwrap());
         assert!(dev_path.is_absolute(), "{}", dev_path.display());
+    }
+
+    #[test]
+    fn a_file_named_without_a_directory_lies_in_the_current_one() {
+        let here = std::env::current_dir().unwrap();
+        let bare = std::path::Path::new("piece.json").parent();
+        assert_eq!(super::absolute_dir(bare).unwrap(), here);
+        assert_eq!(super::absolute_dir(None).unwrap(), here);
     }
 }

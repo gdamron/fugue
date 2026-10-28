@@ -327,7 +327,8 @@ impl RunningInvention {
     /// module's config with its assets resolved. Built with the registry as
     /// loaded, which already carries every development's factory, so the
     /// candidate's developments are not registered (or read from disk)
-    /// again, nested ones included. Built in validation mode, so no module
+    /// again, nested ones included, and its configs are resolved against
+    /// the developments as loaded. Built in validation mode, so no module
     /// activates an output: a sink recording to a file is not built again
     /// over the file it is writing. Changes nothing.
     fn validate_candidate(
@@ -336,8 +337,12 @@ impl RunningInvention {
     ) -> Result<HashMap<String, serde_json::Value>, RpcError> {
         let mut probe = candidate.clone();
         probe.developments.clear();
+        // Its configs resolve against the developments as loaded: an
+        // instance's keys name what its development exposes under them.
+        let loaded = self.development_definitions.loaded().clone();
         let builder =
-            InventionBuilder::with_registry(self.sample_rate, self.registry().for_validation());
+            InventionBuilder::with_registry(self.sample_rate, self.registry().for_validation())
+                .with_loaded(loaded);
         let (built, _) = builder
             .build(probe)
             .map_err(|error| build_failed("does not build", error.to_string()))?;
