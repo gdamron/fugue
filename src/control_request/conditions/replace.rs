@@ -103,6 +103,16 @@ impl Conditions {
     }
 }
 
+/// What stands for a control at a sample once the writes falling due
+/// there together gave way ([`Conditions::give_way`]).
+pub(super) enum Survivor {
+    /// The entry at this place in the table.
+    Entry(usize),
+    /// A write the pending store held, due at this sample, taken out to
+    /// apply in the place of the entry it outranked.
+    Pending(Request, u64),
+}
+
 impl Conditions {
     /// Settles, before entry `i` (due by `at`) reaches its module, every
     /// other plain write here to the same control due at the same sample,
@@ -118,20 +128,24 @@ impl Conditions {
     /// one sample, a hold that turns away the winner turns away the rest
     /// too, so none is lost to it.
     ///
-    /// A write the pending store applies at the same sample (one timed in
+    /// A write the pending store holds for the same sample (one timed in
     /// samples, applied after this table's at a segment start) weighs the
     /// one left standing the same way, the later received read from the
-    /// ids, which a channel hands out in submission order.
-    /// Returns where entry `i` now is, or `None` once it gave way.
-    /// Allocation- and free-free; one pass over the table per contender.
+    /// ids, which a channel hands out in submission order. One that wins
+    /// is taken out to apply in its place, so it applies before the
+    /// events due here at that sample, as the write it replaced would have
+    /// (a note off reads the release written for its sample).
+    /// Returns what now stands, or `None` once entry `i` gave way to
+    /// another here. Allocation- and free-free; one pass over the table
+    /// per contender.
     pub(super) fn give_way(
         &mut self,
         mut i: usize,
         at: u64,
         pending: &mut PendingStore,
-    ) -> Option<usize> {
+    ) -> Option<Survivor> {
         let Some(due) = self.contends(i, at) else {
-            return Some(i);
+            return Some(Survivor::Entry(i));
         };
         while let Some(other) = self.contender(i, due, at) {
             let mine = Rank::of(&self.entries[i].request).expect("not an event");
@@ -154,16 +168,26 @@ impl Conditions {
             }
         }
         let request = &self.entries[i].request;
-        let (target, mine, id) = (request.target, Rank::of(request), request.id);
-        let mine = mine.expect("not an event");
-        while let Some((place, theirs, their_id)) = pending.rival(&target, due, at) {
-            if (mine, id.0) < (theirs, their_id.0) {
-                self.end(i, &mut pending.outcomes, mine.loses_to(theirs));
-                return None;
+        let target = request.target;
+        let mut standing = (Rank::of(request).expect("not an event"), request.id);
+        let mut taken = None::<Request>;
+        while let Some((place, theirs, id)) = pending.rival(&target, due, at) {
+            let (rank, _) = standing;
+            if standing < (theirs, id) {
+                let won = pending.take(place);
+                match taken.replace(won) {
+                    Some(lost) => pending.outcomes.settle(lost, rank.loses_to(theirs)),
+                    None => self.end(i, &mut pending.outcomes, rank.loses_to(theirs)),
+                }
+                standing = (theirs, id);
+            } else {
+                let lost = pending.take(place);
+                pending.outcomes.settle(lost, theirs.loses_to(rank));
             }
-            pending.concede(place, theirs.loses_to(mine));
         }
-        Some(i)
+        Some(taken.map_or(Survivor::Entry(i), |request| {
+            Survivor::Pending(request, due)
+        }))
     }
 
     /// The sample entry `i` is due at, if it would apply by `at` as a

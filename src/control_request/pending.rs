@@ -439,19 +439,21 @@ impl PendingStore {
     ) -> Option<(usize, Rank, RequestId)> {
         let first = self.entries.partition_point(|e| e.at < due);
         let rivals = self.entries[first..].iter().take_while(|e| e.at == due);
-        rivals.enumerate().find_map(|(offset, Pending { request, .. })| {
-            let plain = !request.event && matches!(request.value, RequestValue::Value(_));
-            let live = request.target == *target && plain && !expired(request, now);
-            let rank = Rank::of(request).filter(|_| live)?;
-            Some((first + offset, rank, request.id))
-        })
+        rivals
+            .enumerate()
+            .find_map(|(offset, Pending { request, .. })| {
+                let plain = !request.event && matches!(request.value, RequestValue::Value(_));
+                let live = request.target == *target && plain && !expired(request, now);
+                let rank = Rank::of(request).filter(|_| live)?;
+                Some((first + offset, rank, request.id))
+            })
     }
 
-    /// Takes out the write at `place` (from [`Self::rival`]), settled as
-    /// `outcome`. Allocation- and free-free.
-    pub(crate) fn concede(&mut self, place: usize, outcome: Outcome) {
-        let Pending { request, .. } = self.entries.remove(place);
-        self.outcomes.settle(request, outcome);
+    /// Takes out the write at `place` (from [`Self::rival`]), to apply in
+    /// the place of the one it outranks there, or to settle. Allocation-
+    /// and free-free.
+    pub(crate) fn take(&mut self, place: usize) -> Request {
+        self.entries.remove(place).request
     }
 
     /// The earliest `at` among entries in the `installed` generation.

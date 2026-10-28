@@ -30,7 +30,7 @@ pub(super) struct Host {
     controls: Vec<f32>,
     /// How many requests had applied each time the late events applied
     /// were finished.
-    finished: Vec<usize>,
+    pub(super) finished: Vec<usize>,
     /// Holds on the target's controls, weighed as the graph weighs them,
     /// when set.
     pub(super) holds: Option<Holds>,

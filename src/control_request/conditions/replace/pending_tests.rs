@@ -90,3 +90,40 @@ fn a_write_timed_at_another_sample_does_not_contend() {
     assert_eq!(settled, [(1, LANDED), (2, late)]);
     assert_eq!(host.applied.len(), 2);
 }
+
+/// A pending write that wins applies in the place of the condition write
+/// it outranked, before the events due here at that sample: a note off
+/// applied late finishes under the release written for its sample.
+#[test]
+fn a_pending_winner_applies_before_the_events_due_with_it() {
+    let (mut store, outcomes) = store();
+    let (mut conditions, slots) = table(4);
+    let mut host = Host::new(vec![vec![0.0; 128]]);
+    insert(&mut conditions, &slots, request(1, &AFTER), &mut store);
+    let mut note_off = request(2, &AFTER);
+    note_off.event = true;
+    insert(&mut conditions, &slots, note_off, &mut store);
+    let mut release = request(3, &AFTER);
+    release.when = When::AtSample(70);
+    store.insert(release, 70);
+    store.outcomes.settle(request(7, &AFTER), LANDED);
+    // Met at 70, applied late at 72.
+    host.segment(72);
+    conditions.start(72, INSTALLED, &host, &mut store.outcomes);
+    conditions.read(INSTALLED, Some(TARGET), &host, &store.outcomes.chains);
+    apply_all(&mut conditions, &mut host, &mut store, 72);
+    store.apply_due(72, INSTALLED, |target, standing, value, retirer| {
+        host.apply(target, standing, value, retirer)
+    });
+    let late = Outcome::AppliedLate { at: 72, due: 70 };
+    let settled: Vec<_> = (log(&outcomes).into_iter())
+        .filter(|(id, _)| *id != 7)
+        .collect();
+    assert_eq!(settled, [(1, Outcome::Superseded), (3, late), (2, late)]);
+    assert_eq!(host.applied.len(), 2, "one release, one note off");
+    assert_eq!(
+        host.finished,
+        [2],
+        "the note off finished after the release"
+    );
+}

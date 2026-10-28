@@ -43,6 +43,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use self::parts::{arm, latch, read_controls, waits_on};
+use self::replace::Survivor;
 use super::chains::Chains;
 use super::condition::{Condition, Predicate, MAX_PARTS};
 use super::hold::Standing;
@@ -191,6 +192,29 @@ impl Entry {
         let met = self.seen[..parts].iter().map(|seen| seen.met);
         self.condition.due(met)
     }
+}
+
+/// Applies `request`, a plain write the pending store held for sample
+/// `due`, at `at` in the place of a write here it outranked, settling it
+/// as the pending store would.
+fn apply_pending(
+    request: Request,
+    due: u64,
+    at: u64,
+    host: &mut impl ConditionHost,
+    outcomes: &mut Outcomes,
+) {
+    let standing = Standing::of(&request, due);
+    let timed = request.when != When::Now;
+    let Request {
+        target, value, id, ..
+    } = request;
+    let outcome = match host.apply(&target, standing, value, &mut outcomes.retirer) {
+        Ok(()) if due < at => Outcome::AppliedLate { at, due },
+        Ok(()) => Outcome::Applied { at },
+        Err(outcome) => outcome,
+    };
+    outcomes.record(id, false, outcome, timed);
 }
 
 /// Requests timed by a condition, in receipt order. Single-threaded (the
@@ -427,7 +451,11 @@ impl Conditions {
             // pending store: all but one give way before any reaches the
             // module.
             match self.give_way(i, at, pending) {
-                Some(now) => i = now,
+                Some(Survivor::Entry(now)) => i = now,
+                Some(Survivor::Pending(request, due)) => {
+                    apply_pending(request, due, at, host, &mut pending.outcomes);
+                    continue;
+                }
                 None => continue,
             }
             let outcomes = &mut pending.outcomes;
