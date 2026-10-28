@@ -394,3 +394,27 @@ fn a_write_losing_to_a_staged_one_is_read_by_an_event_after_it() {
     flush_staged_before(&mut *dial, Some(Before::event(event)), outcomes);
     assert_eq!(cells(&*dial).load(LEVEL), Some(RtValue::F32(0.5)));
 }
+
+#[test]
+fn of_two_writes_due_together_an_event_reads_the_one_that_would_set_last() {
+    let between = Applying {
+        due: 7,
+        ..applying(9, 10)
+    };
+    let write = |value| (LEVEL, RtValue::F32(value));
+    for (first, second, heard) in [
+        (user(6), script(6), 0.5),
+        (script(6), user(6), 0.1),
+        (user(6), user(6), 0.1),
+    ] {
+        let mut dial = dial();
+        let (mut store, _received) = store();
+        let outcomes = &mut store.outcomes;
+        contend(&mut *dial, outcomes, write(0.5), (1, first), 10).unwrap();
+        stage(&mut *dial, outcomes, write(0.75), 2, (8, 10));
+        let lost = contend(&mut *dial, outcomes, write(0.1), (3, second), 10);
+        assert!(lost.is_err());
+        flush_staged_before(&mut *dial, Some(Before::event(between)), outcomes);
+        assert_eq!(cells(&*dial).load(LEVEL), Some(RtValue::F32(heard)));
+    }
+}

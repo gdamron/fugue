@@ -161,11 +161,12 @@ struct Slot {
     hold: AtomicU64,
     prev: AtomicU64,
     /// The value of a write due earlier that gave way or lost to it here
-    /// at its sample ([`EMPTY`] when none; a fresh stage clears it), and
-    /// its due sample: in force between the two, for an event due there
-    /// ([`Before::event`]).
+    /// at its sample ([`EMPTY`] when none; a fresh stage clears it), its
+    /// due sample and hold word: in force between the two, for an event
+    /// due there ([`Before::event`]).
     earlier: AtomicU64,
     earlier_due: AtomicU64,
+    earlier_hold: AtomicU64,
 }
 
 impl Slot {
@@ -185,14 +186,23 @@ impl Slot {
         (self.at.load(Relaxed) >= since).then(|| (due, rank, self.id.load(Relaxed)))
     }
 
-    /// Keeps `value`, due at `due` and losing to the write here, for an
+    /// The value kept here, by what decides between two ([`contest`]);
+    /// of two alike, the later received wins.
+    fn earlier_key(&self) -> Option<(u64, Rank)> {
+        let kept = self.earlier.load(Relaxed) != EMPTY;
+        let rank = rank_of(self.earlier_hold.load(Relaxed)).filter(|_| kept)?;
+        Some((self.earlier_due.load(Relaxed), rank))
+    }
+
+    /// Keeps `value`, of `standing` and losing to the write here, for an
     /// event due between them to read ([`Staged::earlier_by`]) while that
-    /// one stays staged, unless one kept is due later still.
-    fn keep_earlier(&self, due: u64, value: RtValue) {
-        let kept = self.earlier.load(Relaxed) != EMPTY && self.earlier_due.load(Relaxed) > due;
-        if !kept {
+    /// one stays staged, unless the one kept would have set it after.
+    fn keep_earlier(&self, standing: Standing, value: RtValue) {
+        let mine = (standing.due, standing.rank);
+        if self.earlier_key().is_none_or(|kept| kept <= mine) {
             self.earlier.store(encode(value), Relaxed);
-            self.earlier_due.store(due, Relaxed);
+            self.earlier_due.store(standing.due, Relaxed);
+            self.earlier_hold.store(standing.word(), Relaxed);
         }
     }
 
@@ -208,6 +218,7 @@ impl Slot {
         let value = (earlier < due).then(|| self.value.load(Relaxed));
         self.earlier.store(value.unwrap_or(EMPTY), Relaxed);
         self.earlier_due.store(earlier, Relaxed);
+        self.earlier_hold.store(self.hold.load(Relaxed), Relaxed);
         self.held.store(EMPTY, Relaxed);
         self.hold.store(0, Relaxed);
         let id = RequestId(self.id.load(Relaxed));
@@ -460,7 +471,7 @@ pub(crate) fn stage_write<M: Module + ?Sized>(
     let listed = contest(&*module, control, standing, applying, outcomes).inspect_err(|_| {
         let slots = module.declared().map(|(_, cells)| &cells.staged.slots);
         if let Some(slot) = slots.and_then(|slots| slots.get(usize::from(control.0))) {
-            slot.keep_earlier(standing.due, value);
+            slot.keep_earlier(standing, value);
         }
     })?;
     // Automation still waiting was written before this sample.
