@@ -332,15 +332,16 @@ impl LiveGraph {
 
     /// Whether one more edit could stall without a reclaimer thread. Edits
     /// queue rather than fold, and each install retires a publication onto
-    /// a ring only a reclaim empties; with no thread, only changes reclaim.
-    /// So a burst of edits beyond what the ring and the audio side's one
-    /// held retirement take would leave the last of them, and every request
-    /// behind it, queued until some later change. Refusing it instead
-    /// (`QueueFull`, to retry) keeps every queued edit installable as far
-    /// as publication retirements go; payload retirements ahead of an edit
-    /// still wait for a change's reclaim without a thread. Reads
-    /// counters only: every commit reclaims just before it locks the
-    /// publisher, since what a reclaim frees must not drop under the lock.
+    /// a ring only a reclaim empties; with no thread, only changes and
+    /// control writes reclaim. So a burst of edits beyond what the ring and
+    /// the audio side's one held retirement take would leave the last of
+    /// them, and every request behind it, queued until some later change.
+    /// Refusing it instead (`QueueFull`, to retry) keeps every queued edit
+    /// installable as far as publication retirements go; payload
+    /// retirements ahead of an edit still wait for the next change's or
+    /// write's reclaim without a thread. Reads counters only: every commit
+    /// reclaims just before it locks the publisher, since what a reclaim
+    /// frees must not drop under the lock.
     fn backlogged(&self, publisher: &Publisher) -> bool {
         backlogged(publisher, &self.reclaimer)
     }
@@ -471,6 +472,7 @@ impl LiveGraph {
             module_id: String::new(),
             settler: self.settler.clone(),
             retarget: Retarget::new(&self.control_surfaces, &self.reclaimer, &self.requests),
+            reclaimer: Arc::clone(&self.reclaimer),
         }
     }
 

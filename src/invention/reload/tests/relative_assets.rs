@@ -203,15 +203,20 @@ fn package_refs_urls_and_rooted_paths_pass_through() {
     ] {
         let value = ControlValue::String(text.into());
         assert_eq!(
-            resolve_asset_write(Some(source), "asset", &value).unwrap(),
+            resolve_asset_write(Some(source), ("asset", true), &value).unwrap(),
             value
         );
-        assert_eq!(resolve_asset_write(None, "asset.2", &value).unwrap(), value);
+        assert_eq!(
+            resolve_asset_write(None, ("asset.2", true), &value).unwrap(),
+            value
+        );
     }
-    // Only asset controls resolve.
+    // Only a control that loads what it names resolves.
     let value = ControlValue::String("a.wav".into());
-    assert_eq!(resolve_asset_write(None, "pattern", &value).unwrap(), value);
-    assert_eq!(resolve_asset_write(None, "asset.x", &value).unwrap(), value);
+    assert_eq!(
+        resolve_asset_write(None, ("pattern", false), &value).unwrap(),
+        value
+    );
 }
 
 /// A relative write made while a timed reload of a file in another
@@ -287,7 +292,7 @@ fn a_rebased_write_names_the_same_file_from_the_other_directory() {
         Path::new("/songs/piece.json"),
         Path::new("/other/piece.json"),
     );
-    let rebased = |to, value: &str| rebase_asset_write(Some(from), to, "asset.0", &text(value));
+    let rebased = |to, value: &str| rebase_asset_write(Some(from), to, true, &text(value));
     assert_eq!(rebased(Some(from), "kick.wav"), text("kick.wav"));
     assert_eq!(rebased(Some(under), "kick.wav"), text("a/kick.wav"));
     // Absolute as the platform spells it (a drive on Windows).
@@ -304,11 +309,11 @@ fn a_rebased_write_names_the_same_file_from_the_other_directory() {
     let rebased = rebase_asset_write(
         Some(Path::new("a/piece.json")),
         Some(Path::new("b/piece.json")),
-        "asset.0",
+        true,
         &text("sub/new.wav"),
     );
     let expected = std::path::absolute("a/sub/new.wav").unwrap();
     assert_eq!(rebased, text(&expected.to_string_lossy()));
-    let level = rebase_asset_write(Some(from), Some(beside), "level", &text("kick.wav"));
+    let level = rebase_asset_write(Some(from), Some(beside), false, &text("kick.wav"));
     assert_eq!(level, text("kick.wav"));
 }

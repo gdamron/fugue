@@ -6,7 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::invention::audio_assets::{audio_slots, is_relative_path, module_asset_values};
+use crate::invention::audio_assets::{
+    audio_slots, is_relative_path, module_asset_values, Declarations,
+};
 use crate::invention::reload::LoadedDevelopments;
 use crate::Invention;
 
@@ -77,7 +79,8 @@ impl Invention {
             Err(_) => LoadedDevelopments::default(),
         };
         for module in &mut document.modules {
-            for value in audio_slots(module, &developments) {
+            let declarations = Declarations::of(&developments, None);
+            for value in audio_slots(module, &declarations) {
                 let path = match value {
                     serde_json::Value::String(path) => path,
                     serde_json::Value::Object(object) => match object.get_mut("path") {

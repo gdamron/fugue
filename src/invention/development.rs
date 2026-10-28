@@ -68,6 +68,23 @@ pub(crate) struct DevelopmentFactory {
     pub(crate) loaded: Arc<LoadedDevelopments>,
 }
 
+impl DevelopmentFactory {
+    /// This factory building from `registry`, with a copy of the developments
+    /// registered so far. The copy is taken before the build, not during it:
+    /// a development used inside this one shares the set, and locks it as it
+    /// builds.
+    fn rebuilt_with(&self, registry: ModuleRegistry) -> Self {
+        let registered = self.registered.lock().unwrap().clone();
+        Self {
+            name: self.name.clone(),
+            definition: self.definition.clone(),
+            registry,
+            registered: Arc::new(Mutex::new(registered)),
+            loaded: self.loaded.clone(),
+        }
+    }
+}
+
 impl ModuleFactory for DevelopmentFactory {
     fn type_id(&self) -> &'static str {
         "__development__"
@@ -77,19 +94,18 @@ impl ModuleFactory for DevelopmentFactory {
         replacing::config_keys(&self.definition, &self.registry)
     }
 
+    #[allow(private_interfaces)]
+    fn development(&self) -> Option<&DevelopmentFactory> {
+        Some(self)
+    }
+
     fn build_for_inspection(
         &self,
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        Self {
-            name: self.name.clone(),
-            definition: self.definition.clone(),
-            registry: self.registry.for_inspection(),
-            registered: Arc::new(Mutex::new(self.registered.lock().unwrap().clone())),
-            loaded: self.loaded.clone(),
-        }
-        .build(sample_rate, config)
+        self.rebuilt_with(self.registry.for_inspection())
+            .build(sample_rate, config)
     }
 
     fn build_for_validation(
@@ -97,14 +113,8 @@ impl ModuleFactory for DevelopmentFactory {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        Self {
-            name: self.name.clone(),
-            definition: self.definition.clone(),
-            registry: self.registry.for_validation(),
-            registered: Arc::new(Mutex::new(self.registered.lock().unwrap().clone())),
-            loaded: self.loaded.clone(),
-        }
-        .build(sample_rate, config)
+        self.rebuilt_with(self.registry.for_validation())
+            .build(sample_rate, config)
     }
 
     fn build(
