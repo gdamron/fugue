@@ -160,7 +160,7 @@ impl SignalGraph {
             }
             for (id, instance) in graph.modules.iter_mut() {
                 let at = publication.modules.get_index_of(id.as_str());
-                if !at.is_some_and(|at| publication.survivor[at]) {
+                if at.and_then(|at| publication.survivor.get(at)) != Some(&true) {
                     flush_staged(instance.module_mut(), outcomes);
                 }
             }
