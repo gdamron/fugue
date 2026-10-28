@@ -46,7 +46,7 @@ use self::parts::{arm, latch, read_controls, waits_on};
 use super::chains::Chains;
 use super::condition::{Condition, Predicate, MAX_PARTS};
 use super::hold::Standing;
-use super::pending::{expired, Outcome, Outcomes, Refusal};
+use super::pending::{expired, Outcome, Outcomes, PendingStore, Refusal};
 use super::request::{ControlIndex, ControlTarget, Request, RequestId, RequestValue, When};
 use crate::payload::Retirer;
 
@@ -399,7 +399,7 @@ impl Conditions {
         target: Option<usize>,
         at: u64,
         host: &mut impl ConditionHost,
-        outcomes: &mut Outcomes,
+        pending: &mut PendingStore,
     ) -> Option<u64> {
         let mut next = None::<u64>;
         let mut i = 0;
@@ -411,7 +411,7 @@ impl Conditions {
                 continue;
             }
             if entry.broken {
-                self.end(i, outcomes, Refusal::ChainBroken.into());
+                self.end(i, &mut pending.outcomes, Refusal::ChainBroken.into());
                 continue;
             }
             let Some(due) = entry.due() else {
@@ -423,12 +423,14 @@ impl Conditions {
                 i += 1;
                 continue;
             }
-            // Writes to one control falling due together: all but one
-            // give way before any reaches the module.
-            match self.give_way(i, at, outcomes) {
+            // Writes to one control falling due together, here or in the
+            // pending store: all but one give way before any reaches the
+            // module.
+            match self.give_way(i, at, pending) {
                 Some(now) => i = now,
                 None => continue,
             }
+            let outcomes = &mut pending.outcomes;
             let Entry { request, .. } = self.take(i, &mut outcomes.chains);
             if expired(&request, at) {
                 self.settle(request, Refusal::Expired.into(), outcomes);

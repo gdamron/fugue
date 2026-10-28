@@ -26,6 +26,7 @@
 //! replace as they fall due at one sample, by the same rule, before either
 //! reaches the module ([`Conditions::give_way`]): one setter runs for a
 //! control at a sample, so a stateful one (a reverb retuning) runs once.
+//! A write the pending store holds for that sample weighs in too.
 //!
 //! [`PendingStore`]: super::super::pending::PendingStore
 
@@ -33,7 +34,7 @@ use super::{Conditions, Entry};
 use crate::control_request::condition::{Condition, Predicate};
 use crate::control_request::hold::Rank;
 use crate::control_request::pending::expired;
-use crate::control_request::pending::{Outcome, Outcomes};
+use crate::control_request::pending::{Outcome, Outcomes, PendingStore};
 use crate::control_request::request::{Request, RequestValue};
 
 /// Whether `request` may replace a waiting request, or be replaced.
@@ -116,13 +117,18 @@ impl Conditions {
     /// own sample ([`Standing`](crate::control_request::Standing)): at
     /// one sample, a hold that turns away the winner turns away the rest
     /// too, so none is lost to it.
+    ///
+    /// A write the pending store applies at the same sample (one timed in
+    /// samples, applied after this table's at a segment start) weighs the
+    /// one left standing the same way, the later received read from the
+    /// ids, which a channel hands out in submission order.
     /// Returns where entry `i` now is, or `None` once it gave way.
     /// Allocation- and free-free; one pass over the table per contender.
     pub(super) fn give_way(
         &mut self,
         mut i: usize,
         at: u64,
-        outcomes: &mut Outcomes,
+        pending: &mut PendingStore,
     ) -> Option<usize> {
         let Some(due) = self.contends(i, at) else {
             return Some(i);
@@ -139,13 +145,23 @@ impl Conditions {
                 true => mine.loses_to(theirs),
                 false => theirs.loses_to(mine),
             };
-            self.end(loser, outcomes, outcome);
+            self.end(loser, &mut pending.outcomes, outcome);
             if loser == i {
                 return None;
             }
             if other < i {
                 i -= 1;
             }
+        }
+        let request = &self.entries[i].request;
+        let (target, mine, id) = (request.target, Rank::of(request), request.id);
+        let mine = mine.expect("not an event");
+        while let Some((place, theirs, their_id)) = pending.rival(&target, due, at) {
+            if (mine, id.0) < (theirs, their_id.0) {
+                self.end(i, &mut pending.outcomes, mine.loses_to(theirs));
+                return None;
+            }
+            pending.concede(place, theirs.loses_to(mine));
         }
         Some(i)
     }
@@ -170,5 +186,7 @@ impl Conditions {
     }
 }
 
+#[cfg(test)]
+mod pending_tests;
 #[cfg(test)]
 mod tests;

@@ -4,7 +4,7 @@
 use super::chains::{Chains, RECENT};
 use super::hold::{Rank, Standing};
 use super::outcome::OutcomeSender;
-use super::request::{ControlTarget, Request, RequestValue, When};
+use super::request::{ControlTarget, Request, RequestId, RequestValue, When};
 use crate::payload::{Retirer, MAX_RETIRES_PER_REQUEST};
 
 /// Why a request was not applied.
@@ -424,6 +424,34 @@ impl PendingStore {
             }
         }
         applied_any
+    }
+
+    /// The first plain write waiting to `target` at sample `due` (a value,
+    /// not an event) whose ttl `now` has not run out: its place, rank and
+    /// id. A write the condition table applies at that sample weighs it
+    /// (see `Conditions::give_way`). Binary search, then a scan of that
+    /// sample's entries.
+    pub(crate) fn rival(
+        &self,
+        target: &ControlTarget,
+        due: u64,
+        now: u64,
+    ) -> Option<(usize, Rank, RequestId)> {
+        let first = self.entries.partition_point(|e| e.at < due);
+        let rivals = self.entries[first..].iter().take_while(|e| e.at == due);
+        rivals.enumerate().find_map(|(offset, Pending { request, .. })| {
+            let plain = !request.event && matches!(request.value, RequestValue::Value(_));
+            let live = request.target == *target && plain && !expired(request, now);
+            let rank = Rank::of(request).filter(|_| live)?;
+            Some((first + offset, rank, request.id))
+        })
+    }
+
+    /// Takes out the write at `place` (from [`Self::rival`]), settled as
+    /// `outcome`. Allocation- and free-free.
+    pub(crate) fn concede(&mut self, place: usize, outcome: Outcome) {
+        let Pending { request, .. } = self.entries.remove(place);
+        self.outcomes.settle(request, outcome);
     }
 
     /// The earliest `at` among entries in the `installed` generation.
