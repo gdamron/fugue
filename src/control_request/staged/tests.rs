@@ -46,23 +46,33 @@ fn user(due: u64) -> Standing {
 fn stage(
     module: &mut dyn Module,
     outcomes: &mut Outcomes,
-    (control, value): (ControlIndex, RtValue),
+    write: (ControlIndex, RtValue),
     id: u64,
     (due, at): (u64, u64),
 ) -> bool {
+    contend(module, outcomes, write, (id, user(due)), at).unwrap()
+}
+
+/// [`stage`] at any standing, reporting a loss as a caller does.
+fn contend(
+    module: &mut dyn Module,
+    outcomes: &mut Outcomes,
+    (control, value): (ControlIndex, RtValue),
+    (id, standing): (u64, Standing),
+    at: u64,
+) -> Result<bool, Outcome> {
     outcomes.applying(applying(id, at));
-    let staged = stage_write(
-        module,
-        control,
-        value,
-        user(due),
-        applying(id, at),
-        outcomes,
-    );
-    let staged = staged.unwrap();
-    let outcome = Outcome::Applied { at };
+    let staged = stage_write(module, control, value, standing, applying(id, at), outcomes);
+    let outcome = staged.map_or_else(|lost| lost, |_| Outcome::Applied { at });
     outcomes.record(RequestId(id), false, outcome, false);
     staged
+}
+
+fn script(due: u64) -> Standing {
+    Standing {
+        rank: Rank::new(crate::control_request::Source::Script, 0),
+        due,
+    }
 }
 
 fn cells(module: &dyn Module) -> &ControlCells {
@@ -133,27 +143,83 @@ fn a_ramp_starts_from_a_staged_write() {
     assert_eq!(automation.current(), Some(0.75));
 }
 
+/// One staged at an earlier sample runs before a write at a later one is
+/// weighed: each sample keeps its own setter.
 #[test]
-fn a_second_write_to_a_staged_control_flushes_the_first_so_both_setters_run() {
+fn a_write_staged_at_an_earlier_sample_runs_before_one_at_a_later() {
     let mut dial = dial();
     let (mut store, received) = store();
     let outcomes = &mut store.outcomes;
-    stage(&mut *dial, outcomes, (LEVEL, RtValue::F32(0.5)), 1, (4, 10));
+    stage(&mut *dial, outcomes, (LEVEL, RtValue::F32(0.5)), 1, (4, 4));
     stage(
         &mut *dial,
         outcomes,
         (LEVEL, RtValue::F32(0.75)),
         2,
-        (10, 10),
+        (3, 10),
     );
     assert_eq!(cells(&*dial).load(LEVEL), Some(RtValue::F32(0.5)));
-    assert_eq!(
-        log(&received),
-        [(1, Outcome::AppliedLate { at: 10, due: 4 })]
-    );
+    assert_eq!(log(&received), [(1, Outcome::Applied { at: 4 })]);
     flush_staged(&mut *dial, outcomes);
     assert_eq!(cells(&*dial).load(LEVEL), Some(RtValue::F32(0.75)));
-    assert_eq!(log(&received), [(2, Outcome::Applied { at: 10 })]);
+    let late = Outcome::AppliedLate { at: 10, due: 3 };
+    assert_eq!(log(&received), [(2, late)]);
+}
+
+/// Writes reaching one control at one sample, in either order: the one
+/// due last stands, then the higher rank, then the later received. The
+/// others settle at once, and only its setter runs.
+#[test]
+fn one_write_stands_on_a_control_at_a_sample_whatever_order_they_arrive_in() {
+    let level = |value| (LEVEL, RtValue::F32(value));
+    // (id, standing, value); the second stands, by its due sample, its
+    // receipt, then its rank.
+    let cases: [[(u64, Standing, f32); 2]; 3] = [
+        [(2, user(8), 0.75), (1, user(10), 0.5)],
+        [(1, user(10), 0.5), (2, user(10), 0.75)],
+        [(2, script(10), 0.5), (1, user(10), 0.75)],
+    ];
+    for [first, second] in cases {
+        for (early, late) in [(first, second), (second, first)] {
+            let mut dial = dial();
+            let (mut store, received) = store();
+            let outcomes = &mut store.outcomes;
+            let _ = contend(&mut *dial, outcomes, level(early.2), (early.0, early.1), 10);
+            let _ = contend(&mut *dial, outcomes, level(late.2), (late.0, late.1), 10);
+            assert_eq!(outcomes.staged(), 1);
+            // The winner takes the loser's place in the order.
+            assert_eq!(cells(&*dial).staged.len.load(Relaxed), 1);
+            // The loser settled before anything applied.
+            assert_eq!(cells(&*dial).load(LEVEL), Some(RtValue::F32(0.25)));
+            let (winner, loser) = (second, first);
+            let lost = loser.1.rank.loses_to(winner.1.rank);
+            assert_eq!(log(&received), [(loser.0, lost)], "{early:?} then {late:?}");
+            flush_staged(&mut *dial, outcomes);
+            assert_eq!(cells(&*dial).load(LEVEL), Some(RtValue::F32(winner.2)));
+            let applied = match winner.1.due {
+                10 => Outcome::Applied { at: 10 },
+                due => Outcome::AppliedLate { at: 10, due },
+            };
+            assert_eq!(log(&received), [(winner.0, applied)]);
+        }
+    }
+}
+
+/// A winner refused at its flush gives back the hold as it was before
+/// either write: the one it replaced never applied.
+#[test]
+fn a_winner_refused_at_its_flush_gives_back_the_hold_from_before_the_write_it_replaced() {
+    let mut dial = dial();
+    let (mut store, received) = store();
+    let outcomes = &mut store.outcomes;
+    cells(&*dial).holds.take(SHAPE, script(2));
+    stage(&mut *dial, outcomes, (SHAPE, RtValue::U32(1)), 1, (10, 10));
+    stage(&mut *dial, outcomes, (SHAPE, RtValue::U32(7)), 2, (10, 10));
+    flush_staged(&mut *dial, outcomes);
+    let refused = Outcome::Refused(Refusal::Invalid);
+    assert_eq!(log(&received), [(1, Outcome::Superseded), (2, refused)]);
+    assert!(cells(&*dial).holds.kept(SHAPE, script(2)));
+    assert_eq!(cells(&*dial).current(SHAPE), Some(RtValue::U32(0)));
 }
 
 #[test]
@@ -162,10 +228,7 @@ fn a_write_refused_at_its_flush_reports_refused_and_gives_back_its_hold() {
     let (mut store, received) = store();
     let outcomes = &mut store.outcomes;
     // A script's write holds the shape; the user's replaces its hold.
-    let script = Standing {
-        rank: Rank::new(crate::control_request::Source::Script, 0),
-        due: 10,
-    };
+    let script = script(10);
     cells(&*dial).holds.take(SHAPE, script);
     stage(&mut *dial, outcomes, (SHAPE, RtValue::U32(7)), 1, (10, 10));
     assert!(!cells(&*dial).holds.kept(SHAPE, script));
@@ -176,6 +239,10 @@ fn a_write_refused_at_its_flush_reports_refused_and_gives_back_its_hold() {
         "the script's hold back"
     );
     assert_eq!(cells(&*dial).current(SHAPE), Some(RtValue::U32(0)));
+    // Refused, it stands no more: one received before it there applies.
+    stage(&mut *dial, outcomes, (SHAPE, RtValue::U32(1)), 0, (10, 10));
+    flush_staged(&mut *dial, outcomes);
+    assert_eq!(cells(&*dial).current(SHAPE), Some(RtValue::U32(1)));
 }
 
 #[test]

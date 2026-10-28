@@ -836,12 +836,6 @@ impl SignalGraph {
         if let Some(hook) = self.request_hook {
             return hook(self, module_idx, control, value, retirer);
         }
-        debug_assert!(
-            (self.modules.get_index(module_idx))
-                .and_then(|(_, instance)| instance.module().declared())
-                .is_none_or(|(_, cells)| cells.staged.is_empty()),
-            "applied past a write staged before it"
-        );
         match value {
             RequestValue::Value(value) => {
                 let (_, instance) = self

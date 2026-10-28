@@ -19,10 +19,10 @@ use super::conditions::{limit, WAITING_RESERVE};
 use super::hold::Standing;
 use super::pending::{expired, Outcome, Outcomes, Refusal};
 use super::ramps::{Ramps, RAMP_CAPACITY};
-use super::request::{BeatSpec, ControlTarget, Request, RequestValue, RtValue, When};
+use super::request::{BeatSpec, ControlTarget, Request, RequestId, RequestValue, RtValue, When};
+use super::staged::Applying;
 use super::table::BeatTable;
 use super::timeline::Timeline;
-use crate::payload::Retirer;
 
 mod cursor;
 mod edges;
@@ -80,13 +80,15 @@ pub(crate) trait BeatHost {
     }
 
     /// Applies `value` as the pending store's `apply` does, of `standing`
-    /// (none for an event): `Err` is what it reports instead.
+    /// (none for an event), weighed against the write standing on its
+    /// control at the sample when `outcomes` names it applying (see
+    /// [`Outcomes::applying`]): `Err` is what it reports instead.
     fn apply(
         &mut self,
         target: &ControlTarget,
         standing: Option<Standing>,
         value: RequestValue,
-        retirer: &mut Retirer,
+        outcomes: &mut Outcomes,
     ) -> Result<(), Outcome>;
 }
 
@@ -500,12 +502,8 @@ impl Watches {
             let late_event = watch.request.fires() && due < now;
             if let (true, RequestValue::Value(value)) = (watch.repeats(), &watch.request.value) {
                 let value = RequestValue::Value(*value);
-                let result = host.apply(
-                    &watch.request.target,
-                    standing,
-                    value,
-                    &mut outcomes.retirer,
-                );
+                outcomes.applying(on_beat(watch.request.id, now));
+                let result = host.apply(&watch.request.target, standing, value, outcomes);
                 if result.is_err() && due == now {
                     self.entries[i].latched = Some(now);
                 }
@@ -540,7 +538,8 @@ impl Watches {
                 target, value, id, ..
             } = self.entries.remove(i).request;
             let payload = value.is_payload();
-            let result = host.apply(&target, standing, value, &mut outcomes.retirer);
+            outcomes.applying(on_beat(id, now));
+            let result = host.apply(&target, standing, value, outcomes);
             if result.is_ok() {
                 self.ramps.supersede(&target, &*host);
                 if late_event {
@@ -555,6 +554,15 @@ impl Watches {
         // its sample: at the same tier, the table's entry wins.
         let (fired, next) = self.cursors.pass(now, host, &mut self.ramps);
         (applied || fired, wait.into_iter().chain(next).min())
+    }
+}
+
+/// Request `id` applying on its beat at `now`.
+fn on_beat(id: RequestId, now: u64) -> Applying {
+    Applying {
+        id,
+        timed: true,
+        at: now,
     }
 }
 

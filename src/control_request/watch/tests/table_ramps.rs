@@ -53,7 +53,7 @@ fn run(
     seen: &mut Vec<(u64, f32)>,
 ) {
     while host.now < until {
-        let arrives = ramps.step(INSTALLED, host, &mut store.outcomes.retirer);
+        let arrives = ramps.step(INSTALLED, host, &mut store.outcomes);
         if let Some(value) = watched.current() {
             if seen.last().is_none_or(|&(_, last)| last != value) {
                 seen.push((host.now, value));
@@ -156,13 +156,13 @@ fn a_table_s_ramps_end_with_its_plan_or_its_table_and_move_with_it() {
     // Its module moved: found again at 3, it writes on from there.
     begin(&mut ramps, &mut host, 0);
     ramps.retable(TABLE.1, 3, 0);
-    ramps.step(INSTALLED, &mut host, &mut store.outcomes.retirer);
+    ramps.step(INSTALLED, &mut host, &mut store.outcomes);
     assert!(ramps.is_empty(), "module 3 plays no table here");
 
     // Another table, found where its module was, is not its own.
     begin(&mut ramps, &mut host, 0);
     host.table.as_mut().unwrap().id = TABLE.1 + 1;
-    ramps.step(INSTALLED, &mut host, &mut store.outcomes.retirer);
+    ramps.step(INSTALLED, &mut host, &mut store.outcomes);
     assert!(ramps.is_empty(), "it plays another table");
     host.table.as_mut().unwrap().id = TABLE.1;
 
@@ -170,7 +170,7 @@ fn a_table_s_ramps_end_with_its_plan_or_its_table_and_move_with_it() {
     begin(&mut ramps, &mut host, 0);
     host.table.as_mut().unwrap().plan = PLAN + 1;
     let before = level.current();
-    ramps.step(INSTALLED, &mut host, &mut store.outcomes.retirer);
+    ramps.step(INSTALLED, &mut host, &mut store.outcomes);
     assert!(ramps.is_empty());
     assert_eq!(level.current(), before);
 }

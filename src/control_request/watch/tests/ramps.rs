@@ -145,7 +145,7 @@ impl BeatHost for RampHost {
         _target: &ControlTarget,
         standing: Option<Standing>,
         value: RequestValue,
-        _retirer: &mut Retirer,
+        _outcomes: &mut Outcomes,
     ) -> Result<(), Outcome> {
         if self.held {
             return Err(Outcome::Overridden);
@@ -190,7 +190,7 @@ fn begin(ramps: &mut Ramps, host: &mut RampHost, to: f32, beats: f64) -> Standin
 /// ending just before the nearest arrives, or after 64 samples.
 fn run(ramps: &mut Ramps, host: &mut RampHost, store: &mut PendingStore, until: u64) {
     while host.now < until {
-        let arrives = ramps.step(INSTALLED, host, &mut store.outcomes.retirer);
+        let arrives = ramps.step(INSTALLED, host, &mut store.outcomes);
         host.play(arrives.unwrap_or(64).min(64).min(until - host.now));
     }
 }

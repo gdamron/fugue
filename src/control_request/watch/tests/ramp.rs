@@ -29,9 +29,7 @@ fn segment(watches: &mut Watches, host: &mut RampHost, store: &mut PendingStore)
         if watches.pass(now, INSTALLED, host, &mut store.outcomes).0 {
             continue;
         }
-        let arrives = watches
-            .ramps
-            .step(INSTALLED, host, &mut store.outcomes.retirer);
+        let arrives = watches.ramps.step(INSTALLED, host, &mut store.outcomes);
         let (applied, wait) = watches.pass(now, INSTALLED, host, &mut store.outcomes);
         if !applied {
             return [wait, arrives].into_iter().flatten().fold(64, u64::min);

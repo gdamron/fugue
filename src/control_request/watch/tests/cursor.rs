@@ -82,7 +82,7 @@ fn play(
     } = drain;
     while host.now < until {
         while cursors.pass(host.now, host, ramps).0 {}
-        let arrives = ramps.step(INSTALLED, host, &mut store.outcomes.retirer);
+        let arrives = ramps.step(INSTALLED, host, &mut store.outcomes);
         let (_, wait) = cursors.pass(host.now, host, ramps);
         for (i, control) in watched.iter().enumerate() {
             let value = control.current().unwrap();
