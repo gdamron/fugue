@@ -472,6 +472,8 @@ fn push_unique<T: PartialEq>(values: &mut Vec<T>, value: T) {
 #[cfg(test)]
 use std::fs;
 #[cfg(test)]
+mod diagnostic_tests;
+#[cfg(test)]
 mod read_limit_tests;
 #[cfg(test)]
 mod refresh_cost_tests;

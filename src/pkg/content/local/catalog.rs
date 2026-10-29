@@ -107,7 +107,10 @@ impl ContentCatalog {
                 }
                 Err(mut error) => {
                     if diagnostics.len() < 20 {
-                        error.message = truncate(&error.message, 512);
+                        // Name the entry: errors from a shared dependency
+                        // otherwise read the same for every entry using it.
+                        error.message =
+                            truncate(&format!("{}: {}", label(&reference), error.message), 512);
                         diagnostics.push(error);
                     } else {
                         diagnostics_truncated = true;
@@ -238,6 +241,14 @@ impl ContentCatalog {
         }
         self.refresh()?;
         self.roots.load_invention(&query.reference)
+    }
+}
+
+/// How a diagnostic names the catalog entry it is about.
+fn label(reference: &ContentRef) -> String {
+    match reference {
+        ContentRef::Package { package, version } => format!("{package}@{version}"),
+        ContentRef::Workspace { workspace_path, .. } => format!("workspace {workspace_path}"),
     }
 }
 

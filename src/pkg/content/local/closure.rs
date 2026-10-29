@@ -30,8 +30,8 @@ impl ContentRoots {
             crate::pkg::lock::check_bytes(&path, &bytes)
                 .map_err(|e| err("integrity_mismatch", e))?;
         }
-        let mut document: Invention =
-            serde_json::from_slice(&bytes).map_err(|e| err("invalid_content", e))?;
+        let mut document: Invention = serde_json::from_slice(&bytes)
+            .map_err(|e| err("invalid_content", format!("{}: {e}", path.display())))?;
         document.source_path = Some(path.clone());
         self.fingerprint_file(&path, root, || Ok(hash(&bytes)), manifest, closure)?;
         self.fingerprint_checkout_bytes(&path, root, &bytes, closure)?;
