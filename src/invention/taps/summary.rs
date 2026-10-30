@@ -81,6 +81,10 @@ impl OutputTap {
         let samples_per_bin = samples_per_bin.clamp(1, MAX_SAMPLES_PER_BIN);
         let factor = (samples_per_bin as usize).div_ceil(TAP_BIN);
         let open = self.take_bins();
+        if !open {
+            // What it kept back is a closed module's too.
+            self.pending.clear();
+        }
         let pending = &mut self.pending;
         // Keep the latest contiguous run.
         let contiguous = |pair: &[TapBin]| pair[1].start == pair[0].start + TAP_BIN as u64;

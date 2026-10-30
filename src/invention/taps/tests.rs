@@ -176,6 +176,18 @@ fn at_most_the_cap_are_open_and_dropping_one_frees_its_slot() {
 }
 
 #[test]
+fn a_closed_tap_drops_the_remainder_it_kept_back() {
+    let (registry, mut tap, mut producer) = opened();
+    send(&tap, &mut producer, bins(0, 2));
+    assert!(tap.read(128).is_empty(), "two bins wait for two more");
+    let mut rebuilt = mirror("osc", &["audio"]);
+    rebuilt.modules["osc"].instance = INSTANCE + 1;
+    registry.close_gone(&rebuilt);
+    let read = tap.read(32);
+    assert!(!read.open && read.is_empty(), "{read:?}");
+}
+
+#[test]
 fn a_tap_on_an_instance_no_longer_running_closes_and_reads_nothing_more() {
     let (registry, mut tap, mut producer) = opened();
     send(&tap, &mut producer, bins(0, 1));
