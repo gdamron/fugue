@@ -23,7 +23,9 @@ impl RunningInvention {
         ports: &[&str],
     ) -> Result<OutputTap, GraphCommandError> {
         let mut tap = self.live.tap_output(module_id, ports)?;
-        tap.sample_rate = self.sample_rate;
+        // Its frames are the backend's, whatever rate the modules were
+        // built at.
+        tap.sample_rate = self.backend.sample_rate();
         Ok(tap)
     }
 }

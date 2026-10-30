@@ -58,8 +58,8 @@ pub(crate) struct TapBin {
 pub(crate) struct TapBoard {
     /// Slots open: with none, the audio thread looks no further.
     open: AtomicUsize,
-    /// Cleared as the graph goes (see [`OutputTaps`]'s drop): its taps
-    /// will read nothing more.
+    /// Cleared as the graph fails or goes (see [`OutputTaps::stop`]): its
+    /// taps will read nothing more.
     running: AtomicBool,
     pub(crate) slots: [TapSlot; MAX_OUTPUT_TAPS],
 }
@@ -171,13 +171,18 @@ impl OutputTaps {
         std::mem::swap(&mut self.keys, keys);
         self.moved = true;
     }
+
+    /// Closes every tap on this graph, for good: it failed, or is going.
+    /// Allocation- and lock-free.
+    pub(crate) fn stop(&self) {
+        self.board.running.store(false, Ordering::Release);
+    }
 }
 
 impl Drop for OutputTaps {
-    /// The invention stopped, or its graph was replaced: every tap on it
-    /// is closed.
+    /// The invention stopped, or its graph was replaced.
     fn drop(&mut self) {
-        self.board.running.store(false, Ordering::Release);
+        self.stop();
     }
 }
 

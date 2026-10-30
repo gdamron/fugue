@@ -17,6 +17,7 @@ mod non_finite;
 mod pending;
 mod reclaimer;
 mod script_timing;
+mod taps;
 #[cfg(feature = "spectrogram")]
 mod spectrum;
 mod timed;

@@ -101,12 +101,16 @@ impl SignalGraph {
 
     /// Fails the graph as a panic leaves a block: closes its request queue,
     /// so every later submission is refused, ends its outcomes, so the
-    /// control side settles what still waits, and has every later block
-    /// render silence. Lock-free, and neither allocates nor frees.
+    /// control side settles what still waits, closes its output taps, and
+    /// has every later block render silence. Lock-free, and neither
+    /// allocates nor frees.
     pub(super) fn fail(&mut self) {
         self.failed = true;
         if let Some(drain) = &self.requests {
             drain.close();
+        }
+        if let Some(taps) = &self.output_taps {
+            taps.stop();
         }
     }
 
