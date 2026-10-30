@@ -20,6 +20,7 @@ mod identity;
 mod notes;
 mod package;
 mod pending;
+mod pins;
 mod receipt;
 mod recovery;
 mod request;
@@ -63,6 +64,10 @@ pub use package::{
 pub use pending::{
     PendingCounts, PendingDetail, PendingRequest, PendingRequests, PendingSource, PendingWait,
     COMPACT_PENDING_ITEMS,
+};
+pub use pins::{
+    retain_pins, ControlAddress, ControlPin, PinEdit, PinList, MAX_PINNED_CONTROLS,
+    MAX_PIN_NAME_BYTES,
 };
 pub use receipt::{AppliedControl, ControlRequestState, MutationReceipt, MutationReply};
 pub(crate) use recovery::{truncate_on_char_boundary, MODULE_ERROR_BYTES};
