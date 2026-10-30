@@ -72,7 +72,8 @@ impl GraphShape {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct GraphChange {
-    /// The revision the graph had before the change.
+    /// The revision the graph took its previous shape at. Any revisions
+    /// between `from` and `to` changed only values.
     pub from: RuntimeRevision,
     /// The revision the change produced.
     pub to: RuntimeRevision,
