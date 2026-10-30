@@ -29,6 +29,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use super::declared::RequestPort;
 use super::graph::{RoutingConnection, SignalGraph, MAX_INSTALLS_PER_BLOCK};
+use super::notes::NoteFeed;
 use super::orchestration::ModulePorts;
 use super::runtime::{ControlSurfaceInstance, GraphCommandError};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState};
@@ -62,7 +63,7 @@ mod watch;
 pub(crate) use announce::Progress;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use authored::APPLY_WAIT;
-pub(crate) use change::{edit_offline, BuiltModule, GraphChange, PreparedChange};
+pub(crate) use change::{edit_offline, BuiltModule, GraphChange, PreparedChange, TopologyMirror};
 pub(crate) use contested::Contested;
 pub(crate) use pending::{Announcement, Authoring, DocumentStep, PendingLog, PendingWrite};
 #[cfg(test)]
@@ -103,6 +104,8 @@ pub(crate) struct LiveGraph {
     /// The drain's count of tables' ramps that found no room and jumped
     /// (see `control_request::Ramps::crowded`).
     ramps_crowded: Arc<EventCounter>,
+    /// The notes the audio thread reports (see `crate::invention::notes`).
+    pub(crate) notes: Arc<NoteFeed>,
 }
 
 /// Settles a live graph whose backend never renders on its own, so that
@@ -299,6 +302,7 @@ impl LiveGraph {
             settler,
             authoring: Arc::default(),
             ramps_crowded,
+            notes: ends.notes,
         };
         // Every module the graph starts with runs from here on.
         let port = live.port();

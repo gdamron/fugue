@@ -26,6 +26,7 @@ pub mod graph;
 pub mod handles;
 #[cfg(test)]
 pub(crate) mod manual_backend;
+pub mod notes;
 pub mod orchestration;
 pub(crate) mod publish;
 pub mod reload;
@@ -45,6 +46,7 @@ pub use format::{
 };
 pub use graph::MasterLevels;
 pub use handles::InventionHandles;
+pub use notes::{NoteChange, NoteChanges, NoteTime, Playhead};
 pub use orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
 pub use reload::{DevelopmentDefinitions, ReloadError, ReloadReport};
 pub use render::{CodeModuleRuntimeInfo, RenderEngine};

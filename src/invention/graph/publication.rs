@@ -29,6 +29,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use super::compile::CompiledTopology;
+use super::notes::NoteTaps;
 use super::{RoutingConnection, SignalGraph};
 use crate::control_request::RampRoom;
 use crate::invention::runtime::ModuleInstance;
@@ -80,6 +81,10 @@ pub(crate) struct Publication {
     /// graph it installs needs it (see [`RampRoom`]): taken as it installs,
     /// leaving here the room it replaces, freed with the rest.
     pub(crate) ramp_room: Option<RampRoom>,
+    /// The note taps for the graph it installs, built from the same mirror;
+    /// none for an offline edit, which reports no notes. Taken as it
+    /// installs, leaving here the taps it replaces.
+    pub(crate) note_taps: Option<NoteTaps>,
 }
 
 impl Publication {
@@ -506,6 +511,10 @@ impl SignalGraph {
         std::mem::swap(&mut self.edges, &mut publication.edges);
         publication.topology.swap_with(self);
         self.published = true;
+        if let (Some(taps), Some(out)) = (publication.note_taps.as_mut(), self.note_out.as_mut()) {
+            std::mem::swap(taps, &mut self.note_taps);
+            self.note_taps.take_over(taps, out, self.current_sample);
+        }
 
         // A survivor missing from the running map (which the publisher's
         // mirror rules out) or buffers sized for another block size fall back

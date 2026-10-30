@@ -116,6 +116,7 @@ impl Publisher {
         let mut publication = prepared.publication.take().expect("checked above");
         publication.map_survivors(self.mirror.modules.keys().map(String::as_str));
         publication.generation = self.generation + 1;
+        publication.note_taps = Some(self.note_keys.taps(&prepared.mirror));
         let fate = Fate::default();
         publication.fate = Some(fate.guard());
         let mut edit = Request::edit(self.generation, Payload::owned(publication));

@@ -14,6 +14,7 @@ use crate::control_request::{
 use crate::invention::graph::{
     AudioLink, InputWrite, Publication, RequestDrain, SignalGraph, MAX_INPUT_PORT_NAME,
 };
+use crate::invention::notes::{NoteFeed, NoteKeys};
 use crate::invention::runtime::GraphCommandError;
 use crate::invention::timelines::{Context, Flow};
 use crate::payload::{self, Payload, RetireQueue, Retirer, MAX_RETIRES_PER_REQUEST};
@@ -144,6 +145,9 @@ pub(crate) struct Publisher {
     timed_flag: Arc<AtomicBool>,
     /// What became of each recent timed edit.
     ledger: Ledger,
+    /// Numbers the modules whose notes the audio thread reports, for the
+    /// taps each publication carries (see `crate::invention::notes`).
+    note_keys: Arc<NoteKeys>,
 }
 
 impl Publisher {
@@ -178,8 +182,12 @@ impl Publisher {
             Producer::claim(Arc::clone(&retired)),
             applied.clone(),
         ));
+        let (notes, note_out) = NoteFeed::new();
+        let mirror = TopologyMirror::of(&graph.modules, &graph.edges);
+        graph.note_taps = notes.keys().taps(&mirror);
+        graph.note_out = Some(note_out);
         let publisher = Self {
-            mirror: TopologyMirror::of(&graph.modules, &graph.edges),
+            mirror,
             generation: 0,
             block_size: graph.block_size,
             requests: requests.reserving(RESERVED_ROOM as u64),
@@ -190,12 +198,14 @@ impl Publisher {
             timed: None,
             timed_flag: Arc::new(AtomicBool::new(false)),
             ledger: Ledger::default(),
+            note_keys: Arc::clone(notes.keys()),
         };
         let ends = LinkEnds {
             requests: requests.reserving(EDIT_RESERVE as u64),
             retired,
             payloads,
             outcomes,
+            notes,
         };
         (publisher, ends)
     }
@@ -465,6 +475,7 @@ impl Publisher {
         // audio thread will be running when it installs this one.
         publication.map_survivors(self.mirror.modules.keys().map(String::as_str));
         publication.generation = self.generation + 1;
+        publication.note_taps = Some(self.note_keys.taps(&prepared.mirror));
         // Every request and input write tagged with the current generation
         // was queued under this lock, so before this push, whose release
         // the audio thread's pop acquires.
@@ -516,6 +527,8 @@ pub(crate) struct LinkEnds {
     pub(crate) payloads: Arc<RetireQueue>,
     /// What became of each submitted request.
     pub(crate) outcomes: OutcomeReceiver,
+    /// The notes the audio thread reports.
+    pub(crate) notes: Arc<NoteFeed>,
 }
 
 /// What a publication replaced, for committing the runtime's other mirrors.

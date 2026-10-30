@@ -53,6 +53,7 @@ mod conditions;
 mod edges;
 pub(crate) mod ended;
 mod master;
+pub(crate) mod notes;
 mod process;
 mod publication;
 mod requests;
@@ -232,6 +233,10 @@ pub(crate) struct SignalGraph {
     pub(crate) diagnostics: Option<Arc<AudioDiagnostics>>,
     /// Where an offline render's `ended` gates rose; `None` for a live graph.
     pub(crate) end_watch: Option<ended::EndWatch>,
+    /// The modules whose notes the audio thread reports (see [`notes`]).
+    pub(crate) note_taps: notes::NoteTaps,
+    /// Where it reports them; `None` for offline render.
+    pub(crate) note_out: Option<notes::NoteOut>,
 }
 
 impl SignalGraph {
@@ -279,6 +284,8 @@ impl SignalGraph {
             master,
             diagnostics: None,
             end_watch: None,
+            note_taps: Default::default(),
+            note_out: None,
         }
     }
 
