@@ -84,6 +84,10 @@ pub enum RpcResponsePayload {
     Focus {
         focus: Option<super::Focus>,
     },
+    /// The reply to `GetSummary`.
+    Summary {
+        summary: super::StatusSummary,
+    },
     /// A committed [`RpcCommand::InstallPackage`].
     ///
     /// [`RpcCommand::InstallPackage`]: super::RpcCommand::InstallPackage

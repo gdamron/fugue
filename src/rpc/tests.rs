@@ -14,6 +14,7 @@ mod request;
 mod response;
 mod snapshot;
 mod spectrogram;
+mod summary;
 mod timed;
 
 fn test_invention() -> Invention {
