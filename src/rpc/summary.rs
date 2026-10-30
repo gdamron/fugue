@@ -37,7 +37,8 @@ pub struct StatusSummary {
     /// The shape's version: [`STATUS_SUMMARY_VERSION`] when written.
     pub version: u32,
     /// Counts publications, from 1, within one daemon session: a reader that
-    /// sees the same `seq` again has nothing new.
+    /// sees the same `seq` again from the same `revision.session_id` has
+    /// nothing new. A restarted daemon counts from 1 again.
     pub seq: u64,
     /// When it was published, in milliseconds since the Unix epoch.
     pub published_at_ms: u64,
