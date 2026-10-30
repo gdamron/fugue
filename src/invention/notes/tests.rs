@@ -149,6 +149,8 @@ fn a_note_held_as_its_module_moves_to_another_clock_ends_and_starts_again_on_it(
     assert_eq!(notes.len(), 2, "{notes:?}");
     let (ended, restarted) = (&notes[0], &notes[1]);
     assert_eq!((ended.note, restarted.note), (1, 2));
+    let clocks = (ended.clock.as_deref(), restarted.clock.as_deref());
+    assert_eq!(clocks, (Some("clock"), Some("slow")));
     let end = ended.end.unwrap().beats.unwrap();
     assert!((end - 1.1).abs() < 0.01, "on the old clock: {end}");
     let start = restarted.start.beats.unwrap();

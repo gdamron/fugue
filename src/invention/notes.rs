@@ -43,6 +43,10 @@ pub struct NoteChange {
     /// How hard it was struck, 0 to 1: the module's `velocity` output as it
     /// started, or 1 without one.
     pub velocity: f32,
+    /// The clock its beats count on; `None` without one. A note is on one
+    /// clock from start to end: one held as its module moves to another
+    /// clock ends, and starts again on the new one.
+    pub clock: Option<String>,
     pub start: NoteTime,
     /// `None` while it is held.
     pub end: Option<NoteTime>,
@@ -76,7 +80,9 @@ pub struct NoteChanges {
     /// In the order they happened.
     pub notes: Vec<NoteChange>,
     /// Starts and ends the audio thread dropped since the last drain, its
-    /// ring full: nonzero means some changes are missing.
+    /// ring full: nonzero means some changes are missing. The notes held
+    /// then are forgotten, since their ends may be among them: no end
+    /// will be reported for them.
     pub missed: u32,
 }
 
@@ -125,6 +131,11 @@ impl NoteFeed {
         while let Some(edge) = self.ring.pop() {
             pairing.pair(&edge, &self.keys, &mut notes);
         }
+        // The dropped edges came after those the ring held: a note still
+        // held may have ended among them, and would otherwise hold forever.
+        if missed > 0 {
+            pairing.held.clear();
+        }
         NoteChanges { notes, missed }
     }
 }
@@ -156,6 +167,7 @@ impl Pairing {
             note: self.next[key],
             voice: u32::from(edge.voice),
             pitch,
+            clock: edge.clock.and_then(|clock| keys.id(clock)),
             velocity: if edge.velocity.is_nan() {
                 1.0
             } else {

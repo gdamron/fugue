@@ -239,14 +239,22 @@ fn tapping_neither_allocates_nor_frees_on_the_audio_thread() {
 }
 
 #[test]
-fn a_full_ring_drops_edges_and_counts_them() {
-    // Far more starts and ends than the ring holds, never drained.
-    let script = (0..2_000).map(|n| (0, n * 4, n * 4 + 2, 440.0, 1.0));
-    let (mut graph, feed) = tapped(Player::new(script.collect()));
-    render(&mut graph, 8_000);
+fn a_full_ring_drops_edges_counts_them_and_forgets_what_was_held() {
+    // Far more starts and ends than the ring holds, never drained, while
+    // voice 1 holds a note whose end the full ring drops.
+    let flood = (0..2_000).map(|n| (0, n * 4, n * 4 + 2, 440.0, 1.0));
+    let held = [(1, 0, 8_000, 220.0, 1.0), (1, 9_000, 9_100, 330.0, 1.0)];
+    let (mut graph, feed) = tapped(Player::new(flood.chain(held).collect()));
+    render(&mut graph, 8_100);
     let changes = feed.take();
-    assert_eq!(changes.missed, 4_000 - super::NOTE_EDGE_CAPACITY as u32);
-    assert_eq!(feed.take().missed, 0, "counted once");
+    assert_eq!(changes.missed, 4_002 - super::NOTE_EDGE_CAPACITY as u32);
+    // The held note is forgotten rather than held until voice 1 plays
+    // again: its next note is all that follows.
+    render(&mut graph, 1_100);
+    let after = feed.take();
+    assert_eq!(after.missed, 0, "counted once");
+    let starts: Vec<u64> = after.notes.iter().map(|n| n.start.frame).collect();
+    assert_eq!(starts, [9_000, 9_000], "{:?}", after.notes);
 }
 
 #[test]

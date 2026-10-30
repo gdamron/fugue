@@ -40,6 +40,8 @@ pub(crate) struct NoteEdge {
     /// The beat it crossed on, counted on the module's clock across resets
     /// (see [`ClockSpan`]); NaN when the module has none.
     pub(crate) beats: f64,
+    /// That clock, by the key the feed gave its id.
+    pub(crate) clock: Option<u32>,
     /// The `frequency` output as the note starts, in Hz; 0 for an end.
     pub(crate) frequency: f32,
     /// The `velocity` output as the note starts (1 with no such output); 0
@@ -147,6 +149,7 @@ impl NoteTaps {
                         on: false,
                         frame,
                         beats: old.last_beats,
+                        clock: old.clock_key,
                         frequency: 0.0,
                         velocity: 0.0,
                     }),
@@ -255,6 +258,7 @@ impl SignalGraph {
                         on: high,
                         frame: start + i as u64,
                         beats: beats(i),
+                        clock: tap.clock_key,
                         frequency: if high { frequency[i] } else { 0.0 },
                         velocity: match (high, velocity) {
                             (false, _) => 0.0,
