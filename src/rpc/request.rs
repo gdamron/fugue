@@ -137,6 +137,9 @@ pub enum RpcRequestPayload {
     SetFocus(super::FocusIntent),
     /// Read what the person last pointed at, on any surface.
     GetFocus,
+    /// Read the latest [`StatusSummary`](super::StatusSummary), which a
+    /// daemon refreshes about once a second.
+    GetSummary,
 }
 
 /// A single control write in a [`RpcCommand::SetControls`] batch.

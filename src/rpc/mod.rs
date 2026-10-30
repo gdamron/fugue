@@ -27,6 +27,7 @@ mod response;
 mod revision;
 mod snapshot;
 mod spectrogram;
+mod summary;
 mod timed;
 pub use authored_snapshot::{
     AuthoredSnapshot, SnapshotDelivery, MAX_FILE_SNAPSHOT_BYTES, MAX_INLINE_SNAPSHOT_BYTES,
@@ -44,7 +45,6 @@ pub use edits::{
     EditOp, StructuralEdit, WrittenControl, MAX_EDITS_PER_BATCH, MAX_EDIT_NAME_BYTES,
 };
 pub use error::{RpcError, RpcErrorCode};
-pub use notes::{NotePage, NoteTimeUnit, SeqNote};
 pub use event::{
     EventPage, MeterReading, RpcEvent, RpcEventPayload, RpcEventSink, RpcSubscriptionTopic,
     SeqEvent, SinkStatusState,
@@ -54,6 +54,7 @@ pub use focus::{
     MAX_FOCUS_ITEMS, MAX_FOCUS_NAME_BYTES,
 };
 pub use identity::{verify_daemon_identity, BuildFingerprint, DaemonIdentity, IdentityMismatch};
+pub use notes::{NotePage, NoteTimeUnit, SeqNote};
 pub use package::{
     PackageInfo, PackageInstallReport, PackageInstallRequest, PackageList, PackageListQuery,
     PackageSource, MAX_PACKAGE_DIAGNOSTICS, MAX_PACKAGE_LIST_BYTES, MAX_PACKAGE_SUMMARY_BYTES,
@@ -84,6 +85,11 @@ pub use spectrogram::{
     SpectrogramStreamMeta, SpectrogramTile, SpectrogramWindow,
 };
 
+pub use summary::{
+    ClockSummary, FocusSummary, LoadedSummary, OutputLevels, PinnedControl, StatusSummary,
+    SummaryModule, TransportSummary, MAX_STATUS_SUMMARY_BYTES, MAX_SUMMARY_CLOCKS,
+    MAX_SUMMARY_MODULES, MAX_SUMMARY_PINNED, MAX_SUMMARY_TEXT_BYTES, STATUS_SUMMARY_VERSION,
+};
 pub use timed::{EditTiming, EditWhen, RequestLanding, RequestState, RequestStatus};
 
 /// Current runtime RPC schema version.
