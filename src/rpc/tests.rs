@@ -13,6 +13,7 @@ mod pins;
 mod recovery;
 mod request;
 mod response;
+mod scope;
 mod snapshot;
 mod spectrogram;
 mod summary;

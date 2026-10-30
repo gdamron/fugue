@@ -26,6 +26,7 @@ mod recovery;
 mod request;
 mod response;
 mod revision;
+mod scope;
 mod snapshot;
 mod spectrogram;
 mod summary;
@@ -80,6 +81,7 @@ pub use response::{ReloadMode, ReloadOutcome, RpcResponse, RpcResponsePayload, S
 pub use revision::{
     ConflictReason, ControlWriteIntent, RevisionConflict, RevisionTracker, RuntimeRevision,
 };
+pub use scope::{OpenScope, ScopeChannel, ScopeDelivery, ScopeEncoding, ScopeFrame, ScopeInfo};
 pub use snapshot::{
     RuntimeControlSnapshot, RuntimeFullSnapshot, RuntimeModuleSnapshot, RuntimePortInfo,
     TimelineContext,
