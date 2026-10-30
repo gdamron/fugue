@@ -1,11 +1,12 @@
 use super::*;
 use crate::{Invention, ModuleSpec};
 
+mod control_timing;
 mod discovery;
 mod edits;
 mod error;
-mod control_timing;
 mod event;
+mod focus;
 mod package;
 mod pending;
 mod recovery;

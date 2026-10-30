@@ -130,6 +130,13 @@ pub enum RpcRequestPayload {
     ///
     /// [`DaemonIdentity`]: super::DaemonIdentity
     Hello,
+    /// Report what the person selected in a view, or that the view let go.
+    /// Sets the session's focus, which [`RpcRequestPayload::GetFocus`] reads
+    /// back. Pointing never changes the music, so it is no command: it moves
+    /// no revision and is not saved with the session.
+    SetFocus(super::FocusIntent),
+    /// Read what the person last pointed at, on any surface.
+    GetFocus,
 }
 
 /// A single control write in a [`RpcCommand::SetControls`] batch.

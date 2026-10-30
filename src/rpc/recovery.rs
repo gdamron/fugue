@@ -165,7 +165,10 @@ impl RpcRequestPayload {
             | Self::GetSnapshot
             | Self::PollEvents { .. }
             | Self::PollNotes { .. }
-            | Self::GetMeters => ReplayPolicy::Resend,
+            | Self::GetMeters
+            | Self::GetFocus
+            // Setting the same selection again leaves the same focus.
+            | Self::SetFocus(_) => ReplayPolicy::Resend,
             Self::Subscribe { .. } => ReplayPolicy::Never,
             Self::Command(command) => command.replay_policy(),
         }

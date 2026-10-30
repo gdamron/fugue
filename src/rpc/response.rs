@@ -79,6 +79,11 @@ pub enum RpcResponsePayload {
         meters: Vec<MeterReading>,
     },
     Packages(PackageList),
+    /// The session's focus, in reply to `SetFocus` and `GetFocus`. None when
+    /// nothing is selected.
+    Focus {
+        focus: Option<super::Focus>,
+    },
     /// A committed [`RpcCommand::InstallPackage`].
     ///
     /// [`RpcCommand::InstallPackage`]: super::RpcCommand::InstallPackage
