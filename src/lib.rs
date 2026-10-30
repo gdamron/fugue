@@ -64,6 +64,7 @@ pub use rpc::{
     SpectrogramLimits, SpectrogramMagnitudes, SpectrogramProvenance, SpectrogramStreamMeta,
     SpectrogramTile, SpectrogramWindow, TimelineContext, TypeDetail, RPC_SCHEMA_VERSION,
 };
+pub use rpc::{NotePage, NoteTimeUnit, SeqNote};
 
 // Re-export modules
 pub use modules::{

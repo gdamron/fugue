@@ -164,6 +164,7 @@ impl RpcRequestPayload {
             Self::Hello
             | Self::GetSnapshot
             | Self::PollEvents { .. }
+            | Self::PollNotes { .. }
             | Self::GetMeters
             | Self::GetFocus
             // Setting the same selection again leaves the same focus.

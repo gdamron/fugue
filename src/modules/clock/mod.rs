@@ -12,7 +12,7 @@ use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::{ControlValue, Module};
 
-use self::controls::{BPM, GATE_LENGTH, POSITION, RESET, TABLE};
+use self::controls::{BPM, ELAPSED, GATE_LENGTH, POSITION, RESET, TABLE};
 
 mod controls;
 mod inputs;
@@ -92,6 +92,10 @@ impl ModuleFactory for ClockFactory {
 /// sample past 0, as it has always been.) The read-only
 /// `position` control reports it. A reload keeps the position of a clock it
 /// keeps, unless the clock's config sets `reset_on_reload`.
+///
+/// The read-only `elapsed` control counts on across resets instead: the
+/// beats begun before the latest reset plus the position, so a looping
+/// clock's count never folds back: what a view's playhead follows.
 pub struct Clock {
     sample_rate: u32,
     // Controls, applied on the thread running the clock.
@@ -266,8 +270,10 @@ impl Module for Clock {
         for i in 0..frames {
             self.advance(i);
         }
-        let position = self.beat_position().max(0.0) as f32;
-        self.cells.publish(POSITION, RtValue::F32(position));
+        let position = self.beat_position().max(0.0);
+        self.cells.publish(POSITION, RtValue::F32(position as f32));
+        let elapsed = self.beats_before as f64 + position;
+        self.cells.publish(ELAPSED, RtValue::F32(elapsed as f32));
         true
     }
 
