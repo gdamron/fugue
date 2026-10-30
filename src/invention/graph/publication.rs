@@ -85,6 +85,10 @@ pub(crate) struct Publication {
     /// none for an offline edit, which reports no notes. Taken as it
     /// installs, leaving here the taps it replaces.
     pub(crate) note_taps: Option<NoteTaps>,
+    /// The instance key of each module of the graph it installs, in module
+    /// order, for the output taps (see `super::taps`); none for an offline
+    /// edit. Taken as it installs, leaving here the keys it replaces.
+    pub(crate) tap_keys: Option<Vec<u32>>,
 }
 
 impl Publication {
@@ -514,6 +518,10 @@ impl SignalGraph {
         if let (Some(taps), Some(out)) = (publication.note_taps.as_mut(), self.note_out.as_mut()) {
             std::mem::swap(taps, &mut self.note_taps);
             self.note_taps.take_over(taps, out, self.current_sample);
+        }
+        if let (Some(keys), Some(taps)) = (publication.tap_keys.as_mut(), self.output_taps.as_mut())
+        {
+            taps.install(keys);
         }
 
         // A survivor missing from the running map (which the publisher's

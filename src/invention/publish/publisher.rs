@@ -11,6 +11,7 @@ use crate::control_request::{
     outcome_channel_reserving, request_channel, ControlIndex, ControlTarget, OutcomeReceiver,
     QueueFull, Request, RequestSender, RequestValue, CONDITION_ROOM, WAITING_RESERVE,
 };
+use crate::invention::graph::taps::{OutputTaps, TapBoard};
 use crate::invention::graph::{
     AudioLink, InputWrite, Publication, RequestDrain, SignalGraph, MAX_INPUT_PORT_NAME,
 };
@@ -186,6 +187,8 @@ impl Publisher {
         let mirror = TopologyMirror::of(&graph.modules, &graph.edges);
         graph.note_taps = notes.keys().taps(&mirror);
         graph.note_out = Some(note_out);
+        let keys = mirror.instance_keys();
+        graph.output_taps = Some(OutputTaps::new(TapBoard::new(), keys));
         let publisher = Self {
             mirror,
             generation: 0,
@@ -476,6 +479,7 @@ impl Publisher {
         publication.map_survivors(self.mirror.modules.keys().map(String::as_str));
         publication.generation = self.generation + 1;
         publication.note_taps = Some(self.note_keys.taps(&prepared.mirror));
+        publication.tap_keys = Some(prepared.mirror.instance_keys());
         // Every request and input write tagged with the current generation
         // was queued under this lock, so before this push, whose release
         // the audio thread's pop acquires.
