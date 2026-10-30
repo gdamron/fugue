@@ -162,6 +162,21 @@ fn a_change_too_large_to_list_says_so_with_its_size() {
 }
 
 #[test]
+fn a_change_too_long_to_encode_small_is_too_large() {
+    let long = "m".repeat(MAX_GRAPH_CHANGE_BYTES / 8);
+    let after = GraphShape {
+        modules: (0..10)
+            .map(|i| module(&format!("{long}{i}"), "oscillator"))
+            .collect(),
+        connections: Vec::new(),
+    };
+    let c = change(&GraphShape::default(), &after).unwrap();
+    assert!(c.too_large);
+    assert_eq!(c.change_count, 10);
+    assert!(c.added.is_empty());
+}
+
+#[test]
 fn the_wire_carries_only_what_changed() {
     let mut after = voice();
     after.modules.remove(1);

@@ -20,6 +20,10 @@ use crate::{RuntimeConnectionInfo, RuntimeState};
 /// new piece pasted in, say) is announced without its lists, see
 /// [`GraphChange::too_large`], which keeps every announcement small.
 pub const MAX_GRAPH_CHANGE_ITEMS: usize = 128;
+/// Most bytes one change's JSON encoding may take with its lists; past it
+/// (long module ids, say) it is announced without them, as a change with
+/// too many items is.
+pub const MAX_GRAPH_CHANGE_BYTES: usize = 16 * 1024;
 
 /// A module named in a change: its id and its type.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -73,7 +77,7 @@ impl GraphShape {
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct GraphChange {
     /// The revision the graph took its previous shape at. Any revisions
-    /// between `from` and `to` changed only values.
+    /// between `from` and `to` left the graph's shape as it was.
     pub from: RuntimeRevision,
     /// The revision the change produced.
     pub to: RuntimeRevision,
@@ -97,7 +101,8 @@ pub struct GraphChange {
     /// How many modules and connections changed in all: the length of every
     /// list above together, even when they are left empty.
     pub change_count: usize,
-    /// True when more than [`MAX_GRAPH_CHANGE_ITEMS`] changed: every list is
+    /// True when more than [`MAX_GRAPH_CHANGE_ITEMS`] changed, or the lists
+    /// would encode to more than [`MAX_GRAPH_CHANGE_BYTES`]: every list is
     /// then empty, and a view shows the new graph without calling anything
     /// out.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -169,7 +174,9 @@ impl GraphChange {
             change_count,
             too_large: false,
         };
-        if change_count > MAX_GRAPH_CHANGE_ITEMS {
+        let too_large = change_count > MAX_GRAPH_CHANGE_ITEMS
+            || serde_json::to_vec(&change).map_or(true, |json| json.len() > MAX_GRAPH_CHANGE_BYTES);
+        if too_large {
             change.added.clear();
             change.removed.clear();
             change.replaced.clear();
