@@ -59,6 +59,7 @@ mod scheduler_edges;
 mod staged_writes;
 mod step_pattern;
 mod table_ramp_room;
+mod taps;
 mod timed_chain;
 mod timed_edits;
 mod timed_keep;

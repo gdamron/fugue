@@ -192,6 +192,7 @@ impl Publisher {
         // thread, which then knows nothing is tagged older (see `landing`).
         self.published.store(self.generation, Ordering::Release);
         let previous = std::mem::replace(&mut self.mirror, waiting.mirror);
+        self.taps.close_gone(&self.mirror);
         Some(Adopted {
             id: waiting.id,
             published: Published {

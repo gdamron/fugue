@@ -28,6 +28,7 @@ mod notes;
 mod orchestration;
 mod pending;
 mod ports;
+mod taps;
 pub(crate) mod timed;
 
 pub use acks::ControlAcks;

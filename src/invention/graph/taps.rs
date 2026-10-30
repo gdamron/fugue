@@ -92,7 +92,6 @@ impl TapBoard {
     /// Control thread: opens closed slot `slot` on `ports` (one or two) of
     /// the module instance `key`, for the opening numbered `serial`
     /// (nonzero). Its bins start at the audio thread's next segment.
-    #[cfg_attr(not(test), allow(dead_code))] // Called by the control side.
     pub(crate) fn open(&self, slot: usize, serial: u32, key: u32, ports: [usize; 2]) {
         let slot = &self.slots[slot];
         let packed = |port: usize| u32::try_from(port).map_or(NO_PORT, |port| port.min(NO_PORT));
@@ -105,14 +104,12 @@ impl TapBoard {
     }
 
     /// Whether the graph tapping these slots still runs.
-    #[cfg_attr(not(test), allow(dead_code))] // Called by the control side.
     pub(crate) fn running(&self) -> bool {
         self.running.load(Ordering::Acquire)
     }
 
     /// Control thread: closes open slot `slot`. A segment already reading
     /// it may still send a bin or two under the old serial.
-    #[cfg_attr(not(test), allow(dead_code))] // Called by the control side.
     pub(crate) fn close(&self, slot: usize) {
         self.slots[slot].state.store(0, Ordering::Release);
         self.open.fetch_sub(1, Ordering::Release);

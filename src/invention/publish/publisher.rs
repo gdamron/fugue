@@ -11,12 +11,13 @@ use crate::control_request::{
     outcome_channel_reserving, request_channel, ControlIndex, ControlTarget, OutcomeReceiver,
     QueueFull, Request, RequestSender, RequestValue, CONDITION_ROOM, WAITING_RESERVE,
 };
-use crate::invention::graph::taps::{OutputTaps, TapBoard};
+use crate::invention::graph::taps::OutputTaps;
 use crate::invention::graph::{
     AudioLink, InputWrite, Publication, RequestDrain, SignalGraph, MAX_INPUT_PORT_NAME,
 };
 use crate::invention::notes::{NoteFeed, NoteKeys};
 use crate::invention::runtime::GraphCommandError;
+use crate::invention::taps::TapRegistry;
 use crate::invention::timelines::{Context, Flow};
 use crate::payload::{self, Payload, RetireQueue, Retirer, MAX_RETIRES_PER_REQUEST};
 use crate::spsc::{Consumer, Producer, Ring};
@@ -149,6 +150,8 @@ pub(crate) struct Publisher {
     /// Numbers the modules whose notes the audio thread reports, for the
     /// taps each publication carries (see `crate::invention::notes`).
     note_keys: Arc<NoteKeys>,
+    /// The output taps views hold open (see `crate::invention::taps`).
+    pub(super) taps: Arc<TapRegistry>,
 }
 
 impl Publisher {
@@ -187,8 +190,9 @@ impl Publisher {
         let mirror = TopologyMirror::of(&graph.modules, &graph.edges);
         graph.note_taps = notes.keys().taps(&mirror);
         graph.note_out = Some(note_out);
+        let taps = TapRegistry::new();
         let keys = mirror.instance_keys();
-        graph.output_taps = Some(OutputTaps::new(TapBoard::new(), keys));
+        graph.output_taps = Some(OutputTaps::new(Arc::clone(taps.board()), keys));
         let publisher = Self {
             mirror,
             generation: 0,
@@ -202,6 +206,7 @@ impl Publisher {
             timed_flag: Arc::new(AtomicBool::new(false)),
             ledger: Ledger::default(),
             note_keys: Arc::clone(notes.keys()),
+            taps: Arc::clone(&taps),
         };
         let ends = LinkEnds {
             requests: requests.reserving(EDIT_RESERVE as u64),
@@ -209,6 +214,7 @@ impl Publisher {
             payloads,
             outcomes,
             notes,
+            taps,
         };
         (publisher, ends)
     }
@@ -499,6 +505,7 @@ impl Publisher {
         // in the queue (see `published`).
         self.published.store(self.generation, Ordering::Release);
         let previous = std::mem::replace(&mut self.mirror, prepared.mirror);
+        self.taps.close_gone(&self.mirror);
         Ok(Published {
             previous,
             built: prepared.built,
@@ -533,6 +540,8 @@ pub(crate) struct LinkEnds {
     pub(crate) outcomes: OutcomeReceiver,
     /// The notes the audio thread reports.
     pub(crate) notes: Arc<NoteFeed>,
+    /// The output taps views hold open.
+    pub(crate) taps: Arc<TapRegistry>,
 }
 
 /// What a publication replaced, for committing the runtime's other mirrors.

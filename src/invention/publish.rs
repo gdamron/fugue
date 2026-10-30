@@ -33,6 +33,7 @@ use super::notes::NoteFeed;
 use super::orchestration::ModulePorts;
 use super::runtime::{ControlSurfaceInstance, GraphCommandError};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState};
+use super::taps::{OutputTap, TapRegistry};
 use crate::control_request::{EventCounter, Outcome, RequestId, RequestSender};
 use crate::modules::dac::Settle;
 use crate::ModuleRegistry;
@@ -63,6 +64,8 @@ mod watch;
 pub(crate) use announce::Progress;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use authored::APPLY_WAIT;
+#[cfg(test)]
+pub(crate) use change::MirrorModule;
 pub(crate) use change::{edit_offline, BuiltModule, GraphChange, PreparedChange, TopologyMirror};
 pub(crate) use contested::Contested;
 pub(crate) use pending::{Announcement, Authoring, DocumentStep, PendingLog, PendingWrite};
@@ -106,6 +109,8 @@ pub(crate) struct LiveGraph {
     ramps_crowded: Arc<EventCounter>,
     /// The notes the audio thread reports (see `crate::invention::notes`).
     pub(crate) notes: Arc<NoteFeed>,
+    /// The output taps views hold open (see `crate::invention::taps`).
+    pub(crate) taps: Arc<TapRegistry>,
 }
 
 /// Settles a live graph whose backend never renders on its own, so that
@@ -303,6 +308,7 @@ impl LiveGraph {
             authoring: Arc::default(),
             ramps_crowded,
             notes: ends.notes,
+            taps: ends.taps,
         };
         // Every module the graph starts with runs from here on.
         let port = live.port();
@@ -421,6 +427,17 @@ impl LiveGraph {
     /// Module `id`'s timeline context as of the latest publication.
     pub(crate) fn timeline_of(&self, id: &str) -> Option<crate::TimelineContext> {
         self.lock().mirror().timeline_of(id)
+    }
+
+    /// Opens a tap on `ports` of `module_id` (its audio when none are
+    /// named) as last published: see [`TapRegistry::open`].
+    pub(crate) fn tap_output(
+        &self,
+        module_id: &str,
+        ports: &[&str],
+    ) -> Result<OutputTap, GraphCommandError> {
+        let publisher = self.lock();
+        self.taps.open(publisher.mirror(), module_id, ports)
     }
 
     /// The shared publisher, for observation in tests.
