@@ -1,4 +1,4 @@
-//! FUG-188 acceptance check: with the sustain pedal held, notes ring past
+//! Sustain pedal acceptance check: with the pedal held, notes ring past
 //! their gate ends on their own decay — with the reverb fully dry, so the
 //! tail demonstrably comes from the voices, not a room.
 //!

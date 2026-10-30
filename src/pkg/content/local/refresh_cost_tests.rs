@@ -1,4 +1,4 @@
-//! FUG-279: catalog refresh cost is bounded by file count, not library bytes.
+//! Catalog refresh cost is bounded by file count, not library bytes.
 
 use super::cache::test_counter::hashes_during;
 use super::*;
@@ -183,7 +183,7 @@ fn timed<T>(body: impl FnOnce() -> T) -> (T, Duration) {
     (result, start.elapsed())
 }
 
-/// Before/after measurement for FUG-279. Run with
+/// Before/after measurement of the verification cache. Run with
 /// `cargo test --lib refresh_cost_benchmark -- --ignored --nocapture`.
 #[test]
 #[ignore = "benchmark: hashes several GiB of sparse files"]

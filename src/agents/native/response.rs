@@ -155,7 +155,7 @@ pub(super) fn apply_response(
     for (target, control, control_value) in writes {
         // An agent's applied response is a live gesture, not an authoring
         // change: it must not land in a saved document or advance the
-        // daemon's revision (FUG-266).
+        // daemon's revision.
         // It ranks as an agent's write.
         let options = WriteOptions::performed(Source::Agent);
         let perform = ControlWriteIntent::Perform;

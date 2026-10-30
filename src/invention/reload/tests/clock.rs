@@ -1,5 +1,5 @@
 //! Reloading a running clock: it keeps its beat position, unless its config
-//! sets `reset_on_reload` (FUG-320).
+//! sets `reset_on_reload`.
 
 use super::*;
 

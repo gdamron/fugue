@@ -1,6 +1,6 @@
 //! A top-level scheduler steps on whatever its `clock` input carries: one
 //! clock's gate output (played on the clock's beats), nothing, or any other
-//! signal or mix of signals, whose rising edges it counts (FUG-389). So it
+//! signal or mix of signals, whose rising edges it counts. So it
 //! loads on any of them, and an offline edit (through a render's
 //! controller or the render itself) may connect any of them; so may a
 //! development's inner graph.

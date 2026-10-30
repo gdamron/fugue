@@ -171,7 +171,7 @@ fn an_order_running_a_writers_loop_earlier_is_not_added() {
 
 /// sched_b, retargeted live to write clock2's tempo and d2's level, which
 /// publishes the topology recompiled to run it, with clock2 and sched_a,
-/// ahead (FUG-388).
+/// ahead.
 fn retargeted_live() -> Rig {
     let rig = rig(false);
     let schedule = |at: serde_json::Value| serde_json::json!({ "schedule": at });
@@ -282,7 +282,7 @@ fn orders_go_with_the_first_change_once_no_condition_waits() {
 
 /// A block size change recompiles in place on the audio thread: it keeps
 /// the orders the topology was published with, so a condition waiting on
-/// one still applies on its exact sample (FUG-391).
+/// one still applies on its exact sample.
 #[test]
 fn a_block_size_change_keeps_the_orders_installed() {
     let oracle = rig(false).render(200);

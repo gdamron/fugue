@@ -133,7 +133,7 @@ pub(crate) enum Intent {
 /// Who submitted a request.
 ///
 /// Priority tiers order sources user = agent > script > automation; the
-/// override rules that apply them are A4's (FUG-316), not this module's.
+/// override rules that apply them live in `hold`, not this module.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Source {
     User,
@@ -156,7 +156,7 @@ pub(crate) struct RequestId(pub(crate) u64);
 #[derive(Debug)]
 pub(crate) enum RequestValue {
     Value(RtValue),
-    /// A heavy value prepared on a control thread (FUG-309).
+    /// A heavy value prepared on a control thread.
     Payload(Payload),
     /// A structural edit: a prepared graph publication, owned
     /// ([`Payload::owned`]). It targets the graph, not a control (see

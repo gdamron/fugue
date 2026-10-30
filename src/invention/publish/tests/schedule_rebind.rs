@@ -151,7 +151,7 @@ fn a_schedule_retargeted_onto_a_module_a_prepared_change_removes_refuses_it() {
     let onto_p = r#"[{ "at_step": 1, "module": "p", "control": "frequency", "value": 55.0 }]"#;
     write(&rig, "sched", "schedule", onto_p.into());
     let before = rig.generation_and_applied();
-    // The write published the topology recompiled with p (FUG-388), so the
+    // The write published the topology recompiled with p, so the
     // change, prepared before it, is refused as moved.
     let refused = rig.live.commit_with(prepared, |_| {});
     assert!(matches!(refused, Err(GraphCommandError::TopologyMoved)));

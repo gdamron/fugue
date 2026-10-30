@@ -1,4 +1,4 @@
-//! FUG-280: audio assets are stream-hashed under one cap on both the
+//! Audio assets are stream-hashed under one cap on both the
 //! workspace (local path) and package (`pkg:`) paths.
 
 use super::*;

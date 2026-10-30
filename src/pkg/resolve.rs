@@ -7,7 +7,7 @@
 //! trait, so this module stays free of network/filesystem concerns and is
 //! shared by every client (the CLI today, the daemon when install moves to RPC).
 //!
-//! This is deliberately **not** a backtracking solver (see FUG-94 / FUG-100):
+//! This is deliberately **not** a backtracking solver:
 //! each id is pinned to the highest version satisfying the first requirement
 //! reached for it, and a later incompatible requirement on the same id is
 //! reported as a conflict rather than triggering re-selection. Full

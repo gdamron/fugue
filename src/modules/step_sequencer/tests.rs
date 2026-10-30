@@ -565,7 +565,7 @@ fn test_step_grace_serde_round_trip() {
     assert_eq!(value, serde_json::json!({"note": 5}));
 }
 
-// --- Grace-note realization (FUG-190; full behavior coverage lives in the
+// --- Grace-note realization (full behavior coverage lives in the
 // cell_sequencer tests — the two sequencers share the GracePlayer) ---
 
 #[test]

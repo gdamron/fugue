@@ -119,7 +119,8 @@ fn coerce_stringified_values_to_declared_kind() {
     let boolean = ControlKind::Bool;
     let string = ControlKind::String { options: None };
 
-    // A stringified number/bool lands on a numeric/boolean control (FUG-240).
+    // A stringified number/bool lands on a numeric/boolean control: some MCP
+    // clients stringify values.
     assert_eq!(
         ControlValue::String("0.74".to_string()).coerced_to(&number),
         ControlValue::Number(0.74)

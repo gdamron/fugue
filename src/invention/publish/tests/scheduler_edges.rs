@@ -1,6 +1,6 @@
 //! A top-level `control_scheduler` stepping on a gate other than a clock's
 //! (an LFO's square), played by the graph's request drain on its rising
-//! edges (FUG-389): each entry lands on the sample of its step's edge,
+//! edges: each entry lands on the sample of its step's edge,
 //! whatever the block size, live and offline alike; a ramp lands each
 //! boundary on its edge; the `reset` input restarts the schedule; and no
 //! block allocates, frees or takes a lock a control thread holds.
@@ -247,7 +247,7 @@ fn a_schedule_written_live_plays_on_from_the_step_counted() {
     assert!(out[edges[5]..].iter().all(|&level| level == 0.6));
 }
 
-/// A target rebuilt by an edit mid-ramp (FUG-402): the scheduler adopts
+/// A target rebuilt by an edit mid-ramp: the scheduler adopts
 /// the same plan retargeted, and the ramp plays on into the new module,
 /// each boundary on its edge.
 #[test]

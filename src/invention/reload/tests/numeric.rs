@@ -68,7 +68,7 @@ fn reloading_a_files_float_spelling_against_a_runtime_built_from_the_integer_wri
 
 #[test]
 fn reloading_the_original_keeps_a_value_performed_after_authoring_the_files_value_back() {
-    // FUG-289's round-3 case. The file has 440.0; authoring 330 then 440
+    // A case reload once got wrong. The file has 440.0; authoring 330 then 440
     // leaves the stored config holding the integer 440. The performed 300
     // must survive a reload of the file, which still says 440.
     let mut running = start(BASE);

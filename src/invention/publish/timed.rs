@@ -52,7 +52,7 @@ pub(crate) enum EditTime<'a> {
     /// Once every one of `parts` has happened: on the sample when that is
     /// a segment start (another request applying, a control crossing),
     /// otherwise at the next segment start, reported late. Not on the wire
-    /// yet: a condition is FUG-317's to name.
+    /// yet: no front door names a condition.
     #[cfg_attr(not(test), allow(dead_code))]
     Condition(&'a [Part<'a>]),
 }

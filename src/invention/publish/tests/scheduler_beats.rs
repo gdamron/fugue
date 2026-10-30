@@ -2,7 +2,7 @@
 //! live graph: each entry lands on its step's exact sample, a ramp glides
 //! to land on its end step, the `step` output follows the clock, a reset of
 //! the clock plays the schedule again, an entry later than a conditional
-//! write in one segment takes the control back (FUG-386), two schedulers'
+//! write in one segment takes the control back, two schedulers'
 //! writes at one sample land in module order, a schedule plays on across
 //! a timed edit, and no block allocates, frees or takes a lock a control
 //! thread holds.
@@ -136,7 +136,7 @@ fn a_reset_of_the_clock_plays_the_schedule_again_from_step_0() {
 
 #[test]
 fn an_entry_later_than_a_conditional_write_in_one_segment_takes_the_control_back() {
-    // FUG-386. The condition, the 2nd beat of a clock at 1120 bpm, falls
+    // The condition, the 2nd beat of a clock at 1120 bpm, falls
     // early in a block; the scheduler's step 1, on its own clock at 1107
     // bpm, later in the same block.
     let (a, b) = (1_120.0, 1_107.0);
@@ -279,7 +279,7 @@ fn a_step_the_drain_plays_as_its_clock_is_unplugged_is_not_played_again() {
     );
 }
 
-/// A timed edit (FUG-323) landing while the drain plays a schedule: the
+/// A timed edit landing while the drain plays a schedule: the
 /// tables are found again after the landing, and the schedule plays on
 /// from the step it reached, each entry once, on its sample. The edit
 /// removes a module listed before the scheduler and its clock, so both

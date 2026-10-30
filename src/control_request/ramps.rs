@@ -41,7 +41,7 @@
 //! ramp runs jumps the count to the next whole beat, so the ramp carries on
 //! from there rather than starting over. Values are interpolated in `f64`
 //! and kept between the ramp's endpoints, so a ramp between finite values
-//! writes only finite values (FUG-302).
+//! writes only finite values, even between extreme ones.
 //!
 //! [`BeatTime::ramp`]: super::BeatTime::ramp
 
@@ -472,8 +472,7 @@ impl Ramps {
                 continue;
             }
             // A kept table's writes after the install instead, as its
-            // entries do, so its last reaches a target it rebuilds
-            // (FUG-413).
+            // entries do, so its last reaches a target it rebuilds.
             if matches!(running.on, RampOn::Entry(key) if !running.ended && host.defers(key.module))
             {
                 i += 1;

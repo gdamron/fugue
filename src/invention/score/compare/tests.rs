@@ -182,7 +182,7 @@ fn report_serializes_for_json_output() {
     assert_eq!(json["reference_duration_quarters"], "1");
 }
 
-// --- Grace-aware matching (FUG-190) ---
+// --- Grace-aware matching ---
 
 /// Attaches a grace chain to the note step starting at `step_index` in
 /// `cell_index`.
