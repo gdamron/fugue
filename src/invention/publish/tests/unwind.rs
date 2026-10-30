@@ -262,6 +262,13 @@ fn a_panic_as_an_edit_installs_keeps_its_publication() {
 #[test]
 fn a_panic_in_process_refuses_later_submissions() {
     let (mut rig, armed) = fragile_rig();
+    let mut tap = rig.live.tap_output("fragile", &[]).unwrap();
+    rig.render(1);
+    assert!(
+        tap.read(128).is_empty(),
+        "two bins kept back for a wider one"
+    );
+    rig.render(1);
     armed.process.store(true, Ordering::SeqCst);
 
     assert_eq!(
@@ -270,6 +277,8 @@ fn a_panic_in_process_refuses_later_submissions() {
         "freed on the rendering thread"
     );
     assert_refused(&mut rig);
+    let read = tap.read(32);
+    assert!(!read.open && read.is_empty(), "a failed graph's taps close");
 }
 
 /// A payload that says when it is freed.

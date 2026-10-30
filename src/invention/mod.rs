@@ -37,6 +37,7 @@ pub mod runtime;
 pub mod save;
 pub mod score;
 pub mod state;
+pub mod taps;
 pub(crate) mod timelines;
 
 pub use builder::InventionBuilder;
@@ -59,3 +60,4 @@ pub use rpc_snapshot::ControlOverride;
 pub use runtime::{ControlAcks, GraphCommandError, InventionRuntime, RunningInvention};
 pub use score::{validate_score, Score, SCORE_SCHEMA_V1};
 pub use state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
+pub use taps::{ChannelBins, OutputBins, OutputTap, MAX_OUTPUT_TAPS, MAX_TAP_BINS};

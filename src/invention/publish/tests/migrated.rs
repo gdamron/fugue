@@ -71,7 +71,7 @@ pub(super) fn block_while_held<G>(
 ) -> Result<(usize, usize), &'static str> {
     let live = &rig.live;
     let (publisher, pending, state) = (&live.publisher, &live.pending, &live.state);
-    let (surfaces, ports) = (&live.control_surfaces, &live.module_ports);
+    let (surfaces, ports, taps) = (&live.control_surfaces, &live.module_ports, &live.taps);
     let released = AtomicBool::new(false);
     let (held, holding) = mpsc::channel();
     let (done, finished) = mpsc::channel::<()>();
@@ -84,6 +84,7 @@ pub(super) fn block_while_held<G>(
                 state.lock().unwrap(),
                 surfaces.lock().unwrap(),
                 ports.lock().unwrap(),
+                taps.hold(),
             );
             let locks = hold();
             held.send(()).unwrap();

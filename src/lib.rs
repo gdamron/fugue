@@ -86,14 +86,15 @@ pub use modules::{
 
 // Re-export invention system
 pub use invention::{
-    validate_score, AssetSpec, CodeModuleRuntimeInfo, Connection, ControlAcks, ControlOverride,
-    DevelopmentControl, DevelopmentDefinitions, DevelopmentInput, DevelopmentOutput,
-    DevelopmentSpec, GraphCommandError, Invention, InventionBuilder, InventionHandles,
-    InventionRuntime, LoggedBeat, LoggedConnection, LoggedEdit, LoggedEditOutcome, LoggedLatch,
-    LoggedModule, LoggedRequest, LoggedSetting, LoggedValue, LoggedWhen, MasterLevels, ModuleSpec,
-    NoteChange, NoteChanges, NoteTime, OrchestrationRuntime, Playhead, ReloadError, ReloadReport,
-    RenderEngine, RequestLog, RunningInvention, RuntimeConnectionInfo, RuntimeController,
-    RuntimeModuleInfo, RuntimeSnapshot, RuntimeState, RuntimeStatus, Score, TimeSignature,
+    validate_score, AssetSpec, ChannelBins, CodeModuleRuntimeInfo, Connection, ControlAcks,
+    ControlOverride, DevelopmentControl, DevelopmentDefinitions, DevelopmentInput,
+    DevelopmentOutput, DevelopmentSpec, GraphCommandError, Invention, InventionBuilder,
+    InventionHandles, InventionRuntime, LoggedBeat, LoggedConnection, LoggedEdit,
+    LoggedEditOutcome, LoggedLatch, LoggedModule, LoggedRequest, LoggedSetting, LoggedValue,
+    LoggedWhen, MasterLevels, ModuleSpec, NoteChange, NoteChanges, NoteTime, OrchestrationRuntime,
+    OutputBins, OutputTap, Playhead, ReloadError, ReloadReport, RenderEngine, RequestLog,
+    RunningInvention, RuntimeConnectionInfo, RuntimeController, RuntimeModuleInfo, RuntimeSnapshot,
+    RuntimeState, RuntimeStatus, Score, TimeSignature, MAX_OUTPUT_TAPS, MAX_TAP_BINS,
     REQUEST_LOG_CAPACITY, SCORE_SCHEMA_V1, TIMED_EDIT_LOG_CAPACITY,
 };
 

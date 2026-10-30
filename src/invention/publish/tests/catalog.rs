@@ -2,7 +2,8 @@
 //! keeps the audio thread clean: no allocation, no free and no lock as it
 //! installs and as it is wired up, as requests write each declared control
 //! (a scheduler ramping the ones automation writes, other threads writing
-//! and reading its surface meanwhile), and as its inputs are written.
+//! and reading its surface meanwhile), and as its inputs are written:
+//! first with views tapping its output and the dac's, then with no tap.
 //!
 //! Each block renders while another thread holds every lock control threads
 //! take on the live graph, and a module's own control-side state sits
@@ -206,6 +207,12 @@ fn exercise_in(mut rig: Rig, type_id: &str, config: &serde_json::Value) -> Resul
         allocated: false,
     };
     subject.clean_install("install")?;
+    // Views tap what it plays until its inputs are written; the subject may
+    // have no output to tap.
+    let taps = [SUBJECT, "dac"].map(|id| subject.rig.live.tap_output(id, &[]).ok());
+    if taps[1].is_none() {
+        return Err("the dac could not be tapped".to_string());
+    }
 
     let module = subject.rig.graph.modules[SUBJECT].module();
     let outputs: Vec<String> = module
@@ -270,6 +277,7 @@ fn exercise_in(mut rig: Rig, type_id: &str, config: &serde_json::Value) -> Resul
         contended(&mut subject, surface, "contended writes")?;
     }
 
+    drop(taps);
     for port in &inputs {
         subject.rig.live.write_input(SUBJECT, port, 0.5).unwrap();
     }
