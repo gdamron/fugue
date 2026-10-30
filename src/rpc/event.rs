@@ -80,8 +80,9 @@ pub enum RpcEventPayload {
     SpectrogramStream(SpectrogramStreamMeta),
     /// One run of spectrogram frames.
     SpectrogramTile(SpectrogramTile),
-    /// A streamed scope's bins since its last frame. Streamed only, at the
-    /// daemon's frame rate; never retained in polled history.
+    /// A streamed scope's bins since its last frame, at the daemon's frame
+    /// rate. Only a scope's last frame (`open: false`) is kept in polled
+    /// history, so a subscriber that falls behind still learns it closed.
     ScopeFrame(super::ScopeFrame),
     Error(RpcError),
     /// The graph or playback state changed. Carries nothing: polled history

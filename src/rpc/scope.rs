@@ -135,18 +135,22 @@ pub struct ScopeChannel {
 }
 
 impl ScopeFrame {
-    /// The frame for one read of a scope's tap. A bin with no finite value
-    /// (every sample NaN, or infinite) is a gap: `null` in `min` and `max`
-    /// together, never NaN, which JSON can't carry.
+    /// The frame for one read of a scope's tap. A bin with no value (every
+    /// sample NaN) is a gap: `null` in `min` and `max` together, never NaN,
+    /// which JSON can't carry. An infinite value reads as the largest finite
+    /// one, so a signal that blew up shows as far past full scale.
     pub fn from_bins(scope_id: impl Into<String>, bins: OutputBins) -> Self {
+        let finite = |v: f32| v.clamp(f32::MIN, f32::MAX);
         let channels = (bins.ports.into_iter())
             .zip(bins.channels)
             .map(|(label, channel)| {
                 let (min, max) = (channel.min.iter().zip(&channel.max))
-                    .map(|(&min, &max)| match min.is_finite() && max.is_finite() {
-                        true => (Some(min), Some(max)),
-                        false => (None, None),
-                    })
+                    .map(
+                        |(&min, &max)| match min.is_nan() || max.is_nan() || min > max {
+                            true => (None, None),
+                            false => (Some(finite(min)), Some(finite(max))),
+                        },
+                    )
                     .unzip();
                 ScopeChannel { label, min, max }
             })

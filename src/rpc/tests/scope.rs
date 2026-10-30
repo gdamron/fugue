@@ -71,12 +71,11 @@ fn open_scope_names_a_module_and_polls_by_default() {
 
 #[test]
 fn a_gap_is_null_in_min_and_max_together() {
-    // A bin of nothing but NaN reads NaN from the tap; an infinite one has
-    // no place on a scope either.
+    // A bin of nothing but NaN reads NaN from the tap.
     let frame = ScopeFrame::from_bins(
         "s1",
         bins(
-            vec![-0.5, f32::NAN, -0.25, f32::NEG_INFINITY],
+            vec![-0.5, f32::NAN, -0.25, f32::NAN],
             vec![0.5, f32::NAN, 0.25, 0.1],
         ),
     );
@@ -101,6 +100,18 @@ fn a_gap_is_null_in_min_and_max_together() {
     );
     let back: ScopeFrame = serde_json::from_value(wire).unwrap();
     assert_eq!(back, frame);
+}
+
+#[test]
+fn an_infinite_value_reads_as_the_largest_finite_one() {
+    let frame = ScopeFrame::from_bins(
+        "s1",
+        bins(vec![f32::NEG_INFINITY, -0.5], vec![0.1, f32::INFINITY]),
+    );
+    assert_eq!(frame.channels[0].min, [Some(f32::MIN), Some(-0.5)]);
+    assert_eq!(frame.channels[0].max, [Some(0.1), Some(f32::MAX)]);
+    // It serializes: JSON carries every finite f32.
+    serde_json::to_string(&frame).unwrap();
 }
 
 #[test]
