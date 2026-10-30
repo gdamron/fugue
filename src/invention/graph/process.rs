@@ -58,6 +58,7 @@ impl SignalGraph {
             let end = start + self.apply_due_requests(frames - start);
             self.process_segment(&mut left[start..end], &mut right[start..end]);
             self.tap_notes(end - start);
+            self.tap_outputs(end - start);
             if let Some(watch) = &mut self.end_watch {
                 watch.record(&self.out_bufs, self.block_capacity, end - start);
             }

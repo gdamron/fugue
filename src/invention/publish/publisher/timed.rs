@@ -117,6 +117,7 @@ impl Publisher {
         publication.map_survivors(self.mirror.modules.keys().map(String::as_str));
         publication.generation = self.generation + 1;
         publication.note_taps = Some(self.note_keys.taps(&prepared.mirror));
+        publication.tap_keys = Some(prepared.mirror.instance_keys());
         let fate = Fate::default();
         publication.fate = Some(fate.guard());
         let mut edit = Request::edit(self.generation, Payload::owned(publication));

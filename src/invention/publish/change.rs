@@ -8,6 +8,7 @@
 
 use indexmap::IndexMap;
 use std::any::Any;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use crate::invention::declared::Route;
@@ -32,6 +33,11 @@ pub(crate) struct MirrorModule {
     pub(crate) ports: ModulePorts,
     pub(crate) is_sink: bool,
     pub(crate) flow: Flow,
+    /// Numbers the module instance it mirrors: each build gets a fresh
+    /// number, which a module keeps while it survives edits, so a module
+    /// removed or rebuilt is told from the one now under its id (see
+    /// `graph::taps`).
+    pub(crate) instance: u32,
 }
 
 impl MirrorModule {
@@ -40,8 +46,15 @@ impl MirrorModule {
             ports: ports_of(instance),
             is_sink: matches!(instance, GraphModule::Sink(_)),
             flow: Flow::of(instance.module()),
+            instance: next_instance(),
         }
     }
+}
+
+/// A module instance number no other instance has had in this process.
+fn next_instance() -> u32 {
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 /// The authoritative control-thread mirror of a live graph's topology, in
@@ -144,6 +157,16 @@ impl TopologyMirror {
         }
         Ok(())
     }
+
+    /// The instance key of each module, in module order: what a
+    /// publication carries for the audio thread's output taps (see
+    /// `crate::invention::graph::taps`).
+    pub(crate) fn instance_keys(&self) -> Vec<u32> {
+        self.modules
+            .values()
+            .map(|module| module.instance)
+            .collect()
+    }
 }
 
 /// Port names of a built instance.
@@ -245,6 +268,7 @@ impl GraphChange {
                 ports: ports_of(&result.module),
                 is_sink: matches!(result.module, GraphModule::Sink(_)),
                 flow: Flow::of(result.module.module()),
+                instance: next_instance(),
             },
             instance: Some(result.module),
             info: RuntimeModuleInfo {
@@ -567,6 +591,7 @@ fn build_publication(
         fate: None,
         ramp_room: None,
         note_taps: None,
+        tap_keys: None,
     })
 }
 

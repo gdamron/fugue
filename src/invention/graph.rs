@@ -59,6 +59,7 @@ mod publication;
 mod requests;
 mod scc;
 mod staging;
+pub(crate) mod taps;
 mod unwind;
 
 pub(crate) use compile::{compile_topology, CompiledTopology, TopologyFacts};
@@ -237,6 +238,9 @@ pub(crate) struct SignalGraph {
     pub(crate) note_taps: notes::NoteTaps,
     /// Where it reports them; `None` for offline render.
     pub(crate) note_out: Option<notes::NoteOut>,
+    /// The module outputs views tap (see [`taps`]); `None` for offline
+    /// render.
+    pub(crate) output_taps: Option<taps::OutputTaps>,
 }
 
 impl SignalGraph {
@@ -286,6 +290,7 @@ impl SignalGraph {
             end_watch: None,
             note_taps: Default::default(),
             note_out: None,
+            output_taps: None,
         }
     }
 
