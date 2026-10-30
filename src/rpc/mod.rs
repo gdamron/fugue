@@ -15,6 +15,7 @@ mod durability;
 mod edits;
 mod error;
 mod event;
+mod focus;
 mod identity;
 mod package;
 mod pending;
@@ -26,10 +27,10 @@ mod revision;
 mod snapshot;
 mod spectrogram;
 mod timed;
-pub use control_timing::{ControlRequestSettled, ControlTiming, ControlWhen};
 pub use authored_snapshot::{
     AuthoredSnapshot, SnapshotDelivery, MAX_FILE_SNAPSHOT_BYTES, MAX_INLINE_SNAPSHOT_BYTES,
 };
+pub use control_timing::{ControlRequestSettled, ControlTiming, ControlWhen};
 pub use discovery::{
     check_discovery_size, DescribeModuleQuery, MetadataSource, ModuleDescription, ModuleTypeDetail,
     ModuleTypeIndex, ModuleTypeInfo, ModuleTypeList, ModuleTypeQuery, RegistryScope, TypeDetail,
@@ -45,6 +46,10 @@ pub use error::{RpcError, RpcErrorCode};
 pub use event::{
     EventPage, MeterReading, RpcEvent, RpcEventPayload, RpcEventSink, RpcSubscriptionTopic,
     SeqEvent, SinkStatusState,
+};
+pub use focus::{
+    Focus, FocusBars, FocusConnection, FocusIntent, FocusNote, FocusTarget, FocusTimeUnit,
+    MAX_FOCUS_ITEMS, MAX_FOCUS_NAME_BYTES,
 };
 pub use identity::{verify_daemon_identity, BuildFingerprint, DaemonIdentity, IdentityMismatch};
 pub use package::{
