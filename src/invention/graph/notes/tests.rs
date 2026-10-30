@@ -275,3 +275,21 @@ fn a_reset_inside_a_segment_splits_its_count_where_it_happened() {
     };
     assert!(close(ended.at(63, 64), 2.94));
 }
+
+#[test]
+fn the_first_sample_after_a_reset_counts_from_the_reset_despite_rounding() {
+    // At 44.1 kHz and 120 BPM a sample is 1/22050 of a beat, which the
+    // count back from the segment's end misses the floor by in rounding.
+    let mut clock = Clock::new(44_100, 120.0);
+    for _ in 0..516 {
+        clock.process(64);
+    }
+    let timeline = |clock: &Clock| super::ClockSpan::of(clock.timeline().unwrap(), f64::NAN);
+    let previous = timeline(&clock).at(63, 64);
+    assert!((previous - 1.5).abs() < 0.01, "{previous}");
+    clock.apply(ControlIndex(2), RtValue::Bool(true)).unwrap();
+    clock.process(64);
+    let span = super::ClockSpan::of(clock.timeline().unwrap(), previous);
+    assert_eq!(span.at(0, 64), 2.0, "the reset's sample starts beat 2");
+    assert!(close(span.at(63, 64), 2.0 + 63.0 / 22_050.0));
+}

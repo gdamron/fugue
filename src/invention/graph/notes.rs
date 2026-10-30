@@ -199,8 +199,11 @@ impl ClockSpan {
     fn at(&self, i: usize, frames: usize) -> f64 {
         if let Some(end) = self.end {
             let back = end - (frames - 1 - i) as f64 * self.rate;
-            if back >= self.floor {
-                return back;
+            // A sample before the reset falls a whole sample short of the
+            // floor; the reset's own sample lands on it, give or take
+            // rounding.
+            if back >= self.floor - 0.5 * self.rate {
+                return back.max(self.floor);
             }
         }
         if self.previous.is_nan() {
