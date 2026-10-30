@@ -170,9 +170,9 @@ impl Pairing {
     }
 }
 
-/// Gives each module id the feed has tapped a number the audio thread
-/// sends in its place, for as long as the invention runs, and remembers
-/// each tapped module's clock as of the latest publication.
+/// Gives each module id the feed has tapped, and each clock one counts on,
+/// a number the audio thread sends in its place, for as long as the
+/// invention runs.
 #[derive(Default)]
 pub(crate) struct NoteKeys(ControlLock<Keys>);
 
@@ -180,7 +180,6 @@ pub(crate) struct NoteKeys(ControlLock<Keys>);
 struct Keys {
     ids: Vec<String>,
     by_id: HashMap<String, u32>,
-    clocks: HashMap<String, String>,
 }
 
 impl NoteKeys {
@@ -189,18 +188,10 @@ impl NoteKeys {
         keys.ids.get(key as usize).cloned()
     }
 
-    /// The clock module `module_id`'s notes count beats on, as of the
-    /// latest publication.
-    pub(crate) fn clock_of(&self, module_id: &str) -> Option<String> {
-        let keys = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        keys.clocks.get(module_id).cloned()
-    }
-
     /// Taps for every module of `mirror` that plays notes, by module index.
     /// Control thread: allocates.
     pub(crate) fn taps(&self, mirror: &TopologyMirror) -> NoteTaps {
         let mut keys = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        keys.clocks.clear();
         let mut taps = Vec::new();
         for (module_idx, (id, module)) in mirror.modules.iter().enumerate() {
             let outputs = &module.ports.outputs;
@@ -214,11 +205,11 @@ impl NoteKeys {
                 }
                 _ => None,
             };
-            if let Some((clock, _)) = clock_idx.and_then(|c| mirror.modules.get_index(c)) {
-                keys.clocks.insert(id.clone(), clock.clone());
-            }
+            let clock = clock_idx
+                .and_then(|idx| Some((idx, mirror.modules.get_index(idx)?.0)))
+                .map(|(idx, clock)| (idx, keys.key(clock)));
             let key = keys.key(id);
-            taps.push(NoteTap::new(module_idx, key, clock_idx, voices));
+            taps.push(NoteTap::new(module_idx, key, clock, voices));
         }
         NoteTaps(taps)
     }

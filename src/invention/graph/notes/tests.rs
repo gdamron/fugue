@@ -248,3 +248,30 @@ fn a_full_ring_drops_edges_and_counts_them() {
     assert_eq!(changes.missed, 4_000 - super::NOTE_EDGE_CAPACITY as u32);
     assert_eq!(feed.take().missed, 0, "counted once");
 }
+
+#[test]
+fn a_reset_inside_a_segment_splits_its_count_where_it_happened() {
+    // 0.01 beats a sample; the previous segment ended at 2.4, and a reset
+    // at sample 20 of 64 moved the count on to beat 3.
+    let span = super::ClockSpan {
+        end: Some(3.0 + 43.0 * 0.01),
+        rate: 0.01,
+        floor: 3.0,
+        previous: 2.4,
+    };
+    let at = |i| span.at(i, 64);
+    assert!(
+        close(at(0), 2.41) && close(at(19), 2.6),
+        "on from before the reset"
+    );
+    assert!(close(at(20), 3.0) && close(at(63), 3.43), "from the reset");
+
+    // A reset as the segment ended: all of it counts on from before.
+    let ended = super::ClockSpan {
+        end: None,
+        rate: 0.01,
+        floor: 3.0,
+        previous: 2.3,
+    };
+    assert!(close(ended.at(63, 64), 2.94));
+}

@@ -82,10 +82,14 @@ pub(crate) struct NoteTap {
     pub(crate) key: u32,
     /// The clock its beats count on (its timeline context), by index.
     pub(crate) clock_idx: Option<usize>,
+    /// That clock, by the key the feed gave its id: what tells a clock
+    /// kept across an edit from another one.
+    pub(crate) clock_key: Option<u32>,
     pub(crate) voices: Vec<TapVoice>,
     /// The beat its clock reached at the end of the latest segment: where
     /// a held note ends if the module goes away (see
-    /// [`NoteTaps::take_over`]).
+    /// [`NoteTaps::take_over`]), and where the next segment's count
+    /// continues from up to a reset inside it (see [`ClockSpan::at`]).
     last_beats: f64,
 }
 
@@ -93,13 +97,14 @@ impl NoteTap {
     pub(crate) fn new(
         module_idx: usize,
         key: u32,
-        clock_idx: Option<usize>,
+        clock: Option<(usize, u32)>,
         voices: Vec<TapVoice>,
     ) -> Self {
         Self {
             module_idx,
             key,
-            clock_idx,
+            clock_idx: clock.map(|(idx, _)| idx),
+            clock_key: clock.map(|(_, key)| key),
             voices,
             last_beats: f64::NAN,
         }
@@ -118,23 +123,25 @@ pub(crate) struct TapVoice {
 
 impl NoteTaps {
     /// Audio thread, as an edit installs these taps over `previous`: each
-    /// voice still tapped keeps holding what it held, so a note sounding
-    /// across the edit is one note; each note held on a voice no longer
-    /// tapped (its module removed, or rebuilt without that voice) ends at
-    /// `frame`. Allocation-free.
+    /// voice still tapped, on the same clock, keeps holding what it held,
+    /// so a note sounding across the edit is one note. Each note held on a
+    /// voice no longer tapped (its module removed, or rebuilt without that
+    /// voice) or whose module now counts on another clock ends at `frame`;
+    /// a gate still high starts a new note, on the new clock, as the next
+    /// segment is tapped. Allocation-free.
     pub(crate) fn take_over(&mut self, previous: &NoteTaps, out: &mut NoteOut, frame: u64) {
         for old in &previous.0 {
-            let mut new = self.0.iter_mut().find(|tap| tap.key == old.key);
+            let mut new = (self.0.iter_mut())
+                .find(|tap| tap.key == old.key && tap.clock_key == old.clock_key);
+            if let Some(tap) = new.as_deref_mut() {
+                tap.last_beats = old.last_beats;
+            }
             for voice in old.voices.iter().filter(|voice| voice.held) {
-                let kept = new
-                    .as_deref()
-                    .and_then(|tap| tap.voices.iter().position(|v| v.id == voice.id));
-                match (kept, new.as_deref_mut()) {
-                    (Some(at), Some(tap)) => {
-                        tap.voices[at].held = true;
-                        tap.last_beats = old.last_beats;
-                    }
-                    _ => out.send(NoteEdge {
+                let kept = (new.as_deref_mut())
+                    .and_then(|tap| tap.voices.iter_mut().find(|v| v.id == voice.id));
+                match kept {
+                    Some(kept) => kept.held = true,
+                    None => out.send(NoteEdge {
                         key: old.key,
                         voice: voice.id,
                         on: false,
@@ -154,38 +161,52 @@ impl NoteTaps {
 /// a looping clock counts on rather than folding the history back.
 #[derive(Clone, Copy)]
 struct ClockSpan {
-    /// The count at the segment's last sample.
-    end: f64,
+    /// The count at the segment's last sample; `None` when the clock reset
+    /// as the segment ended, so that none of it counts from the reset.
+    end: Option<f64>,
     /// Beats per sample at the tempo it played the segment at.
     rate: f64,
-    /// Where the count stood at the latest reset: nothing before it.
+    /// Where the count stood at the latest reset: nothing after the reset
+    /// is below it, nothing before it reaches it.
     floor: f64,
+    /// The count at the previous segment's last sample (NaN for none).
+    previous: f64,
 }
 
 impl ClockSpan {
-    fn of(timeline: &dyn Timeline) -> Self {
-        let floor = timeline.beats_before() as f64;
+    fn of(timeline: &dyn Timeline, previous: f64) -> Self {
         let position = timeline.position();
-        if position < 0.0 {
-            // Reset as the segment ended: its next sample starts beat 0.
-            return Self {
-                end: floor,
-                rate: 0.0,
-                floor,
-            };
-        }
+        let (end, rate) = if position < 0.0 {
+            // Its next sample starts beat 0; the tempo is the next steps'.
+            let next = timeline.position_after(1);
+            (None, timeline.position_after(2) - next)
+        } else {
+            (Some(position), timeline.position_after(1) - position)
+        };
+        let floor = timeline.beats_before() as f64;
         Self {
-            end: floor + position,
-            rate: timeline.position_after(1) - position,
+            end: end.map(|position| floor + position),
+            rate,
             floor,
+            previous,
         }
     }
 
-    /// The count at sample `i` of a segment `frames` long. Exact while the
-    /// tempo holds through the segment, which a tempo request splitting
-    /// segments at its sample ensures.
+    /// The count at sample `i` of a segment `frames` long: back from the
+    /// end, or, for a sample before a reset inside the segment (a
+    /// condition or a table can reset a clock mid-segment), on from the
+    /// previous segment. Exact while the tempo holds through the segment.
     fn at(&self, i: usize, frames: usize) -> f64 {
-        (self.end - (frames - 1 - i) as f64 * self.rate).max(self.floor)
+        if let Some(end) = self.end {
+            let back = end - (frames - 1 - i) as f64 * self.rate;
+            if back >= self.floor {
+                return back;
+            }
+        }
+        if self.previous.is_nan() {
+            return self.floor;
+        }
+        (self.previous + (i + 1) as f64 * self.rate).min(self.floor)
     }
 }
 
@@ -210,7 +231,7 @@ impl SignalGraph {
             let clock = (tap.clock_idx)
                 .and_then(|clock| self.modules.get_index(clock))
                 .and_then(|(_, instance)| instance.module().timeline())
-                .map(ClockSpan::of);
+                .map(|timeline| ClockSpan::of(timeline, tap.last_beats));
             let beats = |i: usize| clock.map_or(f64::NAN, |clock| clock.at(i, frames));
             for voice in tap.voices.iter_mut() {
                 let port = |port: usize| outputs.get(port * capacity..port * capacity + frames);

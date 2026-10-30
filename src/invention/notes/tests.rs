@@ -2,6 +2,7 @@
 //! rendered block by block in place of the audio thread.
 
 use crate::invention::manual_backend::{start_manual, Pump};
+use crate::rpc::EditWhen;
 use crate::{Invention, InventionBuilder, NoteChange, RunningInvention};
 
 /// 120 BPM at the manual backend's 48 kHz: a beat is 375 blocks of 64.
@@ -66,7 +67,7 @@ fn a_sequencer_s_notes_start_on_its_clock_s_beats() {
     let playhead = running.playhead("seq").expect("the sequencer has a clock");
     assert_eq!(playhead.clock, "clock");
     assert!((playhead.beats - 4.25).abs() < 0.01, "{playhead:?}");
-    assert_eq!(running.playhead("dac"), None, "it plays no notes");
+    assert_eq!(running.playhead("nothing"), None, "no such module");
     running.stop();
 }
 
@@ -126,6 +127,58 @@ fn notes_count_on_from_the_next_whole_beat_after_a_reset() {
     assert!(
         (last - 3.0).abs() < 1e-3,
         "the reset's first beat at 3: {last}"
+    );
+    running.stop();
+}
+
+#[test]
+fn a_note_held_as_its_module_moves_to_another_clock_ends_and_starts_again_on_it() {
+    let (running, pump) = start();
+    running
+        .add_module("slow", "clock", &serde_json::json!({ "bpm": 60.0 }))
+        .unwrap();
+    play(&pump, 1.1);
+    assert_eq!(starts(&running.take_notes().notes).len(), 2);
+
+    // While note 1 holds, `seq` moves from `clock` (120 BPM, beat 1.1) to
+    // `slow` (60 BPM, half a beat in).
+    running.disconnect("clock", "beat", "seq", "clock").unwrap();
+    running.connect("slow", "beat", "seq", "clock").unwrap();
+    pump.block();
+    let notes = running.take_notes().notes;
+    assert_eq!(notes.len(), 2, "{notes:?}");
+    let (ended, restarted) = (&notes[0], &notes[1]);
+    assert_eq!((ended.note, restarted.note), (1, 2));
+    let end = ended.end.unwrap().beats.unwrap();
+    assert!((end - 1.1).abs() < 0.01, "on the old clock: {end}");
+    let start = restarted.start.beats.unwrap();
+    assert!((start - 0.55).abs() < 0.01, "on the new one: {start}");
+    assert_eq!(running.playhead("seq").unwrap().clock, "slow");
+    running.stop();
+}
+
+#[test]
+fn a_timed_edit_leaves_the_playhead_on_the_installed_clock_until_it_lands() {
+    let (running, pump) = start();
+    play(&pump, 0.5);
+    // Replace the sequencer with an oscillator, a hundred beats from now.
+    let when = EditWhen::AfterBeats {
+        beats: 100.0,
+        clock: None,
+    };
+    let config = serde_json::json!({ "frequency": 220.0 });
+    running
+        .swap_module_at("seq", "oscillator", &config, false, &when, None)
+        .unwrap();
+    play(&pump, 1.0);
+    let playhead = running
+        .playhead("seq")
+        .expect("still the installed sequencer");
+    assert!((playhead.beats - 1.5).abs() < 0.01, "{playhead:?}");
+    assert_eq!(
+        starts(&running.take_notes().notes).len(),
+        2,
+        "still playing"
     );
     running.stop();
 }

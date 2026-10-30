@@ -3,7 +3,7 @@
 
 use super::RunningInvention;
 use crate::invention::notes::{NoteChanges, Playhead};
-use crate::ControlValue;
+use crate::{ControlValue, TimelineContext};
 
 impl RunningInvention {
     /// Drains the note starts and ends the audio thread reported since the
@@ -20,10 +20,14 @@ impl RunningInvention {
     }
 
     /// Where `module_id`'s notes are now: the clock its notes count beats
-    /// on, and that clock's `elapsed` control, read back as of the latest
-    /// block. `None` when the module has no clock.
+    /// on (its timeline context, as installed), and that clock's `elapsed`
+    /// control, read back as of the latest block. `None` when the module
+    /// has no clock a request can name, or is not running.
     pub fn playhead(&self, module_id: &str) -> Option<Playhead> {
-        let clock = self.live.notes.keys().clock_of(module_id)?;
+        let clock = match self.live.timeline_of(module_id)? {
+            TimelineContext::Connected { clock, .. } | TimelineContext::Fallback { clock } => clock,
+            TimelineContext::Enclosed { .. } => return None,
+        };
         let ControlValue::Number(beats) = self.get_control(&clock, "elapsed").ok()? else {
             return None;
         };
