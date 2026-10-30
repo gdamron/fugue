@@ -98,6 +98,9 @@ pub enum RpcEventPayload {
     /// refused or expired. One that applied is also announced by
     /// `ControlChanged`.
     ControlRequestSettled(ControlRequestSettled),
+    /// The session's pinned controls changed: an edit, or a graph change
+    /// that dropped some. Values are not carried; read them with `GetPins`.
+    PinsChanged(super::PinList),
 }
 
 /// Minimal sink interface for transports that collect or broadcast RPC events.
