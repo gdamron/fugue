@@ -137,6 +137,20 @@ pub enum RpcRequestPayload {
     SetFocus(super::FocusIntent),
     /// Read what the person last pointed at, on any surface.
     GetFocus,
+    /// Open a live scope on a module's output (see
+    /// [`ScopeInfo`](super::ScopeInfo)). Watching changes nothing anyone
+    /// hears, so it is no command: it moves no revision and is not saved.
+    OpenScope(super::OpenScope),
+    /// Read a polled scope's bins since the last read, as one
+    /// [`ScopeFrame`](super::ScopeFrame).
+    ReadScope {
+        scope_id: String,
+    },
+    /// Close a scope and the tap it reads. Closing one already closed is
+    /// not an error.
+    CloseScope {
+        scope_id: String,
+    },
 }
 
 /// A single control write in a [`RpcCommand::SetControls`] batch.

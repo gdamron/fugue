@@ -12,6 +12,7 @@ mod pending;
 mod recovery;
 mod request;
 mod response;
+mod scope;
 mod snapshot;
 mod spectrogram;
 mod timed;

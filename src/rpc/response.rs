@@ -79,6 +79,10 @@ pub enum RpcResponsePayload {
         meters: Vec<MeterReading>,
     },
     Packages(PackageList),
+    /// A scope just opened, in reply to `OpenScope`.
+    ScopeOpened(super::ScopeInfo),
+    /// A polled scope's bins since the last read, in reply to `ReadScope`.
+    ScopeFrame(super::ScopeFrame),
     /// The session's focus, in reply to `SetFocus` and `GetFocus`. None when
     /// nothing is selected.
     Focus {

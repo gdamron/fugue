@@ -35,6 +35,10 @@ pub enum RpcSubscriptionTopic {
     /// Display-rate spectrogram frames. Like meter levels, these are streamed
     /// only: they are far too frequent for the polled event log.
     Spectrograms,
+    /// Frames of the scopes opened for streaming (see
+    /// [`ScopeFrame`](super::ScopeFrame)). Display-rate like spectrograms,
+    /// so streamed only to clients that name this topic.
+    Scopes,
     AgentActivity,
     SinkStatus,
     Errors,
@@ -76,6 +80,9 @@ pub enum RpcEventPayload {
     SpectrogramStream(SpectrogramStreamMeta),
     /// One run of spectrogram frames.
     SpectrogramTile(SpectrogramTile),
+    /// A streamed scope's bins since its last frame. Streamed only, at the
+    /// daemon's frame rate; never retained in polled history.
+    ScopeFrame(super::ScopeFrame),
     Error(RpcError),
     /// The graph or playback state changed. Carries nothing: polled history
     /// never holds a graph, so its size does not grow with the invention.

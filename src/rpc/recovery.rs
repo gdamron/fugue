@@ -168,7 +168,13 @@ impl RpcRequestPayload {
             | Self::GetMeters
             | Self::GetFocus
             // Setting the same selection again leaves the same focus.
-            | Self::SetFocus(_) => ReplayPolicy::Resend,
+            | Self::SetFocus(_)
+            // A scope opened by a reply that was lost belongs to the
+            // connection that dropped it, and closes with it.
+            | Self::OpenScope(_)
+            // The bins a lost reply carried are gone either way.
+            | Self::ReadScope { .. }
+            | Self::CloseScope { .. } => ReplayPolicy::Resend,
             Self::Subscribe { .. } => ReplayPolicy::Never,
             Self::Command(command) => command.replay_policy(),
         }
