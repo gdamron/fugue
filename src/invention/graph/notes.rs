@@ -47,6 +47,9 @@ pub(crate) struct NoteEdge {
     /// The `velocity` output as the note starts (1 with no such output); 0
     /// for an end.
     pub(crate) velocity: f32,
+    /// The first edge sent after the full ring dropped some: what was held
+    /// before it may have ended unseen.
+    pub(crate) after_loss: bool,
 }
 
 /// Where the audio thread sends note edges: the ring's producer end, and
@@ -54,6 +57,8 @@ pub(crate) struct NoteEdge {
 pub(crate) struct NoteOut {
     producer: Producer<NoteEdge>,
     missed: Arc<EventCounter>,
+    /// An edge was dropped since the last one sent.
+    lost: bool,
 }
 
 impl NoteOut {
@@ -62,13 +67,17 @@ impl NoteOut {
         Self {
             producer: Producer::claim(ring),
             missed,
+            lost: false,
         }
     }
 
-    /// Sends `edge`, or counts it missed. Wait-free, allocation-free.
+    /// Sends `edge`, marked if edges were dropped since the last one sent,
+    /// or counts it missed. Wait-free, allocation-free.
     #[inline]
-    fn send(&mut self, edge: NoteEdge) {
-        if self.producer.push(edge).is_err() {
+    pub(super) fn send(&mut self, mut edge: NoteEdge) {
+        edge.after_loss = self.lost;
+        self.lost = self.producer.push(edge).is_err();
+        if self.lost {
             self.missed.record();
         }
     }
@@ -152,6 +161,7 @@ impl NoteTaps {
                         clock: old.clock_key,
                         frequency: 0.0,
                         velocity: 0.0,
+                        after_loss: false,
                     }),
                 }
             }
@@ -265,6 +275,7 @@ impl SignalGraph {
                             (true, Some(velocity)) => velocity[i],
                             (true, None) => 1.0,
                         },
+                        after_loss: false,
                     });
                 }
             }

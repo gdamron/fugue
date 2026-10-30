@@ -301,3 +301,33 @@ fn the_first_sample_after_a_reset_counts_from_the_reset_despite_rounding() {
     assert_eq!(span.at(0, 64), 2.0, "the reset's sample starts beat 2");
     assert!(close(span.at(63, 64), 2.0 + 63.0 / 22_050.0));
 }
+
+#[test]
+fn the_first_edge_sent_after_a_drop_is_marked() {
+    let ring = crate::spsc::Ring::with_capacity(2);
+    let mut out = super::NoteOut::new(Arc::clone(&ring), Arc::default());
+    let edge = |frame| super::NoteEdge {
+        key: 0,
+        voice: 0,
+        on: true,
+        frame,
+        beats: f64::NAN,
+        clock: None,
+        frequency: 440.0,
+        velocity: 1.0,
+        after_loss: false,
+    };
+    // More than the ring holds: the last are dropped.
+    for frame in 0..4 {
+        out.send(edge(frame));
+    }
+    // A slot frees as the control thread drains, and the next edge fits.
+    let first = ring.pop().unwrap();
+    out.send(edge(4));
+    let sent: Vec<_> = std::iter::once(first)
+        .chain(std::iter::from_fn(|| ring.pop()))
+        .map(|edge| (edge.frame, edge.after_loss))
+        .collect();
+    assert_eq!(sent.last(), Some(&(4, true)), "{sent:?}");
+    assert!(sent[..sent.len() - 1].iter().all(|&(_, marked)| !marked));
+}

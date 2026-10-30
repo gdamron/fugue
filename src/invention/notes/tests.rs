@@ -184,3 +184,35 @@ fn a_timed_edit_leaves_the_playhead_on_the_installed_clock_until_it_lands() {
     );
     running.stop();
 }
+
+#[test]
+fn an_edge_after_a_loss_ends_nothing_held_before_it() {
+    use super::{NoteEdge, NoteKeys, Pairing};
+    let keys = NoteKeys::default();
+    {
+        let mut keys = keys.0.lock().unwrap();
+        for id in ["player", "a", "b"] {
+            keys.key(id);
+        }
+    }
+    let edge = |frame, beats, clock, after_loss| NoteEdge {
+        key: 0,
+        voice: 0,
+        on: true,
+        frame,
+        beats,
+        clock: Some(clock),
+        frequency: 440.0,
+        velocity: 1.0,
+        after_loss,
+    };
+    let (mut pairing, mut notes) = (Pairing::default(), Vec::new());
+    pairing.pair(&edge(0, 1.0, 1, false), &keys, &mut notes);
+    // The note's end was dropped with the ring full, then the module moved
+    // to clock `b`: its next note arrives marked, and ends nothing on `a`'s
+    // timeline with `b`'s beats.
+    pairing.pair(&edge(100, 0.25, 2, true), &keys, &mut notes);
+    assert_eq!(notes.len(), 2, "{notes:?}");
+    assert!(notes.iter().all(|note| note.end.is_none()));
+    assert_eq!(notes[1].clock.as_deref(), Some("b"));
+}

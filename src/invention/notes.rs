@@ -81,8 +81,8 @@ pub struct NoteChanges {
     pub notes: Vec<NoteChange>,
     /// Starts and ends the audio thread dropped since the last drain, its
     /// ring full: nonzero means some changes are missing. The notes held
-    /// then are forgotten, since their ends may be among them: no end
-    /// will be reported for them.
+    /// as they were dropped are forgotten, since their ends may be among
+    /// them: no end will be reported for them.
     pub missed: u32,
 }
 
@@ -131,17 +131,18 @@ impl NoteFeed {
         while let Some(edge) = self.ring.pop() {
             pairing.pair(&edge, &self.keys, &mut notes);
         }
-        // The dropped edges came after those the ring held: a note still
-        // held may have ended among them, and would otherwise hold forever.
-        if missed > 0 {
-            pairing.held.clear();
-        }
         NoteChanges { notes, missed }
     }
 }
 
 impl Pairing {
     fn pair(&mut self, edge: &NoteEdge, keys: &NoteKeys, notes: &mut Vec<NoteChange>) {
+        // Edges were dropped just before this one: a note held across them
+        // may have ended unseen, and would otherwise hold until its voice
+        // plays again, ended on whatever clock that is.
+        if edge.after_loss {
+            self.held.clear();
+        }
         let at = NoteTime {
             frame: edge.frame,
             beats: edge.beats.is_finite().then_some(edge.beats),
