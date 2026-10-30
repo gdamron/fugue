@@ -161,9 +161,11 @@ impl RpcRequestPayload {
     /// The replay rule for this request, shared by every client transport.
     pub fn replay_policy(&self) -> ReplayPolicy {
         match self {
-            Self::Hello | Self::GetSnapshot | Self::PollEvents { .. } | Self::GetMeters => {
-                ReplayPolicy::Resend
-            }
+            Self::Hello
+            | Self::GetSnapshot
+            | Self::PollEvents { .. }
+            | Self::PollNotes { .. }
+            | Self::GetMeters => ReplayPolicy::Resend,
             Self::Subscribe { .. } => ReplayPolicy::Never,
             Self::Command(command) => command.replay_policy(),
         }

@@ -136,3 +136,44 @@ fn a_peak_only_meter_level_from_an_older_daemon_still_decodes() {
         })
     );
 }
+
+#[test]
+fn poll_notes_request_and_page_round_trip() {
+    use crate::{NotePage, NoteTimeUnit, SeqNote};
+
+    let bare: RpcRequest =
+        serde_json::from_str(r#"{"schema_version":1,"kind":"poll_notes","module_id":"seq"}"#)
+            .unwrap();
+    let poll = RpcRequestPayload::PollNotes {
+        module_id: "seq".to_string(),
+        after: None,
+    };
+    assert_eq!(bare.payload, poll);
+    assert_eq!(poll.replay_policy(), ReplayPolicy::Resend, "a read");
+
+    let held = SeqNote {
+        seq: 12,
+        id: "3".to_string(),
+        voice: "0".to_string(),
+        pitch: 64,
+        velocity: 0.8,
+        start: 3.0,
+        end: None,
+    };
+    let page = NotePage {
+        module_id: "seq".to_string(),
+        time_unit: NoteTimeUnit::Beats,
+        clock: Some("clock".to_string()),
+        notes: vec![held],
+        latest_seq: 12,
+        resync_required: false,
+        playhead: Some(3.25),
+    };
+    let wire = serde_json::to_value(&page).unwrap();
+    assert_eq!(wire["time_unit"], "beats");
+    assert_eq!(wire["notes"][0]["end"], serde_json::Value::Null, "held");
+    let response = RpcResponse::ok(None, RpcResponsePayload::Notes(page.clone()));
+    let decoded: RpcResponse =
+        serde_json::from_str(&serde_json::to_string(&response).unwrap()).unwrap();
+    assert_eq!(decoded.payload, RpcResponsePayload::Notes(page));
+}

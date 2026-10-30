@@ -1,6 +1,6 @@
 use super::*;
 use crate::control_request::{apply_declared, RtValue};
-use crate::modules::clock::controls::{BPM, POSITION, RESET};
+use crate::modules::clock::controls::{BPM, ELAPSED, POSITION, RESET};
 use crate::Module;
 
 /// Tempi with fractional samples per beat at 48 kHz, 44.1 kHz and 22.05 kHz,
@@ -193,6 +193,20 @@ fn processing_publishes_the_position() {
     clock.process(64);
     assert_eq!(clock.cells.load(POSITION), Some(RtValue::F32(0.5)));
     assert!(clock.set_control("position", 3.0).is_err(), "read-only");
+}
+
+#[test]
+fn elapsed_counts_on_across_a_reset() {
+    // 128 samples a beat: a beat and a half, then a reset with beats 0 and 1
+    // begun, then half a beat less the reset's sample at position 0.
+    let mut clock = Clock::new(48_000, 22_500.0);
+    clock.process(192);
+    assert_eq!(clock.cells.load(ELAPSED), Some(RtValue::F32(1.5)));
+    set(&mut clock, RESET, RtValue::Bool(true));
+    clock.process(64);
+    assert_eq!(clock.cells.load(POSITION), Some(RtValue::F32(63.0 / 128.0)));
+    assert_eq!(clock.cells.load(ELAPSED), Some(RtValue::F32(2.0 + 63.0 / 128.0)));
+    assert!(clock.set_control("elapsed", 3.0).is_err(), "read-only");
 }
 
 #[test]

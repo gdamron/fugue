@@ -18,6 +18,7 @@ pub(super) const NOT_YET_MIGRATED: &[&str] = &[];
 const CONTROLS_NOT_READ_FROM_CONFIG: &[(&str, &str, &str)] = &[
     ("agent", "request_count", "read-only telemetry"),
     ("clock", "position", "read-only telemetry"),
+    ("clock", "elapsed", "read-only telemetry"),
     ("cell_sequencer", "loop_count", "read-only telemetry"),
     ("cell_sequencer", "cell", "read-only telemetry"),
     ("cell_sequencer", "cell_count", "read-only telemetry"),

@@ -2,7 +2,7 @@
 
 use super::{
     ApplyEditsReport, AuthoredSnapshot, DaemonIdentity, EventPage, InspectionPage, MeterReading,
-    ModuleDescription, ModuleTypeList, MutationReceipt, PackageList, PendingRequests,
+    ModuleDescription, ModuleTypeList, MutationReceipt, NotePage, PackageList, PendingRequests,
     RequestStatus, RpcError, RuntimeFullSnapshot, RuntimeRevision, RPC_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
@@ -65,6 +65,10 @@ pub enum RpcResponsePayload {
     /// The reply to `ListPendingRequests`.
     PendingRequests(PendingRequests),
     Events(EventPage),
+    /// The reply to [`RpcRequestPayload::PollNotes`].
+    ///
+    /// [`RpcRequestPayload::PollNotes`]: super::RpcRequestPayload::PollNotes
+    Notes(NotePage),
     /// The latest sampled output levels, in reply to
     /// [`RpcRequestPayload::GetMeters`]. Empty when nothing is playing. A struct
     /// variant (not a newtype over `Vec`) because this enum is internally

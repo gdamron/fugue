@@ -109,6 +109,14 @@ pub enum RpcRequestPayload {
         #[serde(default)]
         after: Option<u64>,
     },
+    /// Read the notes `module_id` started or ended after `after` (the
+    /// `latest_seq` from a previous poll; `None` or `0` returns every note
+    /// still retained), and its playhead. See [`NotePage`](super::NotePage).
+    PollNotes {
+        module_id: String,
+        #[serde(default)]
+        after: Option<u64>,
+    },
     /// Read the latest sampled output levels. High-rate `MeterLevel` events are
     /// broadcast to streaming subscribers only (never the event log), so a
     /// poll-only client — notably MCP — reads current levels here instead of

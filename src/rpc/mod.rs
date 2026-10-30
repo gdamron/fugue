@@ -16,6 +16,7 @@ mod edits;
 mod error;
 mod event;
 mod identity;
+mod notes;
 mod package;
 mod pending;
 mod receipt;
@@ -42,6 +43,7 @@ pub use edits::{
     EditOp, StructuralEdit, WrittenControl, MAX_EDITS_PER_BATCH, MAX_EDIT_NAME_BYTES,
 };
 pub use error::{RpcError, RpcErrorCode};
+pub use notes::{NotePage, NoteTimeUnit, SeqNote};
 pub use event::{
     EventPage, MeterReading, RpcEvent, RpcEventPayload, RpcEventSink, RpcSubscriptionTopic,
     SeqEvent, SinkStatusState,

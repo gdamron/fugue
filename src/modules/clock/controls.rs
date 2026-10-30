@@ -6,6 +6,7 @@ pub(super) const BPM: ControlIndex = ControlIndex(0);
 pub(super) const GATE_LENGTH: ControlIndex = ControlIndex(1);
 pub(super) const RESET: ControlIndex = ControlIndex(2);
 pub(super) const POSITION: ControlIndex = ControlIndex(3);
+pub(super) const ELAPSED: ControlIndex = ControlIndex(4);
 
 const DECLS: &[ControlDecl] = &[
     // Not clamped: tests and fast pulse clocks run far past the range
@@ -44,6 +45,17 @@ const DECLS: &[ControlDecl] = &[
         },
         RtValue::F32(0.0),
         "Beats since the first gate or the latest reset, as of the latest block",
+    )
+    .telemetry(),
+    ControlDecl::new(
+        "elapsed",
+        DeclKind::Number {
+            min: 0.0,
+            max: f32::MAX,
+        },
+        RtValue::F32(0.0),
+        "Beats counted since the clock started, across resets (a reset moves on \
+         to the next whole beat), as of the latest block: where a view's playhead is",
     )
     .telemetry(),
 ];
