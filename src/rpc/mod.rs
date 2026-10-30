@@ -16,6 +16,7 @@ mod edits;
 mod error;
 mod event;
 mod focus;
+mod graph_change;
 mod identity;
 mod notes;
 mod package;
@@ -55,6 +56,7 @@ pub use focus::{
     Focus, FocusBars, FocusConnection, FocusIntent, FocusNote, FocusTarget, FocusTimeUnit,
     MAX_FOCUS_ITEMS, MAX_FOCUS_NAME_BYTES,
 };
+pub use graph_change::{ChangedModule, GraphChange, GraphShape, MAX_GRAPH_CHANGE_ITEMS};
 pub use identity::{verify_daemon_identity, BuildFingerprint, DaemonIdentity, IdentityMismatch};
 pub use notes::{NotePage, NoteTimeUnit, SeqNote};
 pub use package::{

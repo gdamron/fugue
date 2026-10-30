@@ -160,6 +160,9 @@ pub enum RpcRequestPayload {
     EditPins(super::PinEdit),
     /// Read the session's pinned controls with their values.
     GetPins,
+    /// Read the latest structural edit's [`GraphChange`](super::GraphChange),
+    /// which a `GraphChanged` event also announced.
+    GetGraphChange,
 }
 
 /// A single control write in a [`RpcCommand::SetControls`] batch.

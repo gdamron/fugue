@@ -28,7 +28,7 @@ pub struct RuntimeModuleInfo {
 }
 
 /// Serializable description of a routed connection in a running invention.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct RuntimeConnectionInfo {
     pub from: String,

@@ -7,6 +7,7 @@ mod edits;
 mod error;
 mod event;
 mod focus;
+mod graph_change;
 mod package;
 mod pending;
 mod pins;

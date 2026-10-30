@@ -90,6 +90,11 @@ pub enum RpcResponsePayload {
     },
     /// The pinned controls, in reply to `EditPins` and `GetPins`.
     Pins(super::PinList),
+    /// The reply to `GetGraphChange`: the latest structural edit's change,
+    /// none before the first edit to what is playing.
+    GraphChange {
+        change: Option<super::GraphChange>,
+    },
     /// The reply to `GetSummary`.
     Summary {
         summary: super::StatusSummary,
