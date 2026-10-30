@@ -167,6 +167,7 @@ impl RpcRequestPayload {
             | Self::PollNotes { .. }
             | Self::GetMeters
             | Self::GetFocus
+            | Self::GetSummary
             // Setting the same selection again leaves the same focus.
             | Self::SetFocus(_)
             // A scope opened by a reply that was lost belongs to the

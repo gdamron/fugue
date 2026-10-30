@@ -151,6 +151,9 @@ pub enum RpcRequestPayload {
     CloseScope {
         scope_id: String,
     },
+    /// Read the latest [`StatusSummary`](super::StatusSummary), which a
+    /// daemon refreshes about once a second.
+    GetSummary,
 }
 
 /// A single control write in a [`RpcCommand::SetControls`] batch.
