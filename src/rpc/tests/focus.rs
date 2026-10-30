@@ -116,6 +116,12 @@ fn a_clear_drops_only_its_own_views_selection() {
     assert_eq!(focus.as_ref().unwrap().view, "graph");
     select(&mut focus, json!({ "view": "graph", "module_id": null })).unwrap();
     assert_eq!(focus, None);
+    // A view letting go after its module was removed is no error.
+    select(
+        &mut focus,
+        json!({ "view": "piano-roll", "module_id": "gone" }),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -158,6 +164,9 @@ fn malformed_selections_are_refused() {
     let too_many = json!({ "view": "piano-roll", "module_id": "melody",
         "selection": { "kind": "notes", "unit": "beats", "notes": many } });
     assert_eq!(refused(&mut focus, too_many), RpcErrorCode::InvalidRequest);
+    let no_notes = json!({ "view": "piano-roll", "module_id": "melody",
+        "selection": { "kind": "notes", "unit": "beats", "notes": [] } });
+    assert_eq!(refused(&mut focus, no_notes), RpcErrorCode::InvalidRequest);
     let unnamed = json!({ "view": "", "selection": { "kind": "voice", "voice": "0" } });
     assert_eq!(refused(&mut focus, unnamed), RpcErrorCode::InvalidRequest);
     assert_eq!(focus, None);

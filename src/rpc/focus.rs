@@ -171,13 +171,16 @@ impl FocusIntent {
         }
         if let Some(module) = &self.module_id {
             name("module_id", module)?;
+        }
+        // A clearing names only the view, and may come after its module
+        // was removed: there is nothing more to check.
+        let Some(selection) = &self.selection else {
+            return Ok(());
+        };
+        if let Some(module) = &self.module_id {
             known(module, exists)?;
         }
-        // A clearing names only the view; there is nothing more to check.
-        match &self.selection {
-            Some(selection) => selection.check(exists),
-            None => Ok(()),
-        }
+        selection.check(exists)
     }
 }
 
@@ -186,6 +189,9 @@ impl FocusTarget {
         match self {
             Self::Notes { notes, .. } => {
                 items("notes", notes.len())?;
+                if notes.is_empty() {
+                    return Err(invalid("a notes selection names at least one note"));
+                }
                 for note in notes {
                     name("voice", &note.voice)?;
                     span(note.start, note.end.unwrap_or(note.start))?;
@@ -219,7 +225,8 @@ impl FocusTarget {
     }
 
     /// The bars this selection's beat times cover, for bars `beats_per_bar`
-    /// long. None for a selection without beat times.
+    /// long, bar 1 starting at beat 0 with one metre throughout (no pickup
+    /// and no metre change). None for a selection without beat times.
     fn bars(&self, beats_per_bar: f64) -> Option<FocusBars> {
         let (start, end) = match self {
             Self::Notes {
