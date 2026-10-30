@@ -161,9 +161,13 @@ impl RpcRequestPayload {
     /// The replay rule for this request, shared by every client transport.
     pub fn replay_policy(&self) -> ReplayPolicy {
         match self {
-            Self::Hello | Self::GetSnapshot | Self::PollEvents { .. } | Self::GetMeters => {
-                ReplayPolicy::Resend
-            }
+            Self::Hello
+            | Self::GetSnapshot
+            | Self::PollEvents { .. }
+            | Self::GetMeters
+            | Self::GetFocus
+            // Setting the same selection again leaves the same focus.
+            | Self::SetFocus(_) => ReplayPolicy::Resend,
             Self::Subscribe { .. } => ReplayPolicy::Never,
             Self::Command(command) => command.replay_policy(),
         }
