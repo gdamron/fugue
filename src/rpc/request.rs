@@ -140,6 +140,12 @@ pub enum RpcRequestPayload {
     /// Read the latest [`StatusSummary`](super::StatusSummary), which a
     /// daemon refreshes about once a second.
     GetSummary,
+    /// Pin or unpin controls in the session's pinned set, which
+    /// [`RpcRequestPayload::GetPins`] reads back. Pins change no music, so
+    /// this moves no revision; the daemon saves them with the session.
+    EditPins(super::PinEdit),
+    /// Read the session's pinned controls with their values.
+    GetPins,
 }
 
 /// A single control write in a [`RpcCommand::SetControls`] batch.

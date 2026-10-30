@@ -168,6 +168,11 @@ impl RpcRequestPayload {
             | Self::GetMeters
             | Self::GetFocus
             | Self::GetSummary
+            | Self::GetPins
+            // Pinning or unpinning the same controls again leaves the same
+            // set, in the same order unless one edit both unpins and pins a
+            // control, which moves it to the end each time.
+            | Self::EditPins(_)
             // Setting the same selection again leaves the same focus.
             | Self::SetFocus(_) => ReplayPolicy::Resend,
             Self::Subscribe { .. } => ReplayPolicy::Never,

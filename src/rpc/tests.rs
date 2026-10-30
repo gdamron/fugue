@@ -9,6 +9,7 @@ mod event;
 mod focus;
 mod package;
 mod pending;
+mod pins;
 mod recovery;
 mod request;
 mod response;

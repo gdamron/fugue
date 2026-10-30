@@ -84,6 +84,8 @@ pub enum RpcResponsePayload {
     Focus {
         focus: Option<super::Focus>,
     },
+    /// The pinned controls, in reply to `EditPins` and `GetPins`.
+    Pins(super::PinList),
     /// The reply to `GetSummary`.
     Summary {
         summary: super::StatusSummary,
