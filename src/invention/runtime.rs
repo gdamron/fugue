@@ -24,6 +24,7 @@ mod controls;
 mod describe;
 mod editing;
 mod error;
+mod notes;
 mod orchestration;
 mod pending;
 mod ports;

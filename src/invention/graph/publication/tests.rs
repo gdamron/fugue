@@ -104,6 +104,7 @@ fn publication(next: Vec<(&str, Next)>, edges: Vec<RoutingConnection>) -> Box<Pu
         handovers: Vec::new(),
         fate: None,
         ramp_room: None,
+        note_taps: None,
     })
 }
 

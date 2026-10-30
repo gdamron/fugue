@@ -95,7 +95,8 @@ impl ModuleFactory for ClockFactory {
 ///
 /// The read-only `elapsed` control counts on across resets instead: the
 /// beats begun before the latest reset plus the position, so a looping
-/// clock's count never folds back: what a view's playhead follows.
+/// clock's count never folds back: what a view's playhead follows, and
+/// what the note feed times notes by (see `crate::invention::notes`).
 pub struct Clock {
     sample_rate: u32,
     // Controls, applied on the thread running the clock.

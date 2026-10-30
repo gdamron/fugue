@@ -566,6 +566,7 @@ fn build_publication(
         handovers: Vec::new(),
         fate: None,
         ramp_room: None,
+        note_taps: None,
     })
 }
 
