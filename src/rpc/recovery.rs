@@ -169,6 +169,7 @@ impl RpcRequestPayload {
             | Self::GetFocus
             | Self::GetSummary
             | Self::GetPins
+            | Self::GetGraphChange
             // Pinning or unpinning the same controls again leaves the same
             // set, in the same order unless one edit both unpins and pins a
             // control, which moves it to the end each time.

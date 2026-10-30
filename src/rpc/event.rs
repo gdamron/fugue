@@ -102,6 +102,10 @@ pub enum RpcEventPayload {
     /// The session's pinned controls changed: an edit, or a graph change
     /// that dropped some. Values are not carried; read them with `GetPins`.
     PinsChanged(super::PinList),
+    /// A structural edit changed the graph's shape: what it added, removed,
+    /// replaced and rewired, between two revisions. Sent before the
+    /// `TopologyChanged` of the same edit; `GetGraphChange` reads the latest.
+    GraphChanged(super::GraphChange),
 }
 
 /// Minimal sink interface for transports that collect or broadcast RPC events.
