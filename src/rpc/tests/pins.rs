@@ -46,6 +46,10 @@ fn an_edit_pins_request_reads_from_the_wire() {
     }))
     .unwrap();
     assert_eq!(get.payload, RpcRequestPayload::GetPins);
+    assert_eq!(get.payload.replay_policy(), ReplayPolicy::Resend);
+    // Empty lists stay off the wire.
+    let wire = serde_json::to_value(RpcRequestPayload::EditPins(PinEdit::default())).unwrap();
+    assert_eq!(wire, json!({ "kind": "edit_pins", "source": "user" }));
 }
 
 #[test]
@@ -192,6 +196,40 @@ fn the_set_is_capped_and_a_refused_edit_changes_nothing() {
     .apply(&mut pins, everything)
     .unwrap();
     assert_eq!(pins.len(), MAX_PINNED_CONTROLS);
+}
+
+#[test]
+fn a_control_named_twice_in_one_edit_is_pinned_once() {
+    let mut pins = Vec::new();
+    pin(
+        &[("osc", "frequency"), ("osc", "frequency")],
+        RequestSource::Agent,
+    )
+    .apply(&mut pins, running)
+    .unwrap();
+    assert_eq!(addresses(&pins), vec![at("osc", "frequency")]);
+}
+
+#[test]
+fn an_edit_naming_more_controls_than_the_set_holds_is_refused() {
+    let mut pins = Vec::new();
+    let many: Vec<ControlAddress> = (0..=MAX_PINNED_CONTROLS)
+        .map(|i| at(&format!("m{i}"), "key"))
+        .collect();
+    for edit in [
+        PinEdit {
+            pin: many.clone(),
+            ..PinEdit::default()
+        },
+        PinEdit {
+            unpin: many.clone(),
+            ..PinEdit::default()
+        },
+    ] {
+        let error = edit.apply(&mut pins, |_, _| true).unwrap_err();
+        assert_eq!(error.code, RpcErrorCode::InvalidRequest);
+    }
+    assert!(pins.is_empty());
 }
 
 #[test]

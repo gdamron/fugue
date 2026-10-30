@@ -91,6 +91,16 @@ impl PinEdit {
         pins: &mut Vec<ControlPin>,
         exists: impl Fn(&str, &str) -> bool,
     ) -> Result<(), RpcError> {
+        // No edit can usefully name more controls than the set holds, so a
+        // longer one is refused before any per-control work.
+        for (what, list) in [("pin", &self.pin), ("unpin", &self.unpin)] {
+            if list.len() > MAX_PINNED_CONTROLS {
+                return Err(invalid(format!(
+                    "{what} names {} controls; at most {MAX_PINNED_CONTROLS} stay pinned",
+                    list.len()
+                )));
+            }
+        }
         for address in self.pin.iter().chain(&self.unpin) {
             for (what, name) in [("module_id", &address.module_id), ("key", &address.key)] {
                 if name.len() > MAX_PIN_NAME_BYTES {
