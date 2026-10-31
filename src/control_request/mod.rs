@@ -20,8 +20,6 @@
 //! `invention::graph::requests`. The allowance below for `dead_code` and
 //! `unused_imports` dates from before the request front doors and module
 //! control tables used the rest; remove it once nothing here is unused.
-#![allow(dead_code, unused_imports)]
-
 mod automation;
 mod backlog;
 #[cfg(test)]
