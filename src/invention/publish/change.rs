@@ -595,7 +595,7 @@ fn build_publication(
     })
 }
 
-// Used by `publish::watch`, which the front doors FUG-317 builds submit to.
+// Used by `publish::watch`, which the request front doors submit to.
 #[cfg_attr(not(test), allow(dead_code))]
 mod offline;
 mod order;

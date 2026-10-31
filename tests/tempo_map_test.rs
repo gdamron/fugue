@@ -1,11 +1,11 @@
-//! Integration tests for score-scheduled tempo changes (FUG-189).
+//! Integration tests for score-scheduled tempo changes.
 //!
 //! A `control_scheduler` compiles a score tempo map into writes of the clock's
 //! `bpm`, and the clock applies them phase-continuously: the beat grid keeps
 //! its phase across the seam instead of jumping. These tests assert the clock's
 //! beat-edge frames land exactly where the continuous beat count puts them —
-//! the same frame-exactness discipline as the FUG-176 end gate and the
-//! FUG-186 scheduled-control tests.
+//! the same frame-exactness discipline as the render end-gate and
+//! scheduled-control tests.
 
 use fugue::{ControlValue, RenderEngine};
 

@@ -747,7 +747,7 @@ mod tests;
 mod retrigger_dip_tests {
     use super::*;
 
-    /// FUG-188 regression (mirrors the cell_sequencer test): an over-estimated
+    /// Regression (mirrors the cell_sequencer test): an over-estimated
     /// first step must not swallow the retrigger of a note on step 1.
     #[test]
     fn first_step_overrun_still_retriggers_next_note() {

@@ -65,7 +65,7 @@ impl GraphChange {
 
     /// Recompiles the topology with module `id` writing `targets`, as a
     /// live write of its schedule leaves it, so the scheduler runs ahead
-    /// of the modules it now writes (FUG-388). Edits nothing, and returns
+    /// of the modules it now writes. Edits nothing, and returns
     /// false, when the topology installed was compiled with every module
     /// writing what it writes then.
     pub(crate) fn retarget(&mut self, id: &str, targets: Vec<String>) -> bool {

@@ -17,11 +17,9 @@
 //! atomics and cells (the `sync` shim below), so modules never need one.
 //!
 //! The drain that feeds the pending store lives with the graph, in
-//! `invention::graph::requests`. Front doors and the module control tables
-//! that use the rest come with FUG-310 and FUG-317, hence the `dead_code`
-//! and `unused_imports` allowance below; remove it once they land.
-#![allow(dead_code, unused_imports)]
-
+//! `invention::graph::requests`. The allowance below for `dead_code` and
+//! `unused_imports` dates from before the request front doors and module
+//! control tables used the rest; remove it once nothing here is unused.
 mod automation;
 mod backlog;
 #[cfg(test)]

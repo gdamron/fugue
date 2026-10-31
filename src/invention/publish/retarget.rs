@@ -1,5 +1,5 @@
 //! Recompiling a live graph's process order when a schedule write changes
-//! what its scheduler writes (FUG-388).
+//! what its scheduler writes.
 //!
 //! A scheduler computes ahead of the modules whose controls it writes (see
 //! `Module::control_targets`), and joins a feedback group with one that

@@ -204,7 +204,7 @@ fn load_invention_defaults_stop_on_end_fields() {
 
 #[test]
 fn control_writes_default_to_authoring_intent() {
-    // Clients that predate FUG-266 omit `intent`; their writes must keep
+    // Clients that predate write intents omit `intent`; their writes must keep
     // authoring (recorded, revision-advancing) exactly as before.
     let single: RpcCommand = serde_json::from_value(serde_json::json!({
         "command": "set_control",

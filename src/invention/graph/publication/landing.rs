@@ -17,7 +17,7 @@
 //! segment start, after every request due at the same sample has applied
 //! to the graph it replaces, as an immediate edit does at a block start.
 //! The tables it keeps play after it, so a step falling on the landing
-//! sample reaches a target it rebuilds (FUG-413).
+//! sample reaches a target it rebuilds.
 //! Segments run as blocks of their own, so an install between two is the
 //! install a block start makes, carries and all.
 //!

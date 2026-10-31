@@ -351,7 +351,7 @@ mod tests {
 
     #[test]
     fn set_control_coerces_a_stringified_numeric_write() {
-        // Mirrors the FUG-240 failure: an MCP client stringifies the value, so
+        // Mirrors a failure seen in practice: an MCP client stringifies the value, so
         // a numeric control receives ControlValue::String("0.5"). The runtime
         // must coerce it against the control's declared kind and land a number.
         const INVENTION: &str = r#"{

@@ -1,6 +1,6 @@
 //! Two schedulers on one control, one stepping on a clock and one on an
 //! LFO's rising edges: whichever entry comes later replaces the other's
-//! ramp, whoever plays each schedule (FUG-389).
+//! ramp, whoever plays each schedule.
 
 use fugue::{Invention, RenderEngine};
 

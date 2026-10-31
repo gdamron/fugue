@@ -1,7 +1,7 @@
 //! Hybrid audio asset references: package refs and local paths.
 //!
 //! Module configs reference audio assets under an `asset` key in one of two
-//! authored forms (FUG-130):
+//! authored forms:
 //!
 //! ```json
 //! "asset": "fugue.drums.808@1.2.0:kick/long.wav"

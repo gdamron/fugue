@@ -1,4 +1,4 @@
-//! Process-wide verification cache for catalog refreshes (FUG-279).
+//! Process-wide verification cache for catalog refreshes.
 //!
 //! Listing and describing content would otherwise re-hash every package and
 //! workspace audio file on every call, so the cost grew with library bytes.

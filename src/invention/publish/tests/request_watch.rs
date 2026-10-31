@@ -103,7 +103,7 @@ fn a_watched_module_the_target_runs_into_is_left_and_applies_late() {
 
 #[test]
 fn a_request_after_a_retarget_publishes_its_order() {
-    // The retarget published its recompile (FUG-388), so the request's
+    // The retarget published its recompile, so the request's
     // order goes in with nothing else moved.
     let oracle = retargeted_onto_a_later_module().render(200);
     let mut rig = retargeted_onto_a_later_module();

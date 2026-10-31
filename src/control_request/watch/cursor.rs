@@ -224,8 +224,7 @@ impl Cursors {
     ) -> (bool, Option<u64>) {
         let (mut any, mut wait) = (false, None::<u64>);
         for cursor in &mut self.entries {
-            // Played after the install instead, on the graph it installs
-            // (FUG-413).
+            // Played after the install instead, on the graph it installs.
             if host.defers(cursor.module) {
                 continue;
             }

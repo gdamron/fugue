@@ -65,7 +65,7 @@ fn plays_steps(out: &[f32], beats: &[usize], from: usize) -> bool {
 }
 
 /// On a step's beat: from the landing sample the new instance plays, that
-/// step's entry included (FUG-413), and every later step's.
+/// step's entry included, and every later step's.
 #[test]
 fn a_timed_swap_at_a_beat_plays_the_schedule_on_to_the_new_instance() {
     let beats = beat_samples(BPM, 8);
@@ -96,7 +96,7 @@ fn a_timed_swap_at_a_beat_plays_the_schedule_on_to_the_new_instance() {
 }
 
 /// Timed in samples onto a step's, the same: the step's entry plays once,
-/// on the new instance (FUG-413).
+/// on the new instance.
 #[test]
 fn a_timed_swap_on_a_step_plays_its_entry_on_the_new_instance() {
     let beats = beat_samples(BPM, 8);
@@ -354,7 +354,7 @@ fn tables_on_one_control_keep_their_order_across_a_swap_on_a_step() {
 
 /// A ramp of the dial's level from step 1 arriving at 1.0 on step 3, the
 /// sample a swap of the dial installs at, immediately or timed: its last
-/// write reaches the new instance, which holds 1.0 from there (FUG-413).
+/// write reaches the new instance, which holds 1.0 from there.
 #[test]
 fn a_swap_on_a_ramp_s_arrival_lands_its_end_on_the_new_instance() {
     let beats = beat_samples(BPM, 8);

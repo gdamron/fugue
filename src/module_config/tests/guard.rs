@@ -8,7 +8,7 @@ use std::path::Path;
 /// Module directories that may still call the raw accessors.
 const ALLOWED: &[(&str, &str)] = &[(
     "control_scheduler",
-    "reads its schedule and pacing values, not module config; FUG-302 owns them",
+    "reads its schedule and pacing values, not module config",
 )];
 
 const RAW_READS: [&str; 3] = [".as_u64()", ".as_i64()", ".as_f64()"];

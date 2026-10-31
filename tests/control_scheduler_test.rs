@@ -1,7 +1,7 @@
 //! Integration tests for the control_scheduler module: frame-exact scheduled
 //! control changes, deterministic renders, live schedule edits, `$asset`
-//! splicing, and load-time validation (FUG-186; the frame-exactness
-//! discipline mirrors the FUG-176 end-gate tests).
+//! splicing, and load-time validation (the frame-exactness discipline
+//! mirrors the render end-gate tests).
 
 use fugue::modules::mixer::gain_ramp_frames;
 use fugue::{ControlValue, Invention, RenderEngine};

@@ -1,7 +1,6 @@
 //! A level written to a sample kit slot or an instrument zone survives a
-//! reload of the saved document and a reload that rebuilds the module
-//! (FUG-341): the rebuilt module starts at the written level, not the
-//! file's.
+//! reload of the saved document and a reload that rebuilds the module:
+//! the rebuilt module starts at the written level, not the file's.
 
 use serde_json::json;
 

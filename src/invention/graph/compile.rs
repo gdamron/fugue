@@ -322,7 +322,7 @@ impl SignalGraph {
     /// A topology a publication installed keeps the ordering edges it was
     /// compiled with from the publisher's mirror, the orders conditions
     /// wait on among them, rather than read each module's control targets
-    /// again, so it stays the topology the mirror describes (FUG-391).
+    /// again, so it stays the topology the mirror describes.
     ///
     /// Allocates: called before a live graph moves to the audio thread, by
     /// offline render, and as the audio thread's fallback when a block size
@@ -355,7 +355,7 @@ impl SignalGraph {
     /// Recompiles in place when module `module_id` now writes other
     /// modules' controls than the topology was compiled with, as an offline
     /// `schedule` write can leave a scheduler: a live one publishes the
-    /// topology recompiled (FUG-388). The modules and routes stay, so each
+    /// topology recompiled. The modules and routes stay, so each
     /// keeps its feedback carry, as a live recompile's survivors do. A
     /// topology already due to recompile is left to. Allocates: offline.
     pub(crate) fn recompile_if_retargeted(&mut self, module_id: &str) {

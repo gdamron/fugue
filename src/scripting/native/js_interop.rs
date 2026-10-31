@@ -29,7 +29,7 @@ pub(super) fn make_console_writer(
                 ConsoleSink::Stderr => eprintln!("{}", line),
             }
             // Surface a code module's console output as an observable event so a
-            // conducting agent's narration reaches MCP (FUG-239 #6). Runs on the
+            // conducting agent's narration reaches MCP. Runs on the
             // script thread — the sink is off the audio path. The level is kept
             // in the text so an observer can tell a log from an error.
             emit_agent_activity(&event_sink, &module_id, level, &buf);
