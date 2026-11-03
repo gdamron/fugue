@@ -1,8 +1,8 @@
-//! GVerb reverb module.
+//! Stereo reverb: a multichannel diffuser feeding a feedback delay network.
 //!
-//! A reverb based on the GVerb algorithm, using a 4-order
-//! Feedback Delay Network with Hadamard matrix coupling, tapped delay early
-//! reflections, and cascaded allpass diffusers for stereo output.
+//! The input is spread over eight channels and diffused into a dense cloud
+//! of early reflections, which also feeds an eight-line feedback delay
+//! network for the tail (see [`network`] for the design and its sources).
 //!
 //! # Features
 //!
@@ -36,7 +36,7 @@ use crate::control_request::{
     apply_declared, local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable,
     Refusal, RtValue,
 };
-use crate::dsp::{Allpass, Damper, DelayLine, LinearRamp};
+use crate::dsp::{Damper, LinearRamp};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
@@ -45,103 +45,49 @@ use crate::traits::ControlMeta;
 use crate::Module;
 
 use self::controls::{DAMPING, DECAY, DRY, FREEZE, ROOM_SIZE, TABLE, WET, WIDTH};
-use self::tuning::{blend, Retuning, Tuning};
+use self::network::{tap, Diffuser, FeedbackNetwork, Frame};
+use self::tuning::{Retuning, Tuning};
 
 mod controls;
 mod inputs;
+mod network;
 mod outputs;
 mod tuning;
 
-// --- GVerb constants ---
+/// How strongly `damping` filters the input before it enters the reverb,
+/// as a fraction of the one-pole coefficient.
+const INPUT_DAMPING: f32 = 0.4;
+/// How strongly `damping` filters each trip round the feedback network.
+/// Applied once per trip, so long lines darken less per second than short
+/// ones, as in a real room where high frequencies are lost at each wall.
+const LOOP_DAMPING: f32 = 0.6;
+/// Each side's input is spread over half the channels; this keeps the
+/// energy entering the network equal to the energy of the input.
+const INPUT_SPREAD: f32 = 0.5;
+/// Level of the early reflections against the tail.
+const EARLY_LEVEL: f32 = 0.5;
+/// Overall wet level, chosen so a sustained sound comes back at about the
+/// level it went in with the default controls.
+const WET_LEVEL: f32 = 1.0;
 
-/// Number of parallel delay lines in the FDN.
-const FDN_ORDER: usize = 4;
-
-/// Speed of sound in meters per second (for room size → delay conversion).
-const SPEED_OF_SOUND: f32 = 340.0;
-
-/// Maximum room size in meters (determines max delay allocation).
-const MAX_ROOM_M: f32 = 100.0;
-
-/// Minimum room size in meters.
-const MIN_ROOM_M: f32 = 1.0;
-
-/// FDN delay length ratios relative to the largest delay.
-// These are intentional rounded DSP design constants, not an attempt to spell
-// `FRAC_1_SQRT_2`; keep the literal values so the delay tuning is unchanged.
-#[allow(clippy::approx_constant)]
-const FDN_RATIOS: [f32; FDN_ORDER] = [1.0, 0.816490, 0.707100, 0.632450];
-
-/// Early reflection tap positions as fractions of largest delay.
-const TAP_FRACTIONS: [f32; FDN_ORDER] = [0.41, 0.30, 0.155, 0.0];
-
-/// Offset added to each tap position (samples).
-const TAP_OFFSET: usize = 5;
-
-/// Allpass base sizes (relative units, scaled by diffscale).
-const INPUT_DIFF_SIZE: f32 = 210.0;
-const OUTPUT_DIFF_SIZES: [f32; 3] = [159.0, 562.0, 1341.0];
-const DIFF_SIZE_TOTAL: f32 = 1341.0;
-
-/// Allpass allpass coefficients.
-const INPUT_DIFF_COEFF: f32 = 0.75;
-const OUTPUT_DIFF_COEFFS: [f32; 3] = [0.75, 0.625, 0.625];
-
-/// Stereo spread in samples (decorrelates left/right diffusers).
-const STEREO_SPREAD: f32 = 13.0;
-
-/// Minimum RT60 in seconds.
-const MIN_RT60: f32 = 0.2;
-
-/// Maximum RT60 in seconds.
-const MAX_RT60: f32 = 15.0;
-
-/// Target attenuation for RT60 calculation (60 dB).
-const ALPHA_BASE: f32 = 0.001; // 10^(-60/20)
-
-// --- Hadamard 4x4 matrix ---
-
-/// Applies the 4x4 Hadamard feedback matrix in-place.
-/// b[0] = 0.5 * (+d0 + d1 - d2 - d3)
-/// b[1] = 0.5 * (+d0 - d1 - d2 + d3)
-/// b[2] = 0.5 * (-d0 + d1 - d2 + d3)
-/// b[3] = 0.5 * (+d0 + d1 + d2 + d3)
-#[inline]
-fn hadamard4(d: &[f32; FDN_ORDER]) -> [f32; FDN_ORDER] {
-    [
-        0.5 * (d[0] + d[1] - d[2] - d[3]),
-        0.5 * (d[0] - d[1] - d[2] + d[3]),
-        0.5 * (-d[0] + d[1] - d[2] + d[3]),
-        0.5 * (d[0] + d[1] + d[2] + d[3]),
-    ]
-}
-
-// --- Parameter mapping helpers ---
-
-/// Maps room_size control (0–1) to meters.
-fn room_size_to_meters(ctrl: f32) -> f32 {
-    MIN_ROOM_M + ctrl * (MAX_ROOM_M - MIN_ROOM_M)
-}
-
-/// Maps decay control (0–1) to RT60 in seconds.
-fn decay_to_rt60(ctrl: f32) -> f32 {
-    MIN_RT60 + ctrl * (MAX_RT60 - MIN_RT60)
-}
-
-/// Computes per-sample decay alpha from RT60 and sample rate.
-/// alpha = ALPHA_BASE ^ (1 / (rt60 * sample_rate))
-fn compute_alpha(rt60: f32, sample_rate: u32) -> f32 {
-    ALPHA_BASE.powf(1.0 / (rt60 * sample_rate as f32))
-}
+/// The output taps, as weights over the eight channels. Each is orthogonal
+/// to the others of its pair, so with full width the two sides of the tail
+/// (and of the early reflections) are uncorrelated.
+const S: f32 = 0.353_553_4; // 1/sqrt(8)
+const TAIL_LEFT: Frame = [S, -S, S, -S, S, -S, S, -S];
+const TAIL_RIGHT: Frame = [S, S, -S, -S, S, S, -S, -S];
+const EARLY_LEFT: Frame = [S, -S, S, S, S, -S, -S, S];
+const EARLY_RIGHT: Frame = [S, S, S, -S, -S, -S, S, S];
 
 // --- Main reverb module ---
 
-/// A stereo reverb effect using the GVerb (CCRMA) algorithm.
+/// A stereo reverb: an eight-channel diffuser for the early reflections
+/// feeding an eight-line feedback delay network for the tail.
 ///
 /// # Inputs
 ///
 /// - `audio_left` - Left audio input
-/// - `audio_right` - Right audio input (0.0 if not connected; mono input is fine)
+/// - `audio_right` - Right audio input (copies the left if not connected; mono input is fine)
 ///
 /// # Outputs
 ///
@@ -172,31 +118,23 @@ pub struct Reverb {
     dry: LinearRamp,
     width: LinearRamp,
     freeze: bool,
+    /// 1 while the reverb listens, 0 while frozen: it fades the input, the
+    /// early reflections and the loop's damping out as freeze engages, over
+    /// the same time the tuning crossfades, so freezing never clicks.
+    listening: LinearRamp,
     /// What `room_size`, `decay` and `freeze` make of the delay network,
     /// recomputed as they change rather than every sample, and crossfaded
     /// from the last tuning so a change never steps the output.
     retuning: Retuning,
     cells: Arc<ControlCells>,
 
-    // Input processing
-    input_damper: Damper,
-    input_diffuser: Allpass,
-
-    // Tapped delay for early reflections
-    tap_delay: DelayLine,
-    max_tap_delay_len: usize,
-
-    // FDN delay lines and dampers
-    fdn_delays: [DelayLine; FDN_ORDER],
-    fdn_dampers: [Damper; FDN_ORDER],
-    max_fdn_lengths: [usize; FDN_ORDER],
-
-    // Output diffusers (3 per channel)
-    left_diffusers: [Allpass; 3],
-    right_diffusers: [Allpass; 3],
-
     inputs: inputs::ReverbInputs,
     outputs: outputs::ReverbOutputs,
+
+    // Signal path.
+    input_filters: [Damper; 2],
+    diffuser: Diffuser,
+    network: FeedbackNetwork,
 }
 
 impl Reverb {
@@ -210,170 +148,91 @@ impl Reverb {
 
     /// A reverb holding what `cells` hold, applied (so clamped).
     fn with_cells(sample_rate: u32, cells: Arc<ControlCells>) -> Self {
-        // Allocate at max room size to avoid runtime allocation
-        let max_largest_delay =
-            (sample_rate as f32 * MAX_ROOM_M / SPEED_OF_SOUND).ceil() as usize + 1;
-
-        // FDN delay lines (allocated at max size)
-        let max_fdn_lengths: [usize; FDN_ORDER] =
-            std::array::from_fn(|i| (max_largest_delay as f32 * FDN_RATIOS[i]).ceil() as usize);
-        let fdn_delays = std::array::from_fn(|i| DelayLine::new(max_fdn_lengths[i] + 1));
-        let fdn_dampers = std::array::from_fn(|_| Damper::new());
-
-        // Tap delay (needs to hold at least max_largest_delay)
-        let max_tap_delay_len = max_largest_delay + TAP_OFFSET + 1;
-        let tap_delay = DelayLine::new(max_tap_delay_len);
-
-        // Allpass sizing based on max FDN length
-        let diff_scale = max_fdn_lengths[3] as f32 / DIFF_SIZE_TOTAL;
-
-        let input_diff_size = (INPUT_DIFF_SIZE * diff_scale).ceil() as usize;
-        let input_diffuser = Allpass::new(input_diff_size, INPUT_DIFF_COEFF);
-
-        let left_diffusers = std::array::from_fn(|i| {
-            let size = ((OUTPUT_DIFF_SIZES[i] + STEREO_SPREAD) * diff_scale).ceil() as usize;
-            Allpass::new(size, OUTPUT_DIFF_COEFFS[i])
-        });
-        let right_diffusers = std::array::from_fn(|i| {
-            let size = ((OUTPUT_DIFF_SIZES[i] - STEREO_SPREAD) * diff_scale).ceil() as usize;
-            Allpass::new(size.max(1), OUTPUT_DIFF_COEFFS[i])
-        });
-
+        // Every delay holds the largest offset any control can ask of it,
+        // plus one for the read that comes before the write.
+        let largest = Tuning::largest(sample_rate);
+        let diffusion = largest
+            .diffusion
+            .map(|stage| stage.map(|offset| offset + 1));
+        let lines = largest.lines.map(|len| len + 1);
+        let fade = Retuning::fade_frames(sample_rate);
+        let ramp = gain_ramp_frames(sample_rate);
         let mut reverb = Self {
             sample_rate,
             room_size: 0.5,
             decay: 0.5,
             damping: 0.5,
-            wet: LinearRamp::new(0.33, gain_ramp_frames(sample_rate)),
-            dry: LinearRamp::new(1.0, gain_ramp_frames(sample_rate)),
-            width: LinearRamp::new(1.0, gain_ramp_frames(sample_rate)),
+            wet: LinearRamp::new(0.33, ramp),
+            dry: LinearRamp::new(1.0, ramp),
+            width: LinearRamp::new(1.0, ramp),
             freeze: false,
-            retuning: Retuning::settled(Tuning::default(), sample_rate),
+            listening: LinearRamp::new(1.0, fade),
+            retuning: Retuning::settled(Tuning::new(sample_rate, 0.5, 0.5, false), sample_rate),
             cells,
-            input_damper: Damper::new(),
-            input_diffuser,
-            tap_delay,
-            max_tap_delay_len,
-            fdn_delays,
-            fdn_dampers,
-            max_fdn_lengths,
-            left_diffusers,
-            right_diffusers,
             inputs: inputs::ReverbInputs::new(),
             outputs: outputs::ReverbOutputs::new(),
+            input_filters: [Damper::new(), Damper::new()],
+            diffuser: Diffuser::new(&diffusion),
+            network: FeedbackNetwork::new(&lines),
         };
-        for index in 0..TABLE.len() {
-            let index = ControlIndex(index as u16);
-            if let Some(value) = reverb.cells.load(index) {
-                let _ = apply_declared(&mut reverb, index, value);
+        for control in [ROOM_SIZE, DECAY, DAMPING, WET, DRY, WIDTH, FREEZE] {
+            if let Some(value) = reverb.cells.load(control) {
+                let _ = apply_declared(&mut reverb, control, value);
             }
         }
+        // Built, the reverb starts where its controls are, not gliding there.
         reverb.retuning = Retuning::settled(reverb.tuning(), sample_rate);
-        // The mix it is built with is where it starts, not a glide.
-        for (index, ramp) in [
-            (WET, &mut reverb.wet),
-            (DRY, &mut reverb.dry),
-            (WIDTH, &mut reverb.width),
-        ] {
-            if let Some(RtValue::F32(value)) = reverb.cells.load(index) {
-                ramp.snap(value);
-            }
-        }
+        reverb.listening.settle();
+        reverb.wet.settle();
+        reverb.dry.settle();
+        reverb.width.settle();
         reverb
     }
 
-    /// Processes one stereo sample through the reverb at frame `i`.
-    fn process_sample(&mut self, i: usize) {
-        let frozen = self.freeze;
-        let damping = self.damping;
-        let wet_ctrl = self.wet.next_value();
-        let dry = self.dry.next_value();
-        let width = self.width.next_value();
-        let s = self.retuning.next_weight();
-        let (old, new) = (self.retuning.from(), self.retuning.to());
+    /// The tuning the current controls ask for.
+    fn tuning(&self) -> Tuning {
+        Tuning::new(self.sample_rate, self.room_size, self.decay, self.freeze)
+    }
 
-        let input_l = self.inputs.left(i);
-        let input_r = if self.inputs.right_active() {
+    #[inline]
+    fn process_sample(&mut self, i: usize) {
+        let left = self.inputs.left(i);
+        let right = if self.inputs.right_active() {
             self.inputs.right(i)
         } else {
-            input_l
-        };
-        let input = (input_l + input_r) * 0.5;
-
-        // Input gain (zero when frozen to prevent new input)
-        let input_gain = if frozen { 0.0 } else { 1.0 };
-
-        // 1. Input damping (bandwidth control)
-        let z = self.input_damper.tick(input * input_gain, damping);
-
-        // 2. Input diffusion
-        let z = self.input_diffuser.tick(z);
-
-        // 3. Read early reflection taps
-        let tap = |tuning: &Tuning, i: usize| {
-            tuning.tap_gains[i] * self.tap_delay.read(tuning.tap_positions[i])
-        };
-        let early: [f32; FDN_ORDER] =
-            std::array::from_fn(|i| blend(s, || tap(old, i), tap(new, i)));
-
-        // 4. Write into tap delay
-        self.tap_delay.write_and_advance(z);
-
-        // 5. Read FDN with damping in feedback path
-        let fdn_damping = if frozen { 0.0 } else { damping };
-        // The damper is linear, so each tuning's gain is applied before it,
-        // where the two tunings' reads blend.
-        let d: [f32; FDN_ORDER] = std::array::from_fn(|i| {
-            let line = &self.fdn_delays[i];
-            let read = |tuning: &Tuning| tuning.fdn_gains[i] * line.read(tuning.fdn_lens[i]);
-            let raw = blend(s, || read(old), read(new));
-            self.fdn_dampers[i].tick(raw, fdn_damping)
-        });
-
-        // 6. Mix early reflections + tail
-        let early_level = 0.4;
-        let tail_level = 0.6;
-        let mut sum = input * input_gain * early_level;
-        let mut sign = 1.0f32;
-        for i in 0..FDN_ORDER {
-            sum += sign * (tail_level * d[i] + early_level * early[i]);
-            sign = -sign;
-        }
-        let mut lsum = sum;
-        let mut rsum = sum;
-
-        // 7. Hadamard matrix feedback mixing
-        let f = hadamard4(&d);
-
-        // 8. Write FDN feedback (early reflections + mixed FDN)
-        for i in 0..FDN_ORDER {
-            self.fdn_delays[i].write_and_advance(early[i] + f[i]);
-        }
-
-        // 9. Output diffusion (separate L/R chains for stereo)
-        for diff in &mut self.left_diffusers {
-            lsum = diff.tick(lsum);
-        }
-        for diff in &mut self.right_diffusers {
-            rsum = diff.tick(rsum);
-        }
-
-        // 10. Stereo width crossmix + dry blend
-        let wet_g0 = wet_ctrl * (width * 0.5 + 0.5);
-        let wet_g1 = wet_ctrl * ((1.0 - width) * 0.5);
-
-        let left_out = lsum * wet_g0 + rsum * wet_g1 + input_l * dry;
-        let right_out = rsum * wet_g0 + lsum * wet_g1 + input_r * dry;
-
-        // Denormal protection
-        let left_out = if left_out.is_finite() { left_out } else { 0.0 };
-        let right_out = if right_out.is_finite() {
-            right_out
-        } else {
-            0.0
+            left
         };
 
-        self.outputs.set(i, left_out, right_out);
+        let s = self.retuning.next_weight();
+        let (from, to) = (self.retuning.from(), self.retuning.to());
+        let listening = self.listening.next_value();
+
+        // Spread each side over alternate channels, filtered and faded out
+        // while frozen.
+        let band = self.damping * INPUT_DAMPING;
+        let feed = listening * INPUT_SPREAD;
+        let feed_left = self.input_filters[0].tick(left, band) * feed;
+        let feed_right = self.input_filters[1].tick(right, band) * feed;
+        let mut frame: Frame =
+            std::array::from_fn(|ch| if ch % 2 == 0 { feed_left } else { feed_right });
+
+        self.diffuser.process(&mut frame, from, to, s);
+        let loop_damping = self.damping * LOOP_DAMPING * listening;
+        let tail = self.network.process(&frame, from, to, s, loop_damping);
+
+        let early = EARLY_LEVEL * listening;
+        let wet_left = WET_LEVEL * (tap(&tail, &TAIL_LEFT) + early * tap(&frame, &EARLY_LEFT));
+        let wet_right = WET_LEVEL * (tap(&tail, &TAIL_RIGHT) + early * tap(&frame, &EARLY_RIGHT));
+
+        let wet = self.wet.next_value();
+        let dry = self.dry.next_value();
+        let width = self.width.next_value();
+        let same = wet * (0.5 + 0.5 * width);
+        let cross = wet * 0.5 * (1.0 - width);
+        let out_left = dry * left + same * wet_left + cross * wet_right;
+        let out_right = dry * right + same * wet_right + cross * wet_left;
+        let finite = |x: f32| if x.is_finite() { x } else { 0.0 };
+        self.outputs.set(i, finite(out_left), finite(out_right));
     }
 }
 
@@ -427,6 +286,7 @@ impl Module for Reverb {
         let applied = match (control, value) {
             (FREEZE, RtValue::Bool(freeze)) => {
                 self.freeze = freeze;
+                self.listening.set_target(if freeze { 0.0 } else { 1.0 });
                 value
             }
             (WET | DRY | WIDTH, RtValue::F32(value)) => {
