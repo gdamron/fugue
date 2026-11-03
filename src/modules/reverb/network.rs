@@ -3,9 +3,9 @@
 //!
 //! Both stages work on eight channels at once. The diffuser (after
 //! Signalsmith, "Let's write a reverb", 2021) runs four stages of short
-//! per-channel delays, a polarity pattern and an orthonormal Hadamard mix,
-//! so one input sample leaves as a dense cloud of echoes: the early
-//! reflections. The feedback network (Stautner & Puckette, 1982; Jot &
+//! per-channel delays, a polarity pattern and a Hadamard mix (normalised
+//! once, after the last stage), so one input sample leaves as a dense cloud
+//! of echoes: the early reflections. The feedback network (Stautner & Puckette, 1982; Jot &
 //! Chaigne, 1991) recirculates that cloud through eight delay lines of
 //! unrelated lengths, mixed by a Householder reflection, which is lossless,
 //! so each line's own gain alone sets how fast the tail decays.
@@ -55,8 +55,22 @@ fn hadamard(frame: &mut Frame) {
     }
 }
 
-/// Undoes the gain of [`STAGES`] unscaled Hadamard passes: (1/√8)⁴.
-const DIFFUSER_SCALE: f32 = 1.0 / 64.0;
+/// Undoes the gain of [`STAGES`] unscaled Hadamard passes: each scales the
+/// frame's energy by [`CHANNELS`], so together they need (1/√N)^STAGES,
+/// which is a whole power of 1/N for an even number of stages.
+const DIFFUSER_SCALE: f32 = {
+    let mut scale = 1.0;
+    let mut pass = 0;
+    while pass < STAGES / 2 {
+        scale /= CHANNELS as f32;
+        pass += 1;
+    }
+    scale
+};
+const _: () = assert!(
+    STAGES % 2 == 0,
+    "DIFFUSER_SCALE needs an even number of stages"
+);
 
 /// A Householder reflection, in place: each channel minus 2/N of their sum.
 /// Lossless (orthogonal) and dense, and it costs one sum rather than a
@@ -99,10 +113,16 @@ impl Diffuser {
     /// under `from` for the rest.
     #[inline]
     pub(super) fn process(&mut self, frame: &mut Frame, from: &Tuning, to: &Tuning, s: f32) {
+        let settled = s >= 1.0;
         for (stage, lines) in self.stages.iter_mut().enumerate() {
+            let offsets = &to.diffusion[stage];
             for (ch, line) in lines.iter_mut().enumerate() {
-                let new = line.read(to.diffusion[stage][ch]);
-                let delayed = blend(s, || line.read(from.diffusion[stage][ch]), new);
+                let new = line.read(offsets[ch]);
+                let delayed = if settled {
+                    new
+                } else {
+                    blend(s, || line.read(from.diffusion[stage][ch]), new)
+                };
                 line.write_and_advance(frame[ch]);
                 frame[ch] = delayed * POLARITY[stage][ch];
             }
@@ -144,11 +164,16 @@ impl FeedbackNetwork {
         damping: f32,
     ) -> Frame {
         let mut out = [0.0; CHANNELS];
+        let settled = s >= 1.0;
         for (ch, line) in self.lines.iter().enumerate() {
             // The gain goes on before the damper, which is linear, so the
             // two tunings blend before the filter sees them.
             let new = line.read(to.lines[ch]) * to.gains[ch];
-            let decayed = blend(s, || line.read(from.lines[ch]) * from.gains[ch], new);
+            let decayed = if settled {
+                new
+            } else {
+                blend(s, || line.read(from.lines[ch]) * from.gains[ch], new)
+            };
             out[ch] = self.dampers[ch].tick(decayed, damping);
         }
         let mut feedback = out;
@@ -184,6 +209,34 @@ mod tests {
         let mut reflected = frame;
         householder(&mut reflected);
         assert!((energy(&reflected) - energy(&frame)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn the_diffuser_keeps_an_impulses_energy() {
+        let tuning = Tuning::new(48_000, 0.5, 0.5, false);
+        let largest = Tuning::largest(48_000);
+        let capacity = largest
+            .diffusion
+            .map(|stage| stage.map(|offset| offset + 1));
+        let longest: usize = (0..STAGES)
+            .map(|stage| tuning.diffusion[stage].iter().max().unwrap())
+            .sum();
+        for ch in [0, 5] {
+            let mut diffuser = Diffuser::new(&capacity);
+            let mut energy_out = 0.0;
+            for i in 0..=longest {
+                let mut frame = [0.0; CHANNELS];
+                if i == 0 {
+                    frame[ch] = 1.0;
+                }
+                diffuser.process(&mut frame, &tuning, &tuning, 1.0);
+                energy_out += energy(&frame);
+            }
+            assert!(
+                (energy_out - 1.0).abs() < 1e-4,
+                "channel {ch}: {energy_out}"
+            );
+        }
     }
 
     #[test]

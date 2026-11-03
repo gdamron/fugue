@@ -2,8 +2,9 @@
 //! network from one tuning to the next.
 //!
 //! A new room size moves every diffuser and feedback-line read to a
-//! different sample of the delay buffers. Reading the new offsets at once steps the waveform, which
-//! is heard as a click on a step and as zipper noise under automation.
+//! different sample of the delay buffers. Reading the new offsets at once
+//! steps the waveform, which is heard as a click on a step and as zipper
+//! noise under automation.
 //! Instead, the reverb keeps reading the old offsets alongside the new ones
 //! and blends from one to the other over [`FADE_SECONDS`].
 
@@ -19,9 +20,10 @@ const CROSSING_FLOOR_SECONDS: f32 = 0.012;
 const RT60_SECONDS: (f32, f32) = (0.2, 15.0);
 
 /// Each feedback line's length as a fraction of the room's crossing time.
-/// Spaced roughly geometrically and irregularly, so no two lines share a
-/// simple ratio and their echoes never line up into a pitch.
-const LINE_SPREAD: [f32; CHANNELS] = [0.383, 0.431, 0.474, 0.536, 0.589, 0.668, 0.731, 0.827];
+/// Spaced roughly geometrically and irregularly: the ratio of every pair
+/// stays at least 0.8% away from any fraction with a denominator up to 8,
+/// so no two lines' echoes soon line up again into a flutter or a pitch.
+const LINE_SPREAD: [f32; CHANNELS] = [0.363, 0.409, 0.472, 0.522, 0.621, 0.674, 0.738, 0.800];
 /// Each diffusion stage's longest delay as a fraction of the crossing time.
 /// Each stage is a little under twice the last, so the echoes thicken
 /// stage by stage without gathering at one delay.
@@ -274,6 +276,22 @@ mod tests {
                     for stage in 0..STAGES {
                         let offset = tuning.diffusion[stage][ch];
                         assert!(offset >= 1 && offset <= largest.diffusion[stage][ch]);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_two_line_spreads_are_near_a_simple_ratio() {
+        for (i, a) in LINE_SPREAD.iter().enumerate() {
+            for b in &LINE_SPREAD[i + 1..] {
+                let ratio = a.min(*b) / a.max(*b);
+                for q in 1..=8 {
+                    for p in 1..=q {
+                        let fraction = p as f32 / q as f32;
+                        let distance = (ratio - fraction).abs() / fraction;
+                        assert!(distance > 0.008, "{a}/{b} is near {p}/{q}");
                     }
                 }
             }

@@ -303,3 +303,31 @@ fn automated_room_size_does_not_zipper() {
     changing = changing.max(sustained.largest_kink(WINDOW));
     assert_no_click("ramped", before, changing, &mut sustained);
 }
+
+/// One sample that is not a number, from upstream, does not silence the
+/// reverb: the dry signal and the tail carry on.
+#[test]
+fn a_non_finite_input_sample_does_not_silence_the_reverb() {
+    let mut reverb = Reverb::new(44100);
+    reverb.set_control("wet", 0.5).unwrap();
+    for i in 0..4410 {
+        let value = if i == 100 {
+            f32::NAN
+        } else {
+            (i as f32 * 0.05).sin() * 0.5
+        };
+        reverb.set_input("audio_left", value).unwrap();
+        reverb.process(1);
+    }
+    let mut heard = 0.0;
+    for i in 0..4410 {
+        reverb
+            .set_input("audio_left", (i as f32 * 0.05).sin() * 0.5)
+            .unwrap();
+        reverb.process(1);
+        let left = reverb.get_output("audio_left").unwrap();
+        assert!(left.is_finite());
+        heard += left * left;
+    }
+    assert!(heard > 1.0, "the reverb went silent: {heard}");
+}

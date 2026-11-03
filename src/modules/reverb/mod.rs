@@ -120,7 +120,11 @@ pub struct Reverb {
     freeze: bool,
     /// 1 while the reverb listens, 0 while frozen: it fades the input, the
     /// early reflections and the loop's damping out as freeze engages, over
-    /// the same time the tuning crossfades, so freezing never clicks.
+    /// the same time the tuning crossfades, so freezing never clicks. It
+    /// starts at once, while the frozen tuning may wait behind a room fade
+    /// under way, so freezing mid-automation loses a little level before
+    /// the loop turns lossless, and unfreezing lets a little input into a
+    /// lossless loop: up to one fade's worth either way.
     listening: LinearRamp,
     /// What `room_size`, `decay` and `freeze` make of the delay network,
     /// recomputed as they change rather than every sample, and crossfaded
@@ -209,10 +213,13 @@ impl Reverb {
 
         // Spread each side over alternate channels, filtered and faded out
         // while frozen.
+        // A sample that is not a number would stay in the delay lines and
+        // silence the reverb for good: only finite input enters it.
+        let audible = |x: f32| if x.is_finite() { x } else { 0.0 };
         let band = self.damping * INPUT_DAMPING;
         let feed = listening * INPUT_SPREAD;
-        let feed_left = self.input_filters[0].tick(left, band) * feed;
-        let feed_right = self.input_filters[1].tick(right, band) * feed;
+        let feed_left = self.input_filters[0].tick(audible(left), band) * feed;
+        let feed_right = self.input_filters[1].tick(audible(right), band) * feed;
         let mut frame: Frame =
             std::array::from_fn(|ch| if ch % 2 == 0 { feed_left } else { feed_right });
 
