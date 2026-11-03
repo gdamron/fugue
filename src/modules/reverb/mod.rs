@@ -69,6 +69,9 @@ const EARLY_LEVEL: f32 = 0.5;
 /// Overall wet level, chosen so a sustained sound comes back at about the
 /// level it went in with the default controls.
 const WET_LEVEL: f32 = 1.7;
+/// The loudest input the wet path accepts, far above any audio signal, so
+/// no input can overflow the network to infinity.
+const INPUT_LIMIT: f32 = 1.0e6;
 
 /// The output taps, as weights over the eight channels. Each is orthogonal
 /// to the others of its pair, so with full width the two sides of the tail
@@ -214,8 +217,15 @@ impl Reverb {
         // Spread each side over alternate channels, filtered and faded out
         // while frozen.
         // A sample that is not a number would stay in the delay lines and
-        // silence the reverb for good: only finite input enters it.
-        let audible = |x: f32| if x.is_finite() { x } else { 0.0 };
+        // silence the reverb for good, and so would one large enough to
+        // overflow the diffuser's mixes: only finite, bounded input enters.
+        let audible = |x: f32| {
+            if x.is_finite() {
+                x.clamp(-INPUT_LIMIT, INPUT_LIMIT)
+            } else {
+                0.0
+            }
+        };
         let band = self.damping * INPUT_DAMPING;
         let feed = listening * INPUT_SPREAD;
         let feed_left = self.input_filters[0].tick(audible(left), band) * feed;
