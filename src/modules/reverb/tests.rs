@@ -238,9 +238,9 @@ impl Sustained {
 const WINDOW: usize = 4410;
 
 /// How far a change's kinks may exceed those of the sine settled at either
-/// end. Sweeping the room moves the comb resonances, so the sine may swell
-/// a little on the way (under twice as large); reading new offsets at once
-/// kinks the output 25 to 250 times further.
+/// end. Sweeping the room moves the delay network's resonances, so the sine
+/// may swell a little on the way; reading new offsets at once kinks the
+/// output many times further.
 const CLICK_RATIO: f32 = 4.0;
 
 /// Asserts that `changing`, the largest kink during a change, is no
