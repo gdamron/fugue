@@ -1,7 +1,6 @@
 //! Criterion 3: room_size, decay and freeze changes are click-free.
 
 use super::rig::*;
-use super::*;
 
 struct Event {
     at: f64,

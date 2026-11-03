@@ -1,7 +1,6 @@
 //! Criterion 2: no blow-up at maximum decay or with freeze.
 
 use super::rig::*;
-use super::*;
 
 /// Criterion 2: no blow-up at maximum decay with sustained noise.
 #[test]

@@ -1,7 +1,6 @@
 //! Criterion 1: RT60 follows the decay setting.
 
 use super::rig::*;
-use super::*;
 
 /// RT60 from an impulse response by Schroeder backward integration and a
 /// T20 line fit (-5 dB to -25 dB), extrapolated to 60 dB.
