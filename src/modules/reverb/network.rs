@@ -191,10 +191,6 @@ mod tests {
         let mut frame = [0.0; CHANNELS];
         frame[3] = 1.0;
         hadamard(&mut frame);
-        let level = (CHANNELS as f32).sqrt().recip();
-        assert!(
-            frame.iter().all(|x| (x.abs() - level).abs() < 1e-6),
-            "{frame:?}"
-        );
+        assert!(frame.iter().all(|x| x.abs() == 1.0), "{frame:?}");
     }
 }

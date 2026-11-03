@@ -68,7 +68,7 @@ const INPUT_SPREAD: f32 = 0.5;
 const EARLY_LEVEL: f32 = 0.5;
 /// Overall wet level, chosen so a sustained sound comes back at about the
 /// level it went in with the default controls.
-const WET_LEVEL: f32 = 1.0;
+const WET_LEVEL: f32 = 1.7;
 
 /// The output taps, as weights over the eight channels. Each is orthogonal
 /// to the others of its pair, so with full width the two sides of the tail
