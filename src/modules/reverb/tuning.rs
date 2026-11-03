@@ -1,31 +1,105 @@
 //! The reverb's delay network tuning, and the crossfade that carries the
 //! network from one tuning to the next.
 //!
-//! A new room size moves every tap and FDN read to a different sample of the
-//! delay buffers. Reading the new offsets at once steps the waveform, which
-//! is heard as a click on a step and as zipper noise under automation.
+//! A new room size moves every diffuser and feedback-line read to a
+//! different sample of the delay buffers. Reading the new offsets at once
+//! steps the waveform, which is heard as a click on a step and as zipper
+//! noise under automation.
 //! Instead, the reverb keeps reading the old offsets alongside the new ones
 //! and blends from one to the other over [`FADE_SECONDS`].
 
-use super::{
-    compute_alpha, decay_to_rt60, room_size_to_meters, Reverb, FDN_ORDER, FDN_RATIOS,
-    SPEED_OF_SOUND, TAP_FRACTIONS, TAP_OFFSET,
-};
+use super::network::{CHANNELS, STAGES};
+
+/// The nominal room `room_size` spans, in metres.
+const ROOM_METRES: (f32, f32) = (1.0, 100.0);
+const SPEED_OF_SOUND: f32 = 343.0;
+/// Added to every room's crossing time, so the smallest rooms still have
+/// lines long enough to be heard as a space rather than a comb filter.
+const CROSSING_FLOOR_SECONDS: f32 = 0.012;
+/// The decay times `decay` spans, as RT60 in seconds.
+const RT60_SECONDS: (f32, f32) = (0.2, 15.0);
+
+/// Each feedback line's length as a fraction of the room's crossing time.
+/// Spaced roughly geometrically and irregularly: the ratio of every pair
+/// stays at least 0.8% away from any fraction with a denominator up to 8,
+/// so no two lines' echoes soon line up again into a flutter or a pitch.
+const LINE_SPREAD: [f32; CHANNELS] = [0.363, 0.409, 0.472, 0.522, 0.621, 0.674, 0.738, 0.800];
+/// Each diffusion stage's longest delay as a fraction of the crossing time.
+/// Each stage is a little under twice the last, so the echoes thicken
+/// stage by stage without gathering at one delay.
+const DIFFUSION_SPREAD: [f32; STAGES] = [0.034, 0.061, 0.109, 0.187];
+/// Where in its slot of a stage's span each channel's delay falls: channel
+/// `ch` reads `(ch + jitter) / CHANNELS` of the way along, so the delays
+/// cover the span evenly without a regular grid.
+const DIFFUSION_JITTER: [[f32; CHANNELS]; STAGES] = [
+    [0.553, 0.888, 0.402, 0.613, 0.197, 0.136, 0.771, 0.262],
+    [0.849, 0.896, 0.594, 0.882, 0.737, 0.819, 0.579, 0.663],
+    [0.426, 0.739, 0.574, 0.741, 0.537, 0.898, 0.144, 0.169],
+    [0.800, 0.159, 0.718, 0.534, 0.893, 0.116, 0.387, 0.554],
+];
+
+/// What `room_size`, `decay` and `freeze` make of the signal path: every
+/// delay's read offset and every feedback line's gain.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct Tuning {
+    /// Read offset of each diffusion stage's delay, per channel, in samples.
+    pub(super) diffusion: [[usize; CHANNELS]; STAGES],
+    /// Length of each feedback line, in samples.
+    pub(super) lines: [usize; CHANNELS],
+    /// Gain each feedback line applies per trip round the loop.
+    pub(super) gains: [f32; CHANNELS],
+}
+
+impl Tuning {
+    /// The tuning for a room of `room_size` and a decay of `decay` (both
+    /// 0..1), frozen or not. Runs on the audio thread when a control
+    /// changes, never per sample.
+    pub(super) fn new(sample_rate: u32, room_size: f32, decay: f32, freeze: bool) -> Self {
+        let rate = sample_rate as f32;
+        let crossing = crossing_seconds(room_size) * rate;
+        let diffusion = std::array::from_fn(|stage| {
+            let span = crossing * DIFFUSION_SPREAD[stage];
+            std::array::from_fn(|ch| {
+                let slot = (ch as f32 + DIFFUSION_JITTER[stage][ch]) / CHANNELS as f32;
+                ((span * slot).round() as usize).max(1)
+            })
+        });
+        // Odd lengths: no two lines share the factor 2.
+        let lines = std::array::from_fn(|ch| (crossing * LINE_SPREAD[ch]).round() as usize | 1);
+        let rt60 = RT60_SECONDS.0 + decay.clamp(0.0, 1.0) * (RT60_SECONDS.1 - RT60_SECONDS.0);
+        // A trip of `len` samples loses its share of 60 dB over the RT60:
+        // 10^(-3 len / (rate rt60)). Frozen, nothing is lost.
+        let gains = std::array::from_fn(|ch: usize| {
+            if freeze {
+                1.0
+            } else {
+                10f32.powf(-3.0 * lines[ch] as f32 / (rate * rt60))
+            }
+        });
+        Self {
+            diffusion,
+            lines,
+            gains,
+        }
+    }
+
+    /// The largest tuning any control can ask for: what every delay line
+    /// must hold, so a change of room never allocates.
+    pub(super) fn largest(sample_rate: u32) -> Self {
+        Self::new(sample_rate, 1.0, 1.0, false)
+    }
+}
+
+/// The time sound takes to cross a room of `room_size`, plus the floor.
+fn crossing_seconds(room_size: f32) -> f32 {
+    let metres = ROOM_METRES.0 + room_size.clamp(0.0, 1.0) * (ROOM_METRES.1 - ROOM_METRES.0);
+    CROSSING_FLOOR_SECONDS + metres / SPEED_OF_SOUND
+}
 
 /// How long one crossfade between tunings takes. Long enough that the blend
 /// of two unrelated tails is heard as a change of room rather than a click,
 /// short enough that the room follows automation closely.
 const FADE_SECONDS: f32 = 0.03;
-
-/// The delay network's lengths and gains for one room size, decay and
-/// freeze state.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(super) struct Tuning {
-    pub(super) fdn_lens: [usize; FDN_ORDER],
-    pub(super) fdn_gains: [f32; FDN_ORDER],
-    pub(super) tap_positions: [usize; FDN_ORDER],
-    pub(super) tap_gains: [f32; FDN_ORDER],
-}
 
 /// A crossfade from one [`Tuning`] to another, owned by the audio thread.
 ///
@@ -57,7 +131,7 @@ pub(super) struct Retuning {
 impl Retuning {
     /// Settled on `tuning`, with fades lasting [`FADE_SECONDS`].
     pub(super) fn settled(tuning: Tuning, sample_rate: u32) -> Self {
-        let frames = ((FADE_SECONDS * sample_rate as f32).round() as u32).max(1);
+        let frames = Self::fade_frames(sample_rate);
         Self {
             from: tuning,
             to: tuning,
@@ -66,6 +140,11 @@ impl Retuning {
             frames,
             step: 1.0 / frames as f32,
         }
+    }
+
+    /// Samples in one fade at `sample_rate`.
+    pub(super) fn fade_frames(sample_rate: u32) -> u32 {
+        ((FADE_SECONDS * sample_rate as f32).round() as u32).max(1)
     }
 
     /// Fades to `tuning`, after any fade under way.
@@ -127,57 +206,13 @@ pub(super) fn blend(s: f32, old: impl FnOnce() -> f32, new: f32) -> f32 {
     }
 }
 
-impl Reverb {
-    /// The delay network's tuning for the current controls.
-    pub(super) fn tuning(&self) -> Tuning {
-        let frozen = self.freeze;
-        let room_m = room_size_to_meters(self.room_size);
-        let largest_delay = ((self.sample_rate as f32 * room_m / SPEED_OF_SOUND) as usize).max(1);
-
-        let rt60 = decay_to_rt60(self.decay);
-        let alpha = compute_alpha(rt60, self.sample_rate);
-
-        // FDN lengths (clamped to allocated max)
-        let fdn_lens: [usize; FDN_ORDER] = std::array::from_fn(|i| {
-            ((largest_delay as f32 * FDN_RATIOS[i]) as usize)
-                .max(1)
-                .min(self.max_fdn_lengths[i])
-        });
-
-        // FDN gains from alpha
-        let fdn_gains: [f32; FDN_ORDER] = if frozen {
-            [-1.0; FDN_ORDER]
-        } else {
-            std::array::from_fn(|i| -(alpha.powi(fdn_lens[i] as i32)))
-        };
-
-        // Tap positions and gains
-        let tap_positions: [usize; FDN_ORDER] = std::array::from_fn(|i| {
-            let pos = (TAP_FRACTIONS[i] * largest_delay as f32) as usize + TAP_OFFSET;
-            pos.min(self.max_tap_delay_len - 1)
-        });
-        let tap_gains: [f32; FDN_ORDER] = if frozen {
-            [0.0; FDN_ORDER]
-        } else {
-            std::array::from_fn(|i| alpha.powi(tap_positions[i] as i32))
-        };
-
-        Tuning {
-            fdn_lens,
-            fdn_gains,
-            tap_positions,
-            tap_gains,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn tuning(len: usize) -> Tuning {
         Tuning {
-            fdn_lens: [len; FDN_ORDER],
+            lines: [len; CHANNELS],
             ..Tuning::default()
         }
     }
@@ -228,5 +263,63 @@ mod tests {
         assert_eq!(retuning.to(), &tuning(40));
         assert_eq!(weights(&mut retuning, 30)[29], 1.0);
         assert_eq!(retuning.from(), &tuning(40));
+    }
+
+    #[test]
+    fn every_tuning_fits_in_the_largest() {
+        for rate in [8_000, 44_100, 48_000, 192_000] {
+            let largest = Tuning::largest(rate);
+            for step in 0..=20 {
+                let tuning = Tuning::new(rate, step as f32 / 20.0, 0.5, false);
+                for ch in 0..CHANNELS {
+                    assert!(tuning.lines[ch] <= largest.lines[ch]);
+                    for stage in 0..STAGES {
+                        let offset = tuning.diffusion[stage][ch];
+                        assert!(offset >= 1 && offset <= largest.diffusion[stage][ch]);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_two_line_spreads_are_near_a_simple_ratio() {
+        for (i, a) in LINE_SPREAD.iter().enumerate() {
+            for b in &LINE_SPREAD[i + 1..] {
+                let ratio = a.min(*b) / a.max(*b);
+                for q in 1..=8 {
+                    for p in 1..=q {
+                        let fraction = p as f32 / q as f32;
+                        let distance = (ratio - fraction).abs() / fraction;
+                        assert!(distance > 0.008, "{a}/{b} is near {p}/{q}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn line_lengths_are_distinct_and_odd() {
+        for room in [0.0, 0.5, 1.0] {
+            let lines = Tuning::new(8_000, room, 0.5, false).lines;
+            for (i, a) in lines.iter().enumerate() {
+                assert_eq!(a % 2, 1, "{lines:?}");
+                assert!(lines[i + 1..].iter().all(|b| b != a), "{lines:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn gains_reach_minus_60_db_at_the_rt60() {
+        let rate = 48_000;
+        let tuning = Tuning::new(rate, 0.5, 0.5, false);
+        let rt60 = 0.2 + 0.5 * 14.8;
+        for ch in 0..CHANNELS {
+            let trips = rt60 * rate as f32 / tuning.lines[ch] as f32;
+            let db = 20.0 * trips * tuning.gains[ch].log10();
+            assert!((db + 60.0).abs() < 0.01, "line {ch}: {db} dB");
+        }
+        let frozen = Tuning::new(rate, 0.5, 0.5, true);
+        assert_eq!(frozen.gains, [1.0; CHANNELS]);
     }
 }

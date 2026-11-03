@@ -238,9 +238,9 @@ impl Sustained {
 const WINDOW: usize = 4410;
 
 /// How far a change's kinks may exceed those of the sine settled at either
-/// end. Sweeping the room moves the comb resonances, so the sine may swell
-/// a little on the way (under twice as large); reading new offsets at once
-/// kinks the output 25 to 250 times further.
+/// end. Sweeping the room moves the delay network's resonances, so the sine
+/// may swell a little on the way; reading new offsets at once kinks the
+/// output many times further.
 const CLICK_RATIO: f32 = 4.0;
 
 /// Asserts that `changing`, the largest kink during a change, is no
@@ -302,4 +302,32 @@ fn automated_room_size_does_not_zipper() {
     }
     changing = changing.max(sustained.largest_kink(WINDOW));
     assert_no_click("ramped", before, changing, &mut sustained);
+}
+
+/// One sample that is not a number, from upstream, does not silence the
+/// reverb: the dry signal and the tail carry on.
+#[test]
+fn a_non_finite_input_sample_does_not_silence_the_reverb() {
+    let mut reverb = Reverb::new(44100);
+    reverb.set_control("wet", 0.5).unwrap();
+    for i in 0..4410 {
+        let value = if i == 100 {
+            f32::NAN
+        } else {
+            (i as f32 * 0.05).sin() * 0.5
+        };
+        reverb.set_input("audio_left", value).unwrap();
+        reverb.process(1);
+    }
+    let mut heard = 0.0;
+    for i in 0..4410 {
+        reverb
+            .set_input("audio_left", (i as f32 * 0.05).sin() * 0.5)
+            .unwrap();
+        reverb.process(1);
+        let left = reverb.get_output("audio_left").unwrap();
+        assert!(left.is_finite());
+        heard += left * left;
+    }
+    assert!(heard > 1.0, "the reverb went silent: {heard}");
 }
