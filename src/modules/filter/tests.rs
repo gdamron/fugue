@@ -9,7 +9,7 @@ fn test_filter_controls() {
 
     // Test control metadata
     let controls = filter.controls();
-    assert_eq!(controls.len(), 6);
+    assert_eq!(controls.len(), 8);
     assert_eq!(controls[0].key, "cutoff");
     assert_eq!(controls[1].key, "resonance");
     assert_eq!(controls[2].key, "filter_type");

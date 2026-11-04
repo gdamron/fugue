@@ -15,7 +15,8 @@
 //!
 //! The EQ responses (bell, shelves, notch) follow the RBJ cookbook's
 //! magnitudes and ignore `resonance`; lowpass, highpass and bandpass ignore
-//! `boost` and `q`.
+//! `boost` and `q`, and can run at 12 or 24 dB per octave (`slope`). Any
+//! response can be bypassed, crossfading to the input.
 //!
 //! # Features
 //!
@@ -51,13 +52,15 @@ use crate::traits::ControlMeta;
 use crate::Module;
 
 use self::controls::{
-    BOOST, CUTOFF, CUTOFF_MOD_DEPTH, DEFAULT_Q, FILTER_TYPE, MAX_BOOST, MAX_Q, MIN_Q, Q, RESONANCE,
-    TABLE,
+    BOOST, BYPASS, CUTOFF, CUTOFF_MOD_DEPTH, DEFAULT_Q, FILTER_TYPE, MAX_BOOST, MAX_Q, MIN_Q, Q,
+    RESONANCE, SLOPE, TABLE,
 };
+use self::fade::Crossfade;
 use self::shape::{Coefficients, EqDesign, Stage};
 
 mod controls;
 mod factory;
+mod fade;
 mod glide;
 mod inputs;
 mod outputs;
@@ -65,8 +68,14 @@ mod shape;
 mod types;
 
 pub use self::factory::FilterFactory;
+pub use self::fade::FADE_MS;
 pub use self::glide::GLIDE_MS;
 pub use self::types::FilterType;
+
+/// The damping of the second stage a `24db` slope adds: Butterworth, with
+/// no peak of its own, so `resonance` shapes one peak rather than squaring
+/// it (two resonant stages in series would ring far louder than either).
+const SECOND_STAGE_DAMPING: f32 = std::f32::consts::SQRT_2;
 
 /// Polynomial approximation of tan(x) for x in [0, ~0.85].
 ///
@@ -109,6 +118,8 @@ fn fast_tan(x: f32) -> f32 {
 /// - `cutoff_mod_depth` - CV modulation depth in Hz (default: 5000.0)
 /// - `boost` - EQ gain in dB, -24 to 24 (default: 0)
 /// - `q` - EQ width or steepness, 0.1 to 18 (default: 0.7071)
+/// - `bypass` - pass the input through (default: false)
+/// - `slope` - 12 or 24 dB per octave for lowpass, highpass and bandpass
 pub struct Filter {
     sample_rate: u32,
 
@@ -122,7 +133,13 @@ pub struct Filter {
     cells: Arc<ControlCells>,
     // Where cutoff, resonance, boost and q writes are on their way.
     glide: glide::ControlGlide,
+    // How much of the filtered signal is heard (bypass), and of the
+    // second stage (slope).
+    engaged: Crossfade,
+    steep: Crossfade,
+
     stage: Stage,
+    second_stage: Stage,
 
     // Signal inputs
     inputs: inputs::FilterInputs,
@@ -136,6 +153,7 @@ pub struct Filter {
     coeff_cutoff: f32,
     coeff_resonance: f32,
     classic: Coefficients,
+    classic_second: Coefficients,
     // The EQ responses' coefficients, recomputed only on change.
     eq: EqDesign,
 }
@@ -161,12 +179,16 @@ impl Filter {
             q: DEFAULT_Q,
             cells,
             glide: glide::ControlGlide::new(sample_rate, 1000.0, 0.0),
+            engaged: Crossfade::new(sample_rate, true),
+            steep: Crossfade::new(sample_rate, false),
             stage: Stage::default(),
+            second_stage: Stage::default(),
             inputs: inputs::FilterInputs::new(),
             outputs: outputs::FilterOutputs::new(),
             coeff_cutoff: -1.0,
             coeff_resonance: -1.0,
             classic: Coefficients::default(),
+            classic_second: Coefficients::default(),
             eq: EqDesign::new(sample_rate),
         };
         for index in 0..TABLE.len() {
@@ -247,12 +269,20 @@ impl Filter {
             let g = fast_tan(PI * effective_cutoff / self.sample_rate as f32);
             let k = 2.0 * (1.0 - effective_resonance);
             self.classic = Coefficients::stage(g, k);
+            self.classic_second = Coefficients::stage(g, SECOND_STAGE_DAMPING);
             self.coeff_cutoff = effective_cutoff;
             self.coeff_resonance = effective_resonance;
         }
 
         let input = self.inputs.audio(i);
-        self.stage.classic(&self.classic, filter_type, input)
+        let first = self.stage.classic(&self.classic, filter_type, input);
+        if !self.steep.is_live() {
+            return first;
+        }
+        let second = self
+            .second_stage
+            .classic(&self.classic_second, filter_type, first);
+        self.steep.mix(first, second)
     }
 
     /// Processes one sample through an EQ response.
@@ -274,9 +304,24 @@ impl Filter {
         coefficients.mix(input, bandpass, lowpass)
     }
 
+    /// Crossfades the block's output towards its input as the filter is
+    /// bypassed: untouched while engaged, the input itself once bypassed.
+    fn apply_bypass(&mut self, frames: usize) {
+        if !self.engaged.is_fading() && self.engaged.is_on() {
+            return;
+        }
+        for i in 0..frames {
+            let mixed = self
+                .engaged
+                .mix(self.inputs.audio(i), self.outputs.value(i));
+            self.outputs.set(i, mixed);
+        }
+    }
+
     /// Resets the filter state.
     pub fn reset(&mut self) {
         self.stage.reset();
+        self.second_stage.reset();
     }
 }
 
@@ -317,6 +362,7 @@ impl Module for Filter {
                 i += 1;
             }
         }
+        self.apply_bypass(frames);
         if frames > 0 {
             self.glide.heard();
         }
@@ -386,6 +432,23 @@ impl Module for Filter {
                 self.q = q.clamp(MIN_Q, MAX_Q);
                 self.glide.q_to(self.q);
                 RtValue::F32(self.q)
+            }
+            (BYPASS, RtValue::Bool(bypass)) => {
+                self.engaged.switch(!bypass, self.glide.is_heard());
+                value
+            }
+            (SLOPE, RtValue::U32(position)) => {
+                let steep = match position {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(Refusal::Invalid),
+                };
+                if steep && !self.steep.is_live() {
+                    // Starts from rest rather than from long-stale state.
+                    self.second_stage.reset();
+                }
+                self.steep.switch(steep, self.glide.is_heard());
+                value
             }
             _ => return Err(Refusal::Unsupported),
         };
