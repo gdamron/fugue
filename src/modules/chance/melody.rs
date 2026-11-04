@@ -4,7 +4,9 @@
 use crate::music::scales::{in_key, nearest_in, scale_degrees, strongest_degrees};
 use crate::music::Note;
 
-/// Where `steps` turns from stepped to quantized.
+/// Where `steps` turns from smooth to stepped, and from stepped to
+/// quantized.
+pub(super) const STEPPED_FROM: f32 = 1.0 / 3.0;
 pub(super) const QUANTIZED_FROM: f32 = 0.5;
 
 /// The melody controls a value is read through.
@@ -68,11 +70,20 @@ impl Shape {
     }
 }
 
-/// One melody channel's output: the value and frequency it holds.
+/// One melody channel's output: the value and frequency it holds, gliding
+/// toward a new one when `steps` is smooth.
 #[derive(Clone, Copy)]
 pub(super) struct Channel {
     pub(super) value: f32,
     pub(super) frequency: f32,
+    /// A shaped value waiting for its gate to rise.
+    pub(super) pending: Option<f32>,
+    target_value: f32,
+    target_frequency: f32,
+    value_step: f32,
+    /// Per-sample frequency ratio: the glide is even in pitch.
+    frequency_ratio: f32,
+    glide_left: u32,
 }
 
 impl Channel {
@@ -80,16 +91,57 @@ impl Channel {
         let mut channel = Self {
             value: 0.0,
             frequency: 0.0,
+            pending: None,
+            target_value: 0.0,
+            target_frequency: 0.0,
+            value_step: 0.0,
+            frequency_ratio: 1.0,
+            glide_left: 0,
         };
-        channel.take(shape, shape.value_bias);
+        channel.take(shape, shape.value_bias, 0);
         channel
     }
 
-    /// Takes the value `value` (already shaped), and the pitch it plays.
-    pub(super) fn take(&mut self, shape: &Shape, value: f32) {
-        self.value = value;
-        self.frequency = shape.frequency(value);
+    /// Takes the value `value` (already shaped) and the pitch it plays,
+    /// gliding there over `glide` samples (at once for 0).
+    pub(super) fn take(&mut self, shape: &Shape, value: f32, glide: u32) {
+        self.target_value = value;
+        self.target_frequency = shape.frequency(value);
+        if glide == 0 || self.frequency <= 0.0 {
+            self.glide_left = 0;
+            self.value = value;
+            self.frequency = self.target_frequency;
+            return;
+        }
+        let samples = glide as f32;
+        self.value_step = (value - self.value) / samples;
+        // One power per step, not per sample.
+        self.frequency_ratio = (self.target_frequency / self.frequency).powf(1.0 / samples);
+        self.glide_left = glide;
     }
+
+    /// Advances a glide one sample, landing exactly on its target.
+    #[inline]
+    pub(super) fn tick(&mut self) {
+        if self.glide_left == 0 {
+            return;
+        }
+        self.glide_left -= 1;
+        if self.glide_left == 0 {
+            self.value = self.target_value;
+            self.frequency = self.target_frequency;
+        } else {
+            self.value += self.value_step;
+            self.frequency *= self.frequency_ratio;
+        }
+    }
+}
+
+/// How many samples a new value glides over, for a step `step_length`
+/// samples long: the whole step at `steps` 0, none from [`STEPPED_FROM`].
+pub(super) fn glide(steps: f32, step_length: Option<u32>) -> u32 {
+    let share = ((STEPPED_FROM - steps) / STEPPED_FROM).clamp(0.0, 1.0);
+    step_length.map_or(0, |length| (share * length as f32) as u32)
 }
 
 #[cfg(test)]
@@ -131,5 +183,33 @@ mod tests {
         assert!((shape.frequency(0.0) - 440.0).abs() < 1e-3);
         assert!((shape.frequency(1.0) - 880.0).abs() < 1e-2);
         assert!((shape.frequency(0.5) - 622.254).abs() < 1e-2);
+    }
+
+    #[test]
+    fn a_smooth_channel_glides_evenly_in_pitch() {
+        let mut shape = Shape::new();
+        shape.steps = 0.0;
+        shape.low_note = 57.0;
+        shape.range = 24.0;
+        let mut channel = Channel::new(&shape);
+        channel.take(&shape, 0.0, 0);
+        assert!((channel.frequency - 220.0).abs() < 1e-3);
+        channel.take(&shape, 1.0, glide(0.0, Some(100)));
+        for _ in 0..50 {
+            channel.tick();
+        }
+        assert!(
+            (channel.frequency - 440.0).abs() < 0.5,
+            "{}",
+            channel.frequency
+        );
+        assert!((channel.value - 0.5).abs() < 1e-4);
+        for _ in 0..50 {
+            channel.tick();
+        }
+        assert_eq!(channel.frequency, shape.frequency(1.0));
+        assert_eq!(channel.value, 1.0);
+        assert_eq!(glide(STEPPED_FROM, Some(100)), 0);
+        assert_eq!(glide(0.0, None), 0);
     }
 }
