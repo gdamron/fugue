@@ -9,6 +9,7 @@
 //! - [`PinkFilter`] - Shapes white noise into pink (−3 dB/oct)
 //! - [`OnePole`] - First-order lowpass and highpass
 //! - [`DcBlocker`] - Removes a constant offset
+//! - [`Oversampler`] - Runs a process at 2× or 4× the sample rate
 //! - `declick_gain` - The curved fade that ends a sound without a click
 //! - `RealFft` - Radix-2 power spectrum for off-thread analysis (feature
 //!   `spectrogram`)
@@ -20,7 +21,9 @@ mod declick;
 mod delay_line;
 #[cfg(feature = "spectrogram")]
 mod fft;
+mod halfband;
 mod one_pole;
+mod oversampler;
 mod pink;
 mod ramp;
 mod rng;
@@ -35,6 +38,7 @@ pub use delay_line::DelayLine;
 #[cfg(feature = "spectrogram")]
 pub(crate) use fft::RealFft;
 pub use one_pole::{OnePole, OnePoleOutput};
+pub use oversampler::{Factor, Oversampler};
 pub use pink::PinkFilter;
 pub use ramp::LinearRamp;
 pub use rng::Rng;
