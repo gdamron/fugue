@@ -218,7 +218,7 @@ fn each_macro_changes_the_new_models_sound() {
         let x = render(module.as_mut(), SR as usize / 10, 64);
         harmonic_profile(&x[SR as usize / 50..], 220.0)
     };
-    for model in ["waveshaping", "fm"] {
+    for model in ["waveshaping", "fm", "grain_formant", "additive"] {
         for key in ["harmonics", "timbre", "morph"] {
             let (low, high) = (play(model, key, 0.1), play(model, key, 0.9));
             let change: f32 = low.iter().zip(&high).map(|(a, b)| (a - b).abs()).sum();

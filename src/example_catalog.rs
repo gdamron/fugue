@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 22] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 24] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -85,6 +85,16 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 22] = [
         file_name: "macro_oscillator_fm_bells.json",
         title: "Macro Oscillator FM Bells",
         summary: "Inharmonic two-operator FM bells ringing through a long gate decay.",
+    },
+    ExampleDefinition {
+        file_name: "macro_oscillator_formant_choir.json",
+        title: "Macro Oscillator Formant Choir",
+        summary: "A sung-sounding line from the macro oscillator's grain formant model.",
+    },
+    ExampleDefinition {
+        file_name: "macro_oscillator_additive_organ.json",
+        title: "Macro Oscillator Additive Organ",
+        summary: "Drawbar-style additive organ held by the gate's level mode.",
     },
     ExampleDefinition {
         file_name: "step_sequencer.json",
@@ -262,6 +272,8 @@ mod tests {
                 "macro_oscillator_pluck.json",
                 "macro_oscillator_folded_bass.json",
                 "macro_oscillator_fm_bells.json",
+                "macro_oscillator_formant_choir.json",
+                "macro_oscillator_additive_organ.json",
                 "step_sequencer.json",
                 "chance_groove.json",
                 "drum_map.json",

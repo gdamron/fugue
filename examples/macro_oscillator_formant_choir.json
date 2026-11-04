@@ -1,0 +1,46 @@
+{
+  "version": "1.0.0",
+  "title": "Macro Oscillator Formant Choir",
+  "description": "A slow minor-key line on a macro oscillator's grain formant model: windowed sine grains ring at a fixed formant over every note, a second formant a fifth above it, so the voice sounds sung rather than played. The long gate decay lets each note bloom and fade.",
+  "modules": [
+    { "id": "clock", "type": "clock", "config": { "bpm": 66.0 } },
+    {
+      "id": "seq",
+      "type": "step_sequencer",
+      "config": {
+        "root_note": 57,
+        "step_count": 8,
+        "gate_length": 0.6,
+        "pattern": [
+          { "note": 0 },
+          { "note": 3 },
+          { "note": 7 },
+          { "note": 5 },
+          { "note": 3 },
+          { "note": 2 },
+          { "note": -2 },
+          { "note": 0 }
+        ]
+      }
+    },
+    {
+      "id": "voice",
+      "type": "macro_oscillator",
+      "config": {
+        "model": "grain_formant",
+        "harmonics": 0.65,
+        "timbre": 0.45,
+        "morph": 0.6,
+        "decay": 2.5,
+        "level": 0.8
+      }
+    },
+    { "id": "dac", "type": "dac" }
+  ],
+  "connections": [
+    { "from": "clock", "from_port": "beat", "to": "seq", "to_port": "clock" },
+    { "from": "seq", "from_port": "frequency", "to": "voice", "to_port": "frequency" },
+    { "from": "seq", "from_port": "gate", "to": "voice", "to_port": "trigger" },
+    { "from": "voice", "from_port": "audio", "to": "dac", "to_port": "audio" }
+  ]
+}
