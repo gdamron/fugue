@@ -1,14 +1,15 @@
-//! Chance: random rhythms, from steady to unpredictable, with a loop that
-//! blends repetition and novelty.
+//! Chance: random rhythms and melodies in key, from steady to
+//! unpredictable, with a loop that blends repetition and novelty.
 //!
 //! ```json
 //! { "id": "chance", "type": "chance",
-//!   "config": { "seed": 7, "bias": 0.4, "mode": "divider", "repetition": 0.6 } }
+//!   "config": { "seed": 7, "bias": 0.4, "key": "D", "scale": "dorian", "repetition": 0.6 } }
 //! ```
 //!
 //! Each rising edge on `clock` is a step. The rhythm section tosses coins
-//! for `gate_1` and `gate_2`. `repetition` decides whether a step replays
-//! what the loop remembers of its position or draws anew.
+//! for `gate_1` and `gate_2`; the melody section draws three values and
+//! plays them as pitches in key. `repetition` decides whether a step
+//! replays what the loop remembers of its position or draws anew.
 
 use std::sync::Arc;
 
@@ -22,14 +23,17 @@ use crate::control_request::{
 use crate::factory::{apply_control_keys, GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
+use crate::music::scales::{KEY_NAMES, SCALE_NAMES};
 use crate::traits::ControlMeta;
 use crate::Module;
 
 use self::controls::*;
+use self::melody::{Channel, Shape};
 use self::memory::Memory;
 use self::rhythm::{Mode, BAR};
 
 mod controls;
+mod melody;
 mod memory;
 mod ports;
 mod rhythm;
@@ -80,7 +84,7 @@ impl ModuleFactory for ChanceFactory {
     }
 }
 
-/// Random gates, stepped by a clock.
+/// Random gates and pitches, stepped by a clock.
 ///
 /// # Inputs
 /// - `clock`: each rising edge is a step
@@ -89,9 +93,14 @@ impl ModuleFactory for ChanceFactory {
 /// # Outputs
 /// - `gate_1`, `gate_2`: the rhythm's gates, high while the clock pulse is
 /// - `tick`: a gate on every step
+/// - `frequency_1..3`: each melody channel's pitch in Hz. Channel 1 takes a
+///   new pitch as `gate_1` fires, channel 2 as `gate_2` does, channel 3
+///   every step, so a voice on a gate and its channel never bends mid-note.
+/// - `value_1..3`: each channel's value, 0 to 1, for modulation
 ///
 /// # Controls
-/// See [`controls`]: `mode`, `bias`, `repetition`, `loop_length`, `seed`.
+/// See [`controls`]: `mode`, `bias`, `spread`, `value_bias`, `steps`, `key`,
+/// `scale`, `low_note`, `range`, `repetition`, `loop_length`, `seed`.
 pub struct Chance {
     rng: StdRng,
     /// Where a write of [`UNSEEDED`] restarts the stream from.
@@ -101,6 +110,8 @@ pub struct Chance {
     bias: f32,
     repetition: f32,
     loop_length: usize,
+    shape: Shape,
+    channels: [Channel; 3],
     /// Steps since the last reset.
     step: usize,
     gates: [bool; 3],
@@ -121,6 +132,8 @@ impl Chance {
             None => StdRng::seed_from_u64(entropy.random()),
         };
         let memory = Memory::new(&mut rng);
+        let shape = Shape::new();
+        let channel = Channel::new(&shape);
         let mut chance = Self {
             rng,
             entropy: entropy.random(),
@@ -129,6 +142,8 @@ impl Chance {
             bias: 0.5,
             repetition: 0.0,
             loop_length: 8,
+            shape,
+            channels: [channel; 3],
             step: 0,
             gates: [false; 3],
             last_clock: 0.0,
@@ -146,6 +161,12 @@ impl Chance {
                 let _ = apply_declared(&mut chance, index, value);
             }
         }
+        let shape = &chance.shape;
+        let value = shape.value_bias;
+        chance
+            .channels
+            .iter_mut()
+            .for_each(|c| c.take(shape, value));
         let seed = seed.map_or(UNSEEDED, |seed| seed as f32);
         chance.cells.publish(SEED, RtValue::F32(seed));
         chance
@@ -157,12 +178,19 @@ impl Chance {
         self.memory.refill(&mut self.rng);
     }
 
-    /// One step: draw (or replay) and decide the gates.
+    /// One step: draw (or replay), decide the gates, and move the
+    /// channels whose gates fired.
     fn advance(&mut self) {
         let position = self.step % self.loop_length;
         let draw = self.memory.next(&mut self.rng, position, self.repetition);
         let [one, two] = rhythm::fires(self.mode, self.bias, draw.coins, self.step % BAR);
         self.gates = [one, two, true];
+        let moves = self.channels.iter_mut().zip(draw.values).zip(self.gates);
+        for ((channel, draw), fired) in moves {
+            if fired {
+                channel.take(&self.shape, self.shape.value(draw));
+            }
+        }
         self.step = self.step.wrapping_add(1);
     }
 }
@@ -188,7 +216,13 @@ impl Module for Chance {
             }
             self.last_clock = clock;
 
-            self.outputs.set(i, self.gates);
+            let [a, b, c] = self.channels;
+            self.outputs.set(
+                i,
+                self.gates,
+                [a.frequency, b.frequency, c.frequency],
+                [a.value, b.value, c.value],
+            );
         }
         true
     }
@@ -231,6 +265,17 @@ impl Module for Chance {
                 self.mode = Mode::from_position(position).ok_or(Refusal::Invalid)?;
                 value
             }
+            (KEY, RtValue::U32(position)) if (position as usize) < KEY_NAMES.len() => {
+                self.shape.key = position as u8;
+                self.shape.refresh();
+                value
+            }
+            (SCALE, RtValue::U32(position)) if (position as usize) < SCALE_NAMES.len() => {
+                self.shape.scale = position as usize;
+                self.shape.refresh();
+                value
+            }
+            (KEY | SCALE, RtValue::U32(_)) => return Err(Refusal::Invalid),
             (SEED, RtValue::F32(seed)) if seed < 0.0 => {
                 self.restart(StdRng::seed_from_u64(self.entropy));
                 self.entropy = self.rng.random();
@@ -264,6 +309,7 @@ impl Chance {
     /// Applies a number control, returning what it holds.
     fn apply_number(&mut self, control: ControlIndex, value: f32) -> Result<f32, Refusal> {
         let unit = value.clamp(0.0, 1.0);
+        let shape = &mut self.shape;
         let held = match control {
             BIAS => {
                 self.bias = unit;
@@ -272,6 +318,27 @@ impl Chance {
             REPETITION => {
                 self.repetition = unit;
                 unit
+            }
+            SPREAD => {
+                shape.spread = unit;
+                unit
+            }
+            VALUE_BIAS => {
+                shape.value_bias = unit;
+                unit
+            }
+            STEPS => {
+                shape.steps = unit;
+                shape.refresh();
+                unit
+            }
+            LOW_NOTE => {
+                shape.low_note = value.clamp(0.0, 127.0).trunc();
+                shape.low_note
+            }
+            RANGE => {
+                shape.range = value.clamp(1.0, 48.0).trunc();
+                shape.range
             }
             LOOP_LENGTH => {
                 self.loop_length = (value.clamp(1.0, MAX_LOOP as f32) as usize).max(1);

@@ -8,7 +8,7 @@
 //! - [`Mixer`] - Multi-channel audio mixer
 //! - [`MelodyGenerator`] - Algorithmic melody generation
 //! - [`StepSequencer`] / [`Step`] - Deterministic step sequencer
-//! - [`Chance`] - Random rhythms with a repetition loop
+//! - [`Chance`] - Random rhythms and melodies in key, with a repetition loop
 //! - [`Adsr`] - Envelope generator
 //! - [`Vca`] - Voltage controlled amplifier
 //! - [`Noise`] - White and pink noise source

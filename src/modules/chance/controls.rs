@@ -3,12 +3,20 @@
 //! takes effect from the next step.
 
 use crate::control_request::{ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue};
+use crate::music::scales::{KEY_NAMES, KEY_SPELLINGS, SCALE_NAMES};
 
 pub(super) const MODE: ControlIndex = ControlIndex(0);
 pub(super) const BIAS: ControlIndex = ControlIndex(1);
-pub(super) const REPETITION: ControlIndex = ControlIndex(2);
-pub(super) const LOOP_LENGTH: ControlIndex = ControlIndex(3);
-pub(super) const SEED: ControlIndex = ControlIndex(4);
+pub(super) const SPREAD: ControlIndex = ControlIndex(2);
+pub(super) const VALUE_BIAS: ControlIndex = ControlIndex(3);
+pub(super) const STEPS: ControlIndex = ControlIndex(4);
+pub(super) const KEY: ControlIndex = ControlIndex(5);
+pub(super) const SCALE: ControlIndex = ControlIndex(6);
+pub(super) const LOW_NOTE: ControlIndex = ControlIndex(7);
+pub(super) const RANGE: ControlIndex = ControlIndex(8);
+pub(super) const REPETITION: ControlIndex = ControlIndex(9);
+pub(super) const LOOP_LENGTH: ControlIndex = ControlIndex(10);
+pub(super) const SEED: ControlIndex = ControlIndex(11);
 
 /// The rhythm modes, in [`super::rhythm::Mode`] order.
 pub(super) const MODES: &[&str] = &["complementary", "independent", "divider"];
@@ -49,9 +57,57 @@ const DECLS: &[ControlDecl] = &[
         "Rhythm: chance a gate fires on a step (complementary and independent)",
     ),
     unit(
+        "spread",
+        0.5,
+        "Melody: width of the values' range, from always value_bias (0) to anywhere (1)",
+    ),
+    unit("value_bias", 0.5, "Melody: where the values lean, 0 to 1"),
+    unit(
+        "steps",
+        0.5,
+        "Melody: below 1/3 smooth, to 0.5 stepped, from 0.5 quantized to key \
+         and scale, narrowing toward the scale's strongest degrees at 1",
+    ),
+    ControlDecl::new(
+        "key",
+        DeclKind::Choice(KEY_NAMES),
+        RtValue::U32(0),
+        "Tonic of the scale pitches are quantized to",
+    )
+    .spellings(KEY_SPELLINGS),
+    ControlDecl::new(
+        "scale",
+        DeclKind::Choice(SCALE_NAMES),
+        RtValue::U32(0),
+        "Scale pitches are quantized to",
+    ),
+    ControlDecl::new(
+        "low_note",
+        DeclKind::Number {
+            min: 0.0,
+            max: 127.0,
+        },
+        RtValue::F32(48.0),
+        "MIDI note a value of 0 plays",
+    )
+    .clamped(0.0, 127.0)
+    .whole(),
+    ControlDecl::new(
+        "range",
+        DeclKind::Number {
+            min: 1.0,
+            max: 48.0,
+        },
+        RtValue::F32(24.0),
+        "Semitones a value of 1 lies above low_note",
+    )
+    .clamped(1.0, 48.0)
+    .whole(),
+    unit(
         "repetition",
         0.0,
-        "0: every step new; middle: a loop that mutates; 1: a locked loop",
+        "0: every step new; middle: a loop that mutates; 1: a locked loop. \
+         Shared by rhythm and melody",
     ),
     ControlDecl::new(
         "loop_length",

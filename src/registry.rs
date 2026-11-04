@@ -24,7 +24,7 @@ pub(crate) use replacing::ReplacingKeys;
 /// - `adsr` - Envelope generator
 /// - `vca` - Voltage controlled amplifier
 /// - `melody` - Algorithmic melody generation
-/// - `chance` - Random rhythms with a repetition loop
+/// - `chance` - Random rhythms and melodies in key
 ///
 /// # Example
 ///
