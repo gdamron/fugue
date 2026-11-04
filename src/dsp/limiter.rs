@@ -143,12 +143,15 @@ impl LookaheadLimiter {
     fn smooth(&mut self, gain: f32) -> f32 {
         let at = self.smoothing_at;
         let old = std::mem::replace(&mut self.smoothing[at], gain);
+        self.sum += f64::from(gain) - f64::from(old);
         self.smoothing_at = if at + 1 == self.smoothing.len() {
+            // Once per lookahead, sum afresh: rounding never builds up,
+            // even under absurdly loud input, where the gains are tiny.
+            self.sum = self.smoothing.iter().copied().map(f64::from).sum();
             0
         } else {
             at + 1
         };
-        self.sum += f64::from(gain) - f64::from(old);
         self.reducing = self.reducing + usize::from(gain < 1.0) - usize::from(old < 1.0);
         if self.reducing == 0 {
             // Every gain is 1: drop the rounding the sum gathered.
@@ -184,7 +187,8 @@ impl MinWindow {
     #[inline]
     fn push(&mut self, value: f32, frame: u64) -> f32 {
         let len = self.values.len();
-        let slot = |i: usize| (i % len);
+        // Wraps an index less than twice the length.
+        let slot = |i: usize| if i >= len { i - len } else { i };
         while self.count > 0 && self.values[slot(self.front + self.count - 1)] >= value {
             self.count -= 1;
         }
@@ -247,6 +251,11 @@ mod tests {
         // The gain falls in even steps over the lookahead before the peak.
         assert!(out[20].2 < 1.0 && out[19].2 == 1.0);
         assert!((out[28].2 - 0.25).abs() < 1e-6);
+        let steps: Vec<f32> = out[19..=28].windows(2).map(|w| w[0].2 - w[1].2).collect();
+        assert!(
+            steps.iter().all(|s| (s - 0.75 / 9.0).abs() < 1e-6),
+            "even steps: {steps:?}"
+        );
     }
 
     #[test]
@@ -256,6 +265,48 @@ mod tests {
         let gains: Vec<f32> = (0..SR).map(|_| limiter.process(0.1, 0.0).2).collect();
         assert_eq!(*gains.last().unwrap(), 1.0);
         assert!(gains.windows(2).skip(20).all(|w| w[1] >= w[0]));
+    }
+
+    /// Deterministic noise in [-1, 1).
+    fn noise(state: &mut u32) -> f32 {
+        *state ^= *state << 13;
+        *state ^= *state >> 17;
+        *state ^= *state << 5;
+        (*state >> 8) as f32 / (1 << 23) as f32 - 1.0
+    }
+
+    #[test]
+    fn no_frame_exceeds_its_ceiling_and_the_gain_alone_keeps_it_there() {
+        for lookahead in [1, 24, 240] {
+            let mut limiter = LookaheadLimiter::new(SR, lookahead, 0.5, 480, 0.05);
+            let mut state = 0x9e37_79b9;
+            let mut entered = std::collections::VecDeque::new();
+            for n in 0..48_000 {
+                if n % 128 == 0 {
+                    let r = noise(&mut state).abs();
+                    limiter.set_ceiling(0.06 + 0.94 * r);
+                    limiter.set_release(0.001 + 0.5 * noise(&mut state).abs());
+                }
+                // Up to +120 dB: the hold and the average must do the work.
+                let loud = 10f32.powf(6.0 * noise(&mut state).abs());
+                let (l, r) = (loud * noise(&mut state), loud * noise(&mut state));
+                let (out_l, out_r, gain) = limiter.process(l, r);
+                let newest = limiter.write.checked_sub(1).unwrap_or(lookahead - 1);
+                entered.push_back((l, r, limiter.ceilings[newest]));
+                if entered.len() <= lookahead {
+                    continue;
+                }
+                let (in_l, in_r, ceiling) = entered.pop_front().unwrap();
+                for (out, x) in [(out_l, in_l), (out_r, in_r)] {
+                    assert!(out.abs() <= ceiling, "{lookahead}: {out} over {ceiling}");
+                    let unclamped = (x * gain).abs();
+                    assert!(
+                        unclamped <= ceiling * (1.0 + 4.0 * f32::EPSILON),
+                        "{lookahead}: the clamp took {unclamped} down to {ceiling}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
