@@ -82,7 +82,7 @@ const DECLS: &[ControlDecl] = &[
     ControlDecl::new(
         "auto_level",
         DeclKind::Bool,
-        RtValue::Bool(true),
+        RtValue::Bool(false),
         "Keep the level steady as drive changes (set for a -12 dBFS signal)",
     ),
     ControlDecl::new(

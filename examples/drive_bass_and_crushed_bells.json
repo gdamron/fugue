@@ -38,7 +38,7 @@
     {
       "id": "bass_drive",
       "type": "drive",
-      "config": { "shape": "asymmetric", "drive": 0.6, "bias": 0.15, "post_tone": -0.3 }
+      "config": { "shape": "asymmetric", "drive": 0.6, "bias": 0.15, "post_tone": -0.3, "auto_level": true }
     },
     {
       "id": "bell_seq",
@@ -63,7 +63,7 @@
     {
       "id": "bell_drive",
       "type": "drive",
-      "config": { "shape": "bits", "drive": 0.75, "mix": 0.8 }
+      "config": { "shape": "bits", "drive": 0.75, "mix": 0.8, "auto_level": true }
     },
     {
       "id": "mixer",

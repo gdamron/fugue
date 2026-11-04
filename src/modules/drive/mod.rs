@@ -12,11 +12,12 @@
 //! ```
 //!
 //! Its defaults suit a building block in a feedback loop (a tape delay's
-//! saturation): fully wet, mild drive, automatic level on. In a loop, mind
-//! two things: automatic level lifts signals quieter than −12 dBFS as drive
-//! rises (by up to about 14 dB at full drive), so keep the loop's feedback
-//! lower or turn `auto_level` off; and with oversampling the module adds
-//! its latency (a few frames) to the loop's delay.
+//! saturation): fully wet, mild drive, automatic level off, so it never
+//! adds gain a loop would build on. Turn `auto_level` on for a standalone
+//! insert, where drive should change the colour but not the loudness; it
+//! lifts signals quieter than −12 dBFS as drive rises (by up to about 14 dB
+//! at full drive), so keep it off inside loops. With oversampling the
+//! module adds its latency (a few frames) to a loop's delay.
 
 use std::sync::Arc;
 
@@ -116,9 +117,10 @@ fn oversampling_factor(oversampling: u32) -> Option<Factor> {
 ///   centre adds even harmonics, and a DC blocker after the shape removes
 ///   the offset it leaves
 /// - `level`: output level, 0 to 1
-/// - `auto_level`: on, a signal peaking at −12 dBFS keeps its level as
-///   `drive` moves; louder signals come out quieter as they saturate, and
-///   quieter ones through the curves louder
+/// - `auto_level`: off by default. On (for a standalone insert), a signal
+///   peaking at −12 dBFS keeps its level as `drive` moves; louder signals
+///   come out quieter as they saturate, and quieter ones through the curves
+///   louder
 /// - `mix`: 0 dry to 1 fully driven
 ///
 /// Every number glides and every switch crossfades, so nothing clicks.

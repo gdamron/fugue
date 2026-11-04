@@ -17,7 +17,7 @@ fn the_factory_reads_controls_and_oversampling() {
     assert_eq!(module.get_control("shape").unwrap(), 2.0);
     assert_eq!(module.get_control("drive").unwrap(), 0.4);
     assert_eq!(module.get_control("mix").unwrap(), 0.5);
-    assert_eq!(module.get_control("auto_level").unwrap(), 1.0);
+    assert_eq!(module.get_control("auto_level").unwrap(), 0.0);
     assert!(DriveFactory
         .build(RATE, &serde_json::json!({ "oversampling": 8 }))
         .is_err());
@@ -49,6 +49,8 @@ fn defaults_suit_a_building_block_fully_wet() {
     assert_eq!(drive.get_control("level").unwrap(), 1.0);
     assert_eq!(drive.get_control("shape").unwrap(), 0.0);
     assert_eq!(drive.get_control("drive").unwrap(), 0.25);
+    // No automatic level: a loop it sits in gets no lift from it.
+    assert_eq!(drive.get_control("auto_level").unwrap(), 0.0);
 }
 
 #[test]
