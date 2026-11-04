@@ -284,7 +284,7 @@ impl Default for ModuleRegistry {
         use crate::modules::{
             AdsrFactory, AgentFactory, AudioFileSinkFactory, CellSequencerFactory, ChanceFactory,
             ClockFactory, CodeFactory, ControlSchedulerFactory, DacFactory, DelayFactory,
-            DivisiFactory, DriveFactory, FilterFactory, GainFactory, LfoFactory, LimiterFactory, MelodyFactory, MixerFactory, NoiseFactory,
+            DivisiFactory, DriveFactory, FilterFactory, FollowerFactory, GainFactory, LfoFactory, LimiterFactory, MelodyFactory, MixerFactory, NoiseFactory,
             OscillatorFactory, ReverbFactory, SampleInstrumentFactory, SampleKitFactory,
             SamplePlayerFactory, SampleSlicerFactory, StepSequencerFactory, VcaFactory,
         };
@@ -307,6 +307,7 @@ impl Default for ModuleRegistry {
         reg.register(DriveFactory);
         reg.register(LimiterFactory);
         reg.register(GainFactory);
+        reg.register(FollowerFactory);
         reg.register(AdsrFactory);
         reg.register(VcaFactory);
         reg.register(MelodyFactory);

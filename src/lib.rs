@@ -72,7 +72,7 @@ pub use modules::{
     AudioDiagnostics, AudioDiagnosticsSnapshot, AudioDriver, AudioFileSink, AudioFileSinkFactory,
     AudioFileSinkHandle, AudioFileSinkStats, Chance, ChanceFactory, Clock, ClockFactory,
     CodeControls, CodeFactory, ControlScheduler, ControlSchedulerControls, ControlSchedulerFactory,
-    DacFactory, DacModule, Delay, DelayFactory, Drive, DriveFactory, Filter, FilterFactory, FilterType, Gain, GainFactory, Lfo, LfoFactory, Limiter, LimiterFactory,
+    DacFactory, DacModule, Delay, DelayFactory, Drive, DriveFactory, Filter, FilterFactory, FilterType, Follower, FollowerFactory, Gain, GainFactory, Lfo, LfoFactory, Limiter, LimiterFactory,
     MelodyFactory, MelodyGenerator, Mixer, MixerFactory, Noise, NoiseFactory, NullBackend,
     Oscillator, OscillatorFactory, OscillatorType, SampleKit, SampleKitFactory, SamplePlayer,
     SamplePlayerFactory, SampleSlicer, SampleSlicerFactory, StreamErrorKind, Vca, VcaFactory,
