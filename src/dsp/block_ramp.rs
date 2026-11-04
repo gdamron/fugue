@@ -25,8 +25,8 @@ pub struct BlockSteps {
     start: f32,
     step: f32,
     target: f32,
-    frame: u32,
-    frames: u32,
+    frame: usize,
+    frames: usize,
 }
 
 impl BlockRamp {
@@ -47,7 +47,11 @@ impl BlockRamp {
 
     /// The values for a block of `frames` frames heading to `target`. The
     /// last is exactly `target`. A target that is not a number is ignored:
-    /// the value holds.
+    /// the value holds. An empty block goes nowhere, so the next block
+    /// ramps from where the last one ended. An infinite target gives a
+    /// block of infinities, and the next block restarts at its target
+    /// (a consumer that clamps, such as a filter cutoff, sees the end
+    /// of its range).
     #[inline]
     pub fn steps(&mut self, target: f32, frames: usize) -> BlockSteps {
         let start = self.current;
@@ -55,7 +59,6 @@ impl BlockRamp {
         // A glide that started from a value that is not a number would
         // stay one: start again at the target.
         let start = if start.is_finite() { start } else { target };
-        let frames = frames.min(u32::MAX as usize) as u32;
         if frames > 0 {
             self.current = target;
         }
@@ -96,7 +99,7 @@ impl Iterator for BlockSteps {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let left = (self.frames - self.frame) as usize;
+        let left = self.frames - self.frame;
         (left, Some(left))
     }
 }
