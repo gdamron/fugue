@@ -156,8 +156,10 @@ jobs:
       - name: Check Out Repository
         uses: actions/checkout@v4
 
+      # Pinned (v2.1.1, which bundles cargo-deny 0.20.2) so a new cargo-deny
+      # release can't turn every PR red on its own. Bump it deliberately.
       - name: Check Licenses
-        uses: EmbarkStudios/cargo-deny-action@v2
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
         with:
           command: check licenses
 

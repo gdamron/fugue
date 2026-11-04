@@ -9,8 +9,10 @@ modules are ported, following [DSP provenance](docs/dsp-provenance.md):
 every ported file names its source in an attribution header, and its source
 appears here.
 
-Rust crate dependencies are not listed here. They are linked, not copied,
-and their licenses are checked in CI against [`deny.toml`](deny.toml).
+Rust crate dependencies are not listed here: they are dependencies, not
+vendored source, and binaries built from Fugue carry their notices
+separately. Their licenses are checked in CI against
+[`deny.toml`](deny.toml).
 
 ## Entry format
 
