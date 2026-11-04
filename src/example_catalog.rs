@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 14] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 15] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -60,6 +60,11 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 14] = [
         file_name: "step_sequencer.json",
         title: "Step Sequencer",
         summary: "Deterministic bassline built from a 16-step pattern.",
+    },
+    ExampleDefinition {
+        file_name: "chance_groove.json",
+        title: "Chance Groove",
+        summary: "One chance module plays drums and a lead in D dorian, looping and mutating.",
     },
     ExampleDefinition {
         file_name: "control_scheduler.json",
@@ -217,6 +222,7 @@ mod tests {
                 "mixer_voices.json",
                 "noise_surf_and_hats.json",
                 "step_sequencer.json",
+                "chance_groove.json",
                 "control_scheduler.json",
                 "development_file_patch.json",
                 "development_inline_patch.json",
