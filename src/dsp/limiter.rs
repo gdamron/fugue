@@ -5,6 +5,10 @@ use super::LinearRamp;
 /// Below this distance from where it is heading, the recovering gain lands
 /// there exactly, so a signal back under the ceiling passes bit for bit.
 const RECOVERY_SNAP: f64 = 1e-6;
+/// The least gain the limiter computes (−180 dB). The average over the
+/// lookahead keeps its precision across 1 to this; a frame louder than
+/// the ceiling by more is clipped by the last clamp instead.
+const LEAST_GAIN: f32 = 1e-9;
 
 /// A stereo-linked lookahead brickwall limiter.
 ///
@@ -111,7 +115,11 @@ impl LookaheadLimiter {
         let right = if right.is_finite() { right } else { 0.0 };
         let ceiling = self.ceiling.next_value();
         let peak = left.abs().max(right.abs());
-        let needed = if peak > ceiling { ceiling / peak } else { 1.0 };
+        let needed = if peak > ceiling {
+            (ceiling / peak).max(LEAST_GAIN)
+        } else {
+            1.0
+        };
 
         let held = self.hold.push(needed, self.frame);
         self.frame += 1;
@@ -306,6 +314,18 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn absurdly_loud_input_is_held_at_the_ceiling_not_silenced() {
+        for onset in 0..10 {
+            let mut limiter = LookaheadLimiter::new(SR, 8, 0.5, 0, 0.1);
+            for _ in 0..onset {
+                limiter.process(0.1, 0.0);
+            }
+            let out: Vec<f32> = (0..64).map(|_| limiter.process(1e20, 0.0).0).collect();
+            assert!(out[8..].iter().all(|&y| y == 0.5), "onset {onset}: {out:?}");
         }
     }
 
