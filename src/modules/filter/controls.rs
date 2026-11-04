@@ -8,6 +8,8 @@ pub(super) const FILTER_TYPE: ControlIndex = ControlIndex(2);
 pub(super) const CUTOFF_MOD_DEPTH: ControlIndex = ControlIndex(3);
 pub(super) const BOOST: ControlIndex = ControlIndex(4);
 pub(super) const Q: ControlIndex = ControlIndex(5);
+pub(super) const BYPASS: ControlIndex = ControlIndex(6);
+pub(super) const SLOPE: ControlIndex = ControlIndex(7);
 
 /// The `boost` range, in dB.
 pub(super) const MAX_BOOST: f32 = 24.0;
@@ -28,6 +30,14 @@ const FILTER_TYPES: &[&str] = &[
     "notch",
 ];
 
+/// The slopes of the lowpass, highpass and bandpass responses.
+const SLOPES: &[&str] = &["12db", "24db"];
+
+/// Other spellings of the slopes.
+const SLOPE_SPELLINGS: &[(&str, &str)] = &[("12", "12db"), ("24", "24db")];
+
+/// Other spellings of the filter types that have always loaded, with the
+/// option each means.
 const FILTER_TYPE_SPELLINGS: &[(&str, &str)] = &[
     ("low_pass", "lowpass"),
     ("lpf", "lowpass"),
@@ -110,6 +120,19 @@ const DECLS: &[ControlDecl] = &[
     .log()
     .precision(2)
     .clamped(MIN_Q, MAX_Q),
+    ControlDecl::new(
+        "bypass",
+        DeclKind::Bool,
+        RtValue::Bool(false),
+        "Pass the input through unfiltered (crossfades)",
+    ),
+    ControlDecl::new(
+        "slope",
+        DeclKind::Choice(SLOPES),
+        RtValue::U32(0),
+        "Lowpass, highpass and bandpass slope: 12 or 24 dB per octave",
+    )
+    .spellings(SLOPE_SPELLINGS),
 ];
 
 pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);

@@ -108,6 +108,11 @@ impl ControlGlide {
         }
     }
 
+    /// Whether the filter has been heard.
+    pub(super) fn is_heard(&self) -> bool {
+        self.heard
+    }
+
     /// Marks the filter heard: later writes glide.
     pub(super) fn heard(&mut self) {
         self.heard = true;

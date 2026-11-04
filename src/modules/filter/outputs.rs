@@ -20,6 +20,11 @@ impl FilterOutputs {
         self.audio[i] = value;
     }
 
+    #[inline]
+    pub fn value(&self, i: usize) -> f32 {
+        self.audio[i]
+    }
+
     /// Block buffer for the indexed output port. Index matches `OUTPUTS`.
     #[inline]
     pub fn block(&self, _index: usize) -> &[f32] {

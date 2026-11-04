@@ -10,7 +10,7 @@ use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
 
 /// Controls a config may also start, by their own names.
-const EQ_CONTROL_KEYS: &[&str] = &["boost", "q"];
+const EQ_CONTROL_KEYS: &[&str] = &["boost", "q", "bypass", "slope"];
 
 /// Factory for constructing Filter modules from configuration.
 pub struct FilterFactory;

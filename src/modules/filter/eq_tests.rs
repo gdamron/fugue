@@ -1,4 +1,4 @@
-//! The EQ responses, from inside the module.
+//! The EQ responses, bypass and slope, from inside the module.
 
 use std::f32::consts::TAU;
 
@@ -87,4 +87,99 @@ fn a_notch_does_not_redesign_for_a_boost_it_ignores() {
     design.coefficients.k = f32::NAN;
     design.design(FilterType::Notch, 1000.0, 6.0, 2.0);
     assert!(design.coefficients.k.is_nan());
+}
+
+#[test]
+fn bypass_set_before_the_filter_is_heard_lands_at_once() {
+    let mut filter = eq(FilterType::Bell, 1000.0, 12.0, 2.0);
+    filter.set_control("bypass", 1.0).unwrap();
+    let out = run(&mut filter, 0, 100, 1000.0);
+    let dry: Vec<f32> = (0..100).map(|n| sine(n, 1000.0)).collect();
+    assert_eq!(out, dry);
+}
+
+#[test]
+fn a_bypassed_filter_is_its_input_once_the_fade_ends() {
+    let mut filter = Filter::new(RATE).with_cutoff(300.0);
+    run(&mut filter, 0, 1_000, 1000.0);
+    filter.set_control("bypass", 1.0).unwrap();
+    let fade = (RATE as f32 * FADE_MS / 1000.0) as usize;
+    let out = run(&mut filter, 1_000, fade + 200, 1000.0);
+    // Still on its way halfway through the fade.
+    assert_ne!(out[fade / 2], sine(1_000 + fade / 2, 1000.0));
+    for (i, value) in out.iter().enumerate().skip(fade) {
+        assert_eq!(*value, sine(1_000 + i, 1000.0));
+    }
+}
+
+#[test]
+fn the_steep_slope_halves_again_without_ringing_twice() {
+    let level = |slope: f32| {
+        let mut filter = Filter::new(RATE).with_cutoff(1000.0).with_resonance(0.9);
+        filter.set_control("slope", slope).unwrap();
+        // At the cutoff the resonant peak is the first stage's alone.
+        let at_cutoff = rms(&run(&mut filter, 0, 24_000, 1000.0)[12_000..]);
+        let mut filter = Filter::new(RATE).with_cutoff(1000.0).with_resonance(0.9);
+        filter.set_control("slope", slope).unwrap();
+        let above = rms(&run(&mut filter, 0, 24_000, 8000.0)[12_000..]);
+        (at_cutoff, above)
+    };
+    let (gentle_peak, gentle_above) = level(0.0);
+    let (steep_peak, steep_above) = level(1.0);
+    // The Butterworth second stage is 3 dB down at the cutoff.
+    assert!((steep_peak / gentle_peak - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.02);
+    assert!(steep_above < gentle_above / 30.0);
+}
+
+#[test]
+fn switching_to_the_steep_slope_starts_from_rest() {
+    let mut filter = Filter::new(RATE).with_cutoff(500.0);
+    filter.set_control("slope", 1.0).unwrap();
+    run(&mut filter, 0, 1_000, 200.0);
+    filter.set_control("slope", 0.0).unwrap();
+    run(&mut filter, 1_000, 5_000, 200.0);
+    filter.set_control("slope", 1.0).unwrap();
+    assert_eq!(
+        filter
+            .second_stage
+            .tick(&Coefficients::stage(0.0, 1.0), 0.0),
+        (0.0, 0.0)
+    );
+}
+
+#[test]
+fn a_steep_bandpass_is_as_loud_at_its_centre() {
+    let level = |slope: f32| {
+        let mut filter = Filter::new(RATE)
+            .with_filter_type(FilterType::BandPass)
+            .with_cutoff(1000.0);
+        filter.set_control("slope", slope).unwrap();
+        rms(&run(&mut filter, 0, 24_000, 1000.0)[12_000..])
+    };
+    assert!((level(1.0) / level(0.0) - 1.0).abs() < 0.02);
+}
+
+#[test]
+fn returning_from_an_eq_response_fades_the_second_stage_back_in() {
+    // The largest step after switching a flat bell back to a 1 kHz lowpass
+    // under a 100 Hz tone. The lowpass lags the tone, so the switch itself
+    // steps a little; a cold second stage at full share would step by most
+    // of the tone's height.
+    let largest_step = |slope: f32| {
+        let mut filter = Filter::new(RATE).with_cutoff(1000.0);
+        filter.set_control("slope", slope).unwrap();
+        run(&mut filter, 0, 2_000, 100.0);
+        filter.set_filter_type(FilterType::Bell);
+        let before = run(&mut filter, 2_000, 2_000, 100.0);
+        filter.set_filter_type(FilterType::LowPass);
+        let after = run(&mut filter, 4_000, 2_000, 100.0);
+        let step = (after[0] - before[before.len() - 1]).abs();
+        after
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(step, f32::max)
+    };
+    let gentle = largest_step(0.0);
+    let steep = largest_step(1.0);
+    assert!(steep < 1.5 * gentle, "{steep} against {gentle}");
 }
