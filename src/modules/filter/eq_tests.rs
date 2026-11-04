@@ -146,3 +146,31 @@ fn switching_to_the_steep_slope_starts_from_rest() {
         (0.0, 0.0)
     );
 }
+
+#[test]
+fn a_steep_bandpass_is_as_loud_at_its_centre() {
+    let level = |slope: f32| {
+        let mut filter = Filter::new(RATE)
+            .with_filter_type(FilterType::BandPass)
+            .with_cutoff(1000.0);
+        filter.set_control("slope", slope).unwrap();
+        rms(&run(&mut filter, 0, 24_000, 1000.0)[12_000..])
+    };
+    assert!((level(1.0) / level(0.0) - 1.0).abs() < 0.02);
+}
+
+#[test]
+fn returning_from_an_eq_response_restarts_the_second_stage() {
+    let mut filter = Filter::new(RATE).with_cutoff(200.0);
+    filter.set_control("slope", 1.0).unwrap();
+    run(&mut filter, 0, 2_000, 100.0);
+    filter.set_filter_type(FilterType::Bell);
+    run(&mut filter, 2_000, 2_000, 100.0);
+    filter.set_filter_type(FilterType::LowPass);
+    assert_eq!(
+        filter
+            .second_stage
+            .tick(&Coefficients::stage(0.0, 1.0), 0.0),
+        (0.0, 0.0)
+    );
+}

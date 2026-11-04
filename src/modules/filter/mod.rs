@@ -269,7 +269,9 @@ impl Filter {
             let g = fast_tan(PI * effective_cutoff / self.sample_rate as f32);
             let k = 2.0 * (1.0 - effective_resonance);
             self.classic = Coefficients::stage(g, k);
-            self.classic_second = Coefficients::stage(g, SECOND_STAGE_DAMPING);
+            if self.steep.is_live() {
+                self.classic_second = Coefficients::stage(g, SECOND_STAGE_DAMPING);
+            }
             self.coeff_cutoff = effective_cutoff;
             self.coeff_resonance = effective_resonance;
         }
@@ -282,6 +284,13 @@ impl Filter {
         let second = self
             .second_stage
             .classic(&self.classic_second, filter_type, first);
+        // The Butterworth bandpass tap peaks at 1/k; k·bandpass peaks at 1,
+        // so the steep band is narrower but no quieter.
+        let second = if filter_type == FilterType::BandPass {
+            second * SECOND_STAGE_DAMPING
+        } else {
+            second
+        };
         self.steep.mix(first, second)
     }
 
@@ -416,7 +425,13 @@ impl Module for Filter {
                 RtValue::F32(self.resonance)
             }
             (FILTER_TYPE, RtValue::U32(position)) => {
-                self.filter_type = FilterType::from_position(position).ok_or(Refusal::Invalid)?;
+                let filter_type = FilterType::from_position(position).ok_or(Refusal::Invalid)?;
+                if self.filter_type.is_eq() && !filter_type.is_eq() {
+                    // The second stage stood still while an EQ response
+                    // played: start it from rest, not from where it stopped.
+                    self.second_stage.reset();
+                }
+                self.filter_type = filter_type;
                 value
             }
             (CUTOFF_MOD_DEPTH, RtValue::F32(depth)) => {
@@ -444,8 +459,10 @@ impl Module for Filter {
                     _ => return Err(Refusal::Invalid),
                 };
                 if steep && !self.steep.is_live() {
-                    // Starts from rest rather than from long-stale state.
+                    // Starts from rest rather than from long-stale state,
+                    // with its coefficients designed on the next frame.
                     self.second_stage.reset();
+                    self.coeff_cutoff = -1.0;
                 }
                 self.steep.switch(steep, self.glide.is_heard());
                 value
