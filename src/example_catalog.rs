@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 15] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 16] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -65,6 +65,11 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 15] = [
         file_name: "chance_groove.json",
         title: "Chance Groove",
         summary: "One chance module plays drums and a lead in D dorian, looping and mutating.",
+    },
+    ExampleDefinition {
+        file_name: "drum_map.json",
+        title: "Drum Map Groove",
+        summary: "Kick, snare and hats from a navigable map of grooves.",
     },
     ExampleDefinition {
         file_name: "control_scheduler.json",
@@ -223,6 +228,7 @@ mod tests {
                 "noise_surf_and_hats.json",
                 "step_sequencer.json",
                 "chance_groove.json",
+                "drum_map.json",
                 "control_scheduler.json",
                 "development_file_patch.json",
                 "development_inline_patch.json",

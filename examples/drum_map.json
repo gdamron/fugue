@@ -1,0 +1,293 @@
+{
+  "version": "1.0.0",
+  "title": "Drum Map Groove",
+  "description": "A drum_map at the centre of its map (syncopated, standard energy) with light swing, playing simple synthesized kick, snare and hat voices. Move x and y to glide between grooves; raise a density for a busier part.",
+  "modules": [
+    {
+      "id": "clock",
+      "type": "clock",
+      "config": {
+        "bpm": 96.0
+      }
+    },
+    {
+      "id": "drums",
+      "type": "drum_map",
+      "config": {
+        "x": 0.5,
+        "y": 0.5,
+        "kick_density": 0.6,
+        "snare_density": 0.6,
+        "hat_density": 0.7,
+        "swing": 0.3
+      }
+    },
+    {
+      "id": "kick_env",
+      "type": "adsr",
+      "config": {
+        "attack": 0.001,
+        "decay": 0.01,
+        "sustain": 1.0,
+        "release": 0.3
+      }
+    },
+    {
+      "id": "kick_tone",
+      "type": "oscillator",
+      "config": {
+        "waveform": "sine",
+        "frequency": 48.0,
+        "frequency_mod_depth": 90.0
+      }
+    },
+    {
+      "id": "kick_tone_amp",
+      "type": "vca"
+    },
+    {
+      "id": "snare_env",
+      "type": "adsr",
+      "config": {
+        "attack": 0.001,
+        "decay": 0.01,
+        "sustain": 1.0,
+        "release": 0.12
+      }
+    },
+    {
+      "id": "snare_body",
+      "type": "oscillator",
+      "config": {
+        "waveform": "triangle",
+        "frequency": 196.0
+      }
+    },
+    {
+      "id": "snare_body_amp",
+      "type": "vca"
+    },
+    {
+      "id": "snare_crack",
+      "type": "oscillator",
+      "config": {
+        "waveform": "square",
+        "frequency": 1750.0
+      }
+    },
+    {
+      "id": "snare_crack_amp",
+      "type": "vca"
+    },
+    {
+      "id": "hat_env",
+      "type": "adsr",
+      "config": {
+        "attack": 0.001,
+        "decay": 0.005,
+        "sustain": 1.0,
+        "release": 0.035
+      }
+    },
+    {
+      "id": "hat_low",
+      "type": "oscillator",
+      "config": {
+        "waveform": "square",
+        "frequency": 6400.0
+      }
+    },
+    {
+      "id": "hat_low_amp",
+      "type": "vca"
+    },
+    {
+      "id": "hat_high",
+      "type": "oscillator",
+      "config": {
+        "waveform": "square",
+        "frequency": 9100.0
+      }
+    },
+    {
+      "id": "hat_high_amp",
+      "type": "vca"
+    },
+    {
+      "id": "mix",
+      "type": "mixer",
+      "config": {
+        "channel_count": 5,
+        "levels": [
+          0.9,
+          0.35,
+          0.06,
+          0.05,
+          0.04
+        ],
+        "pans": [
+          0.0,
+          0.1,
+          0.1,
+          -0.3,
+          -0.3
+        ],
+        "master": 0.8
+      }
+    },
+    {
+      "id": "kick_sweep",
+      "type": "adsr",
+      "config": {
+        "attack": 0.001,
+        "decay": 0.005,
+        "sustain": 1.0,
+        "release": 0.04
+      }
+    },
+    {
+      "id": "dac",
+      "type": "dac"
+    }
+  ],
+  "connections": [
+    {
+      "from": "clock",
+      "from_port": "beat_x4",
+      "to": "drums",
+      "to_port": "clock"
+    },
+    {
+      "from": "drums",
+      "from_port": "kick",
+      "to": "kick_env",
+      "to_port": "gate"
+    },
+    {
+      "from": "kick_tone",
+      "from_port": "audio",
+      "to": "kick_tone_amp",
+      "to_port": "audio"
+    },
+    {
+      "from": "kick_env",
+      "from_port": "envelope",
+      "to": "kick_tone_amp",
+      "to_port": "level"
+    },
+    {
+      "from": "kick_tone_amp",
+      "from_port": "audio",
+      "to": "mix",
+      "to_port": "audio.0"
+    },
+    {
+      "from": "drums",
+      "from_port": "snare",
+      "to": "snare_env",
+      "to_port": "gate"
+    },
+    {
+      "from": "snare_body",
+      "from_port": "audio",
+      "to": "snare_body_amp",
+      "to_port": "audio"
+    },
+    {
+      "from": "snare_env",
+      "from_port": "envelope",
+      "to": "snare_body_amp",
+      "to_port": "level"
+    },
+    {
+      "from": "snare_body_amp",
+      "from_port": "audio",
+      "to": "mix",
+      "to_port": "audio.1"
+    },
+    {
+      "from": "snare_crack",
+      "from_port": "audio",
+      "to": "snare_crack_amp",
+      "to_port": "audio"
+    },
+    {
+      "from": "snare_env",
+      "from_port": "envelope",
+      "to": "snare_crack_amp",
+      "to_port": "level"
+    },
+    {
+      "from": "snare_crack_amp",
+      "from_port": "audio",
+      "to": "mix",
+      "to_port": "audio.2"
+    },
+    {
+      "from": "drums",
+      "from_port": "hat",
+      "to": "hat_env",
+      "to_port": "gate"
+    },
+    {
+      "from": "hat_low",
+      "from_port": "audio",
+      "to": "hat_low_amp",
+      "to_port": "audio"
+    },
+    {
+      "from": "hat_env",
+      "from_port": "envelope",
+      "to": "hat_low_amp",
+      "to_port": "level"
+    },
+    {
+      "from": "hat_low_amp",
+      "from_port": "audio",
+      "to": "mix",
+      "to_port": "audio.3"
+    },
+    {
+      "from": "hat_high",
+      "from_port": "audio",
+      "to": "hat_high_amp",
+      "to_port": "audio"
+    },
+    {
+      "from": "hat_env",
+      "from_port": "envelope",
+      "to": "hat_high_amp",
+      "to_port": "level"
+    },
+    {
+      "from": "hat_high_amp",
+      "from_port": "audio",
+      "to": "mix",
+      "to_port": "audio.4"
+    },
+    {
+      "from": "drums",
+      "from_port": "kick",
+      "to": "kick_sweep",
+      "to_port": "gate"
+    },
+    {
+      "from": "kick_sweep",
+      "from_port": "envelope",
+      "to": "kick_tone",
+      "to_port": "frequency_mod"
+    },
+    {
+      "from": "mix",
+      "from_port": "audio_left",
+      "to": "dac",
+      "to_port": "audio_left"
+    },
+    {
+      "from": "mix",
+      "from_port": "audio_right",
+      "to": "dac",
+      "to_port": "audio_right"
+    }
+  ]
+}
