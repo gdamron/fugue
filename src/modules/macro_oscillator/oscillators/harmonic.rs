@@ -9,7 +9,7 @@ pub(in crate::modules::macro_oscillator) const HARMONIC_BATCH: usize = 12;
 
 /// A bank of [`HARMONIC_BATCH`] consecutive harmonics, starting at
 /// `first`, summed with the Chebyshev recurrence: one table read per
-/// sample (two above the first batch) instead of one per harmonic.
+/// sample (three above the first batch) instead of one per harmonic.
 /// Harmonics fade as they near Nyquist and stop there.
 pub(in crate::modules::macro_oscillator) struct HarmonicOscillator {
     first: usize,

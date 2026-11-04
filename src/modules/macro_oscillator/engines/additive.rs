@@ -14,6 +14,16 @@ use crate::modules::macro_oscillator::oscillators::{HarmonicOscillator, HARMONIC
 
 /// Harmonics on `audio`.
 const HARMONICS: usize = 2 * HARMONIC_BATCH;
+/// The harmonic numbers (from 0, the fundamental) on `audio`: all of them.
+const AUDIO_HARMONICS: [usize; HARMONICS] = {
+    let mut harmonics = [0; HARMONICS];
+    let mut i = 0;
+    while i < HARMONICS {
+        harmonics[i] = i;
+        i += 1;
+    }
+    harmonics
+};
 /// The harmonic numbers (from 0, the fundamental) on `aux`.
 const ORGAN_HARMONICS: [usize; 8] = [0, 1, 2, 3, 5, 7, 9, 11];
 /// The spectrum's glide per block at 48 kHz, as a one-pole coefficient.
@@ -55,8 +65,7 @@ impl AdditiveEngine {
             smoothing: (SMOOTHING * TUNED_RATE * p.sample_period).min(1.0),
         };
 
-        let audio_harmonics: [usize; HARMONICS] = std::array::from_fn(|i| i);
-        spectrum.update(&mut self.amplitudes, &audio_harmonics);
+        spectrum.update(&mut self.amplitudes, &AUDIO_HARMONICS);
         let (low, high) = self.amplitudes.split_at(HARMONIC_BATCH);
         self.oscillators[0].render(f0, low, out);
         self.oscillators[1].render(f0, high, out);
@@ -113,10 +122,9 @@ mod tests {
     use super::*;
 
     fn settle(spectrum: &Spectrum) -> [f32; HARMONICS] {
-        let indices: [usize; HARMONICS] = std::array::from_fn(|i| i);
         let mut amplitudes = [0.0; HARMONICS];
         for _ in 0..20_000 {
-            spectrum.update(&mut amplitudes, &indices);
+            spectrum.update(&mut amplitudes, &AUDIO_HARMONICS);
         }
         amplitudes
     }

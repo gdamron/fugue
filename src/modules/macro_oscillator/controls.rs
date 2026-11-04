@@ -68,7 +68,7 @@ const DECLS: &[ControlDecl] = &[
     ),
     macro_control(
         "morph",
-        "Waveform morph; virtual analog: saw to triangle; waveshaping: triangle to saw; fm: feedback (below 0.5 rough, above noisy); grain_formant: grain window; additive: spectral peak width",
+        "Waveform morph; virtual analog: saw to triangle; waveshaping: triangle to saw; fm: feedback (below 0.5 rough, above noisy); grain_formant: grain window; additive: narrows the spectral peak",
     ),
     ControlDecl::new(
         "level",
