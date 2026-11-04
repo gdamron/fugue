@@ -21,12 +21,13 @@ use crate::traits::ControlMeta;
 use crate::{Module, MAX_BLOCK};
 
 use self::controls::{
-    DECAY, FREQUENCY, FREQUENCY_MOD_DEPTH, HARMONICS, LEVEL, MAX_DECAY, MIN_DECAY, MODEL, MORPH,
-    TABLE, TIMBRE,
+    DECAY, FREQUENCY, FREQUENCY_MOD_DEPTH, HARMONICS, KEY, LEVEL, MAX_DECAY, MIN_DECAY, MODEL,
+    MORPH, SCALE, TABLE, TIMBRE,
 };
 use self::engine::ENGINE_BLOCK;
 use self::engines::MODEL_COUNT;
 use self::voice::{Block, Gate, Voice};
+use crate::music::scales::{KEY_NAMES, SCALE_NAMES};
 
 mod controls;
 mod engine;
@@ -128,6 +129,7 @@ impl ModuleFactory for MacroOscillatorFactory {
 ///   glides over 10 ms
 /// - `level`: output level, 0 to 1
 /// - `decay`: how long the gate takes to fall 60 dB after a trigger, in seconds
+/// - `key`, `scale`: the key and scale the `chords` model builds chords in
 pub struct MacroOscillator {
     sample_rate: f32,
     cells: Arc<ControlCells>,
@@ -146,6 +148,8 @@ pub struct MacroOscillator {
     level: LinearRamp,
     /// `decay` on the gate's tuned 0-to-1 scale.
     decay: f32,
+    key: u8,
+    scale: u8,
 
     voice: Voice,
     /// The last frequency turned into a pitch, and that pitch.
@@ -183,6 +187,8 @@ impl MacroOscillator {
             heard: false,
             level: LinearRamp::new(1.0, gain_ramp_frames(sample_rate)),
             decay: 0.5,
+            key: 0,
+            scale: 0,
             voice: Voice::new(sample_rate, 0),
             last_hz: 440.0,
             last_note: 69.0,
@@ -270,6 +276,8 @@ impl MacroOscillator {
             morph: self.morph.next_value(),
             gate,
             decay: self.decay,
+            key: self.key,
+            scale: self.scale,
         };
         self.voice
             .render(&block, &mut self.ready_audio, &mut self.ready_aux);
@@ -395,6 +403,15 @@ impl Module for MacroOscillator {
                 self.decay = (seconds / DECAY_AT_ZERO_SECONDS).log2() / DECAY_DOUBLINGS_PER_UNIT;
                 RtValue::F32(seconds)
             }
+            (KEY, RtValue::U32(position)) if (position as usize) < KEY_NAMES.len() => {
+                self.key = position as u8;
+                value
+            }
+            (SCALE, RtValue::U32(position)) if (position as usize) < SCALE_NAMES.len() => {
+                self.scale = position as u8;
+                value
+            }
+            (KEY | SCALE, RtValue::U32(_)) => return Err(Refusal::Invalid),
             _ => return Err(Refusal::Unsupported),
         };
         Ok(applied)

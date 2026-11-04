@@ -48,6 +48,9 @@ pub(super) struct Block {
     pub gate: Gate,
     /// The gate's `decay` mapped to the 0-to-1 scale the gate was tuned on.
     pub decay: f32,
+    /// The key and scale chords are built in.
+    pub key: u8,
+    pub scale: u8,
 }
 
 pub(super) struct Voice {
@@ -155,6 +158,8 @@ impl Voice {
             timbre: block.timbre,
             morph: block.morph,
             accent,
+            key: block.key,
+            scale: block.scale,
         };
         self.mix_engines(block.model, &p, audio, aux);
         self.apply_gate(gate, block.decay, &p, audio, aux);
@@ -309,6 +314,8 @@ mod tests {
             morph: 0.5,
             gate,
             decay: 0.5,
+            key: 0,
+            scale: 0,
         }
     }
 

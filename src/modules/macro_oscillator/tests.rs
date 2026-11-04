@@ -218,11 +218,54 @@ fn each_macro_changes_the_new_models_sound() {
         let x = render(module.as_mut(), SR as usize / 10, 64);
         harmonic_profile(&x[SR as usize / 50..], 220.0)
     };
-    for model in ["waveshaping", "fm", "grain_formant", "additive"] {
+    for model in ["waveshaping", "fm", "grain_formant", "additive", "chords"] {
         for key in ["harmonics", "timbre", "morph"] {
             let (low, high) = (play(model, key, 0.1), play(model, key, 0.9));
             let change: f32 = low.iter().zip(&high).map(|(a, b)| (a - b).abs()).sum();
             assert!(change > 0.05, "{model}: {key} does nothing ({change})");
         }
     }
+}
+
+/// The level of `hz` in `x`, by a Hann-windowed single-bin DFT.
+fn level_at(x: &[f32], hz: f32) -> f32 {
+    let n = x.len() as f32;
+    let w = std::f32::consts::TAU * hz / SR as f32;
+    let (mut re, mut im) = (0.0f32, 0.0f32);
+    for (i, &v) in x.iter().enumerate() {
+        let hann = 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / n).cos();
+        re += v * hann * (w * i as f32).cos();
+        im += v * hann * (w * i as f32).sin();
+    }
+    re.hypot(im) / n
+}
+
+#[test]
+fn chords_are_built_in_the_key_and_scale() {
+    // A triad on A 220: in C major it is A minor (C 261.6 Hz), in A major
+    // A major (C# 277.2 Hz).
+    let play = |key: &str, scale: &str| {
+        let mut module = build(json!({
+            "model": "chords", "frequency": 220.0, "harmonics": 0.45,
+            "key": key, "scale": scale,
+        }));
+        let x = render(module.as_mut(), SR as usize / 2, 256);
+        let x = &x[SR as usize / 10..];
+        (level_at(x, 261.63), level_at(x, 277.18))
+    };
+    let (minor_third, major_third) = play("C", "major");
+    assert!(
+        minor_third > 10.0 * major_third,
+        "{minor_third} {major_third}"
+    );
+    let (minor_third, major_third) = play("A", "major");
+    assert!(
+        major_third > 10.0 * minor_third,
+        "{minor_third} {major_third}"
+    );
+    let (minor_third, major_third) = play("A", "minor");
+    assert!(
+        minor_third > 10.0 * major_third,
+        "{minor_third} {major_third}"
+    );
 }

@@ -1,0 +1,48 @@
+{
+  "version": "1.0.0",
+  "title": "Macro Oscillator Chords in Key",
+  "description": "A four-chord progression from single notes: a macro oscillator's chords model builds a seventh chord on each note of a D dorian bassline, taking each chord's quality from the key and scale, so D, G, C and A give Dm7, G7, Cmaj7 and Am7. A string-machine registration and a long gate decay let the chords swell and overlap.",
+  "modules": [
+    { "id": "clock", "type": "clock", "config": { "bpm": 72.0 } },
+    {
+      "id": "seq",
+      "type": "step_sequencer",
+      "config": {
+        "root_note": 50,
+        "step_count": 8,
+        "gate_length": 0.8,
+        "pattern": [
+          { "note": 0 },
+          { "note": 0 },
+          { "note": 5 },
+          { "note": 5 },
+          { "note": 10 },
+          { "note": 10 },
+          { "note": 7 },
+          { "note": 7 }
+        ]
+      }
+    },
+    {
+      "id": "voice",
+      "type": "macro_oscillator",
+      "config": {
+        "model": "chords",
+        "key": "D",
+        "scale": "dorian",
+        "harmonics": 0.62,
+        "timbre": 0.5,
+        "morph": 0.55,
+        "decay": 3.0,
+        "level": 0.8
+      }
+    },
+    { "id": "dac", "type": "dac" }
+  ],
+  "connections": [
+    { "from": "clock", "from_port": "beat", "to": "seq", "to_port": "clock" },
+    { "from": "seq", "from_port": "frequency", "to": "voice", "to_port": "frequency" },
+    { "from": "seq", "from_port": "gate", "to": "voice", "to_port": "trigger" },
+    { "from": "voice", "from_port": "audio", "to": "dac", "to_port": "audio" }
+  ]
+}

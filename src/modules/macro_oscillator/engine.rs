@@ -24,6 +24,10 @@ pub(super) struct EngineParameters {
     /// How hard the note was played, 0 to 1.
     #[allow(dead_code)]
     pub accent: f32,
+    /// The key (0 is C) and the position in `music::scales::SCALE_NAMES`
+    /// that chords are built in.
+    pub key: u8,
+    pub scale: u8,
 }
 
 impl EngineParameters {
@@ -83,6 +87,8 @@ mod tests {
             timbre: 0.5,
             morph: 0.5,
             accent: 0.8,
+            key: 0,
+            scale: 0,
         };
         assert!((p.note_to_frequency(69.0) * 48_000.0 - 440.0).abs() < 1e-3);
         assert!((p.note_to_frequency(81.0) * 48_000.0 - 880.0).abs() < 1e-2);
