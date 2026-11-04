@@ -8,7 +8,7 @@
 
 use indexmap::IndexMap;
 
-use super::scc::tarjan_scc;
+use super::scc::{is_back_edge, positions, process_groups, topological_order};
 use super::{CompiledRoute, ProcessGroup, RoutingConnection, SignalGraph};
 use crate::invention::runtime::ModuleInstance;
 use crate::MAX_BLOCK;
@@ -113,7 +113,6 @@ pub(crate) fn compile_topology(
 
     // Build adjacency using module indices.
     let mut downstream: Vec<Vec<usize>> = (0..n).map(|_| Vec::new()).collect();
-    let mut has_self_loop = vec![false; n];
     for edge in edges {
         let Some(from_idx) = facts.index_of(&edge.from_module) else {
             continue;
@@ -122,9 +121,6 @@ pub(crate) fn compile_topology(
             continue;
         };
         downstream[from_idx].push(to_idx);
-        if from_idx == to_idx {
-            has_self_loop[from_idx] = true;
-        }
     }
 
     // Control-write targets are ordering dependencies without routes: a
@@ -140,52 +136,15 @@ pub(crate) fn compile_topology(
                 continue;
             };
             edges_from.push(to_idx);
-            if from_idx == to_idx {
-                has_self_loop[from_idx] = true;
-            }
         }
     }
 
-    // Iterative DFS producing reverse post-order (topological order). State:
-    // 0 = unvisited, 1 = on stack (in progress), 2 = finished. Used for
-    // intra-SCC member ordering and back-edge classification.
-    let mut state = vec![0_u8; n];
-    let mut order: Vec<usize> = Vec::with_capacity(n);
-
-    for start in 0..n {
-        if state[start] != 0 {
-            continue;
-        }
-
-        let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
-        state[start] = 1;
-
-        while let Some((node, idx)) = stack.last_mut() {
-            let node = *node;
-            if *idx < downstream[node].len() {
-                let next = downstream[node][*idx];
-                *idx += 1;
-                // Back-edge (on stack) or already finished: skip.
-                if state[next] == 0 {
-                    state[next] = 1;
-                    stack.push((next, 0));
-                }
-            } else {
-                let (finished, _) = stack.pop().unwrap();
-                state[finished] = 2;
-                order.push(finished);
-            }
-        }
-    }
-
-    order.reverse();
-    let mut pos = vec![0usize; n];
-    for (i, &m) in order.iter().enumerate() {
-        pos[m] = i;
-    }
-
-    // Strongly-connected components (Tarjan), in topological order.
-    let (comp_id, comps) = tarjan_scc(&downstream, n);
+    // Reverse post-order (topological order), used for intra-SCC member
+    // ordering and back-edge classification, and the strongly-connected
+    // components (Tarjan) as process groups, in topological order.
+    let order = topological_order(&downstream);
+    let pos = positions(&order);
+    let (process_groups, group_of) = process_groups(&downstream, &pos);
 
     // Per-destination compiled route lists. Resolve port names to indices
     // once here; classify back-edges for one-sample feedback delay.
@@ -206,7 +165,7 @@ pub(crate) fn compile_topology(
         // A back-edge connects two modules in the same SCC where the source
         // is processed at or after the destination within the per-sample
         // order, so the destination reads the source's previous sample.
-        let delayed = comp_id[from_idx] == comp_id[to_idx] && pos[from_idx] >= pos[to_idx];
+        let delayed = is_back_edge(&group_of, &pos, from_idx, to_idx);
         compiled_routes[to_idx].push(CompiledRoute {
             from_module: from_idx,
             from_port,
@@ -229,24 +188,6 @@ pub(crate) fn compile_topology(
             ports
         })
         .collect();
-
-    // Process groups: SCCs in topological order, members ordered by their
-    // position in the per-sample order.
-    let process_groups: Vec<ProcessGroup> = comps
-        .into_iter()
-        .map(|mut members| {
-            members.sort_by_key(|&m| pos[m]);
-            let feedback = members.len() > 1 || (members.len() == 1 && has_self_loop[members[0]]);
-            ProcessGroup { members, feedback }
-        })
-        .collect();
-    // Which group each module processes in.
-    let mut group_of = vec![0; n];
-    for (g, group) in process_groups.iter().enumerate() {
-        for &m in &group.members {
-            group_of[m] = g;
-        }
-    }
 
     // Per-module output block buffers and carry storage.
     let out_counts: Vec<usize> = (0..n).map(|mi| facts.output_count(mi)).collect();

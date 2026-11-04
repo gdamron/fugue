@@ -3,7 +3,7 @@
 //! in; an offline `schedule` write that retargets an inner scheduler
 //! orders the inner modules again, so it plays as loaded.
 
-use super::compiled_graph::process_order;
+use super::compiled_graph::{group_sequence, process_order, Grouping};
 use crate::invention::RenderEngine;
 use crate::ControlValue;
 
@@ -12,46 +12,74 @@ fn routes_alone_order_as_before() {
     // No ordering edges: reverse post-order of the routes.
     assert_eq!(
         process_order(3, &[(0, 1)], &[vec![], vec![], vec![]]),
-        (vec![2, 0, 1], false)
+        vec![2, 0, 1]
     );
 }
 
 #[test]
 fn a_scheduler_runs_before_the_module_it_writes() {
     // Module 1 writes module 0, which routing alone puts after it.
-    let (order, cycle) = process_order(2, &[], &[vec![], vec![0]]);
-    assert_eq!((order, cycle), (vec![1, 0], false));
+    assert_eq!(process_order(2, &[], &[vec![], vec![0]]), vec![1, 0]);
 }
 
 #[test]
 fn a_write_upstream_of_its_scheduler_is_no_loop() {
     // 0 (a clock) drives 1 (a scheduler) writing 0's tempo: the ordering
-    // edge would close a loop and is left out, so the development keeps
-    // its block path and the route's order.
-    let (order, cycle) = process_order(2, &[(0, 1)], &[vec![], vec![0]]);
-    assert_eq!((order, cycle), (vec![0, 1], false));
+    // edge would close a loop and is left out, so neither joins a feedback
+    // group and the route's order stays.
+    assert_eq!(process_order(2, &[(0, 1)], &[vec![], vec![0]]), vec![0, 1]);
+    assert!(Grouping::of(2, &[(0, 1)], &[])
+        .groups
+        .iter()
+        .all(|group| !group.feedback));
     // Nor does it turn a later route into a loop.
-    let (order, cycle) = process_order(2, &[(1, 0)], &[vec![1], vec![]]);
-    assert_eq!((order, cycle), (vec![1, 0], false));
+    assert_eq!(process_order(2, &[(1, 0)], &[vec![1], vec![]]), vec![1, 0]);
 }
 
 #[test]
-fn a_routed_loop_keeps_its_routing_order() {
+fn a_routed_loop_is_one_feedback_group_and_the_rest_run_alone() {
+    // 0 feeds the loop 1 ↔ 2, which feeds 3.
+    let grouping = Grouping::of(4, &[(0, 1), (1, 2), (2, 1), (2, 3)], &[]);
+    let feedback: Vec<_> = grouping.groups.iter().filter(|g| g.feedback).collect();
+    assert_eq!(feedback.len(), 1);
+    assert_eq!(feedback[0].members, vec![1, 2]);
+    assert_eq!(grouping.groups.len(), 3);
+    // A self-loop is a feedback group of one.
+    let grouping = Grouping::of(2, &[(0, 1), (1, 1)], &[]);
+    assert!(grouping.groups[grouping.group_of[1]].feedback);
+    assert!(!grouping.groups[grouping.group_of[0]].feedback);
+}
+
+#[test]
+fn an_ordering_edge_into_a_loop_orders_groups_not_members() {
     // 1 and 2 feed each other; 0 writes 2. Routing alone delays 2 → 1;
-    // ordering 0 before 2 would put 2 first and delay 1 → 2 instead.
+    // the write runs 0 first but leaves the loop's members, and which
+    // route is delayed, as routing put them.
     let routes = [(1, 2), (2, 1)];
-    let routed = process_order(3, &routes, &[vec![], vec![], vec![]]);
-    assert_eq!(
-        process_order(3, &routes, &[vec![2], vec![], vec![]]),
-        routed
-    );
-    assert!(routed.1);
+    let grouping = Grouping::of(3, &routes, &[]);
+    let loop_group = grouping.group_of[1];
+    assert_eq!(grouping.groups[loop_group].members, vec![1, 2]);
+    let order = process_order(3, &routes, &[vec![2], vec![], vec![]]);
+    let sequence = group_sequence(&order, &grouping.group_of, grouping.groups.len());
+    assert_eq!(sequence, vec![grouping.group_of[0], loop_group]);
 }
 
 #[test]
-fn a_routed_loop_is_still_one() {
-    let (_, cycle) = process_order(3, &[(0, 1), (1, 0)], &[vec![], vec![], vec![0, 1]]);
-    assert!(cycle);
+fn every_group_follows_what_feeds_it() {
+    // 0 → 1 ↔ 2 → 3, with 4 → 2 and 0 writing 4.
+    let routes = [(0, 1), (1, 2), (2, 1), (2, 3), (4, 2)];
+    let targets = [vec![4], vec![], vec![], vec![], vec![]];
+    let grouping = Grouping::of(5, &routes, &[]);
+    let order = process_order(5, &routes, &targets);
+    let sequence = group_sequence(&order, &grouping.group_of, grouping.groups.len());
+    let at = |module: usize| {
+        sequence
+            .iter()
+            .position(|&g| g == grouping.group_of[module])
+            .unwrap()
+    };
+    assert_eq!(sequence.len(), grouping.groups.len());
+    assert!(at(0) < at(1) && at(0) < at(4) && at(4) < at(2) && at(2) < at(3));
 }
 
 const RATE: u32 = 48_000;

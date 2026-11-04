@@ -2,18 +2,19 @@
 //! leaves, so a `schedule` that retargets an inner scheduler plays in the
 //! order a development loaded with it would run, live and offline alike.
 //!
-//! A development orders its inner modules by their routes and by what each
-//! writes (see [`process_order`]). Writing an inner scheduler's `schedule`
-//! can change what it writes, and with it that order. The development's
+//! A development runs its inner groups (see `Grouping`) in an order set by
+//! their routes and by what each module writes (see [`process_order`]).
+//! Writing an inner scheduler's `schedule` can change what it writes, and
+//! with it that order; never the groups, which routes alone decide. The development's
 //! surface records the new schedule first, computes the order on the
 //! control thread, and wraps the payload with it ([`Reordered`]). The
 //! development unwraps it on the thread that applies payloads (the audio
 //! thread, live) and, in the same call, hands the inner payload to its
 //! module and copies the order over its own: the new schedule never plays
 //! in the old order, nor the old one in the new. Copying in place
-//! allocates nothing: the order always lists every inner module once.
+//! allocates nothing: the order always lists every inner group once.
 
-use super::compiled_graph::process_order;
+use super::compiled_graph::{group_sequence, process_order};
 use super::*;
 use crate::control_request::Refusal;
 use crate::payload::{Payload, RetireOnUnwind, Retired};
@@ -24,10 +25,14 @@ use crate::payload::{Payload, RetireOnUnwind, Retired};
 pub(super) struct InnerOrder {
     pub(super) ids: Vec<String>,
     pub(super) routes: Vec<(usize, usize)>,
+    /// Each module's group, and how many there are (see `Grouping`): what
+    /// the order is given as.
+    pub(super) group_of: Vec<usize>,
+    pub(super) groups: usize,
 }
 
 impl InnerOrder {
-    /// The order for what each inner module writes now, as `surfaces`
+    /// The order of the groups for what each inner module writes now, as `surfaces`
     /// report it (see [`ControlSurface::control_targets`]). Control thread:
     /// allocates.
     pub(super) fn compute(
@@ -54,9 +59,8 @@ impl InnerOrder {
                     .collect()
             })
             .collect();
-        process_order(self.ids.len(), &self.routes, &targets)
-            .0
-            .into_boxed_slice()
+        let order = process_order(self.ids.len(), &self.routes, &targets);
+        group_sequence(&order, &self.group_of, self.groups).into_boxed_slice()
     }
 }
 

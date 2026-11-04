@@ -69,6 +69,8 @@ fn a_development_owns_the_directory_its_surfaces_mirror() {
     let order = super::retarget::InnerOrder {
         ids: Vec::new(),
         routes: Vec::new(),
+        group_of: Vec::new(),
+        groups: 0,
     };
     let directory = runtime.control_surfaces.clone();
     let surface = DevelopmentControlSurface::new(&definition, directory, None, order).unwrap();
