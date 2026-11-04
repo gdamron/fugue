@@ -61,7 +61,7 @@ fn a_round_trip_is_flat_and_delayed_by_its_latency() {
         for chunk in output.chunks_mut(256) {
             over.process(chunk, |_| {});
         }
-        let latency = f64::from(over.latency());
+        let latency = over.latency() as f64;
         let late: Vec<f32> = (0..8_192)
             .map(|n| (TAU * hz * (n as f64 - latency) / f64::from(RATE)).sin() as f32)
             .collect();
@@ -83,4 +83,56 @@ fn low_sample_rates_keep_a_band_below_nyquist() {
     let up = in_blocks(&input, MAX_BLOCK, 2.0, |i, o| over.upsample(i, o));
     let gain = db(amplitude(settled(&up), 5_000.0, 44_100.0));
     assert!(gain.abs() <= 0.1, "{gain:.3} dB");
+}
+
+#[test]
+fn other_rates_keep_18_khz_flat_and_its_images_70_db_down() {
+    for rate in [44_100u32, 96_000] {
+        for factor in [Factor::Two, Factor::Four] {
+            let ratio = factor.ratio();
+            let high_rate = f64::from(rate) * ratio as f64;
+            let mut over = Oversampler::new(factor, rate);
+            let input = sine(18_000.0, f64::from(rate), 16_384);
+            let up = in_blocks(&input, MAX_BLOCK, ratio as f64, |i, o| over.upsample(i, o));
+            let up = settled(&up);
+            let gain = db(amplitude(up, 18_000.0, high_rate));
+            assert!(gain.abs() <= 0.1, "{rate} {factor:?}: {gain:.3} dB");
+            let image = db(amplitude(up, f64::from(rate) - 18_000.0, high_rate));
+            assert!(image <= -70.0, "{rate} {factor:?} image: {image:.1} dB");
+            // The same image frequency at the high rate must not fold back
+            // onto 18 kHz.
+            let mut over = Oversampler::new(factor, rate);
+            let above = sine(f64::from(rate) - 18_000.0, high_rate, 16_384 * ratio);
+            let down = in_blocks(&above, MAX_BLOCK * ratio, 1.0 / ratio as f64, |i, o| {
+                over.downsample(i, o)
+            });
+            let folded = db(amplitude(settled(&down), 18_000.0, f64::from(rate)));
+            assert!(folded <= -70.0, "{rate} {factor:?} fold: {folded:.1} dB");
+        }
+    }
+}
+
+#[test]
+fn block_size_does_not_change_the_output_and_reset_starts_over() {
+    for factor in [Factor::Two, Factor::Four] {
+        let input = sine(3_000.0, f64::from(RATE), 3_000);
+        let run = |over: &mut Oversampler, block: usize| {
+            let mut out = input.clone();
+            for chunk in out.chunks_mut(block) {
+                over.process(chunk, |high| high.iter_mut().for_each(|x| *x = x.tanh()));
+            }
+            out
+        };
+        let mut over = Oversampler::new(factor, RATE);
+        let whole = run(&mut over, MAX_BLOCK);
+        for block in [1, 7, 333] {
+            assert_eq!(
+                run(&mut Oversampler::new(factor, RATE), block),
+                whole,
+                "{factor:?} {block}"
+            );
+        }
+        over.reset();
+        assert_eq!(run(&mut over, MAX_BLOCK), whole, "{factor:?} after reset");
+    }
 }

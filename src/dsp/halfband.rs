@@ -22,17 +22,21 @@ pub(super) struct HalfbandStage {
     /// the lower rate.
     centre_delay: usize,
     /// Recent samples at the lower rate, for the off-centre taps: when
-    /// doubling, the input; when halving, the second of each input pair.
+    /// doubling, the input; when halving, the first of each input pair.
     taps_history: History,
-    /// When halving, the first of each input pair, for the centre tap.
+    /// When halving, the second of each input pair, for the centre tap.
     centre_history: History,
+    /// When halving with an extra sample of delay, the output waiting to
+    /// leave.
+    pending: Option<f32>,
 }
 
 impl HalfbandStage {
     /// A stage that passes everything up to `pass` and attenuates
-    /// everything from `1 - pass` up by at least `attenuation_db`, both as
-    /// fractions of the lower rate's Nyquist frequency (so `pass` is below
-    /// 1: 18 kHz at 48 kHz is 0.75).
+    /// everything from `2 - pass` up by about `attenuation_db` (the window
+    /// method's target; it lands a few dB short), both as fractions of the
+    /// lower rate's Nyquist frequency (so `pass` is below 1: 18 kHz at
+    /// 48 kHz is 0.75).
     pub(super) fn new(pass: f64, attenuation_db: f64) -> Self {
         let full = design(pass, attenuation_db);
         let centre = full.len() / 2;
@@ -44,14 +48,23 @@ impl HalfbandStage {
             centre_delay,
             taps_history: History::new(len),
             centre_history: History::new(len),
+            pending: None,
         }
     }
 
+    /// The same stage, with its halving output one sample later: a 4×
+    /// round trip uses it to make its total delay a whole number of frames.
+    pub(super) fn delayed_by_one(mut self) -> Self {
+        self.pending = Some(0.0);
+        self
+    }
+
     /// The delay of a doubling followed by a halving through this design,
-    /// in samples at the higher rate: the doubling delays by the centre
-    /// tap's index, `2m + 1`, and the halving by `2m`.
+    /// in samples at the higher rate: each delays by the centre tap's
+    /// index, `2m + 1`, so the round trip is a whole number of samples at
+    /// the lower rate. An extra sample of halving delay adds two.
     pub(super) fn round_trip_delay(&self) -> usize {
-        4 * self.centre_delay + 1
+        4 * self.centre_delay + 2 + 2 * usize::from(self.pending.is_some())
     }
 
     /// Doubles the rate: each sample of `input` becomes two of `output`,
@@ -73,11 +86,19 @@ impl HalfbandStage {
     pub(super) fn downsample(&mut self, input: &[f32], output: &mut [f32]) {
         debug_assert_eq!(input.len(), output.len() * 2);
         for (pair, out) in input.chunks_exact(2).zip(output.iter_mut()) {
-            self.centre_history.push(pair[0]);
-            self.taps_history.push(pair[1]);
+            // The output lines up with the first of each pair, so the
+            // off-centre taps fall on first samples and the centre tap on
+            // the second sample of the pair `m + 1` back, read before this
+            // pair's second sample goes in.
+            self.taps_history.push(pair[0]);
             let centre = self.centre_history.recent();
             let centre = centre[centre.len() - 1 - self.centre_delay];
-            *out = dot(&self.taps, self.taps_history.recent()) + 0.5 * centre;
+            self.centre_history.push(pair[1]);
+            let filtered = dot(&self.taps, self.taps_history.recent()) + 0.5 * centre;
+            *out = match &mut self.pending {
+                Some(pending) => std::mem::replace(pending, filtered),
+                None => filtered,
+            };
         }
     }
 
@@ -85,12 +106,31 @@ impl HalfbandStage {
     pub(super) fn reset(&mut self) {
         self.taps_history.clear();
         self.centre_history.clear();
+        if let Some(pending) = &mut self.pending {
+            *pending = 0.0;
+        }
     }
 }
 
+/// Four running sums rather than one, so the compiler can vectorize the
+/// loop (it may not reorder a single float sum).
 #[inline]
 fn dot(taps: &[f32], samples: &[f32]) -> f32 {
-    taps.iter().zip(samples).map(|(t, s)| t * s).sum()
+    let mut sums = [0.0f32; 4];
+    let tap_quads = taps.chunks_exact(4);
+    let sample_quads = samples.chunks_exact(4);
+    let tail: f32 = tap_quads
+        .remainder()
+        .iter()
+        .zip(sample_quads.remainder())
+        .map(|(t, s)| t * s)
+        .sum();
+    for (t, s) in tap_quads.zip(sample_quads) {
+        for k in 0..4 {
+            sums[k] += t[k] * s[k];
+        }
+    }
+    (sums[0] + sums[1]) + (sums[2] + sums[3]) + tail
 }
 
 /// The last `len` samples, oldest first, readable as one slice: each sample

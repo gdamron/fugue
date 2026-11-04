@@ -8,14 +8,15 @@
 use super::halfband::HalfbandStage;
 use crate::MAX_BLOCK;
 
-/// Stopband rejection of every stage, with margin over the 70 dB the
-/// images and aliases must be held below.
+/// The stopband rejection each stage is designed for. The window method
+/// lands a few dB short (about 80 dB), still clear of the 70 dB the images
+/// and aliases must be held below.
 const ATTENUATION_DB: f64 = 90.0;
 /// The top of the band kept flat, in hertz.
 const PASSBAND_HZ: f64 = 18_000.0;
 /// At low sample rates 18 kHz is near or past Nyquist: keep this fraction
-/// of Nyquist instead.
-const MAX_PASS_FRACTION: f64 = 0.8;
+/// of Nyquist instead (below about 42 kHz; 44.1 kHz keeps the full band).
+const MAX_PASS_FRACTION: f64 = 0.85;
 
 /// How much the rate rises.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,11 +36,14 @@ impl Factor {
 }
 
 /// Raises a block to 2× or 4× the sample rate and brings it back down,
-/// with halfband filters flat to 18 kHz (within 0.1 dB) that hold images
-/// and aliases at least 70 dB down.
+/// with halfband filters flat to 18 kHz (within 0.1 dB; at rates below
+/// about 42 kHz, to 85% of Nyquist) that hold images and aliases at least
+/// 70 dB down. The round trip delays by a whole number of frames, so a
+/// processed signal can be blended with a dry one delayed to match.
 ///
 /// Built on the control thread (it designs its filters and sizes its
 /// buffers then); the audio thread runs it without allocating.
+#[derive(Clone, Debug)]
 pub struct Oversampler {
     factor: Factor,
     /// Up: base rate → 2×, then 2× → 4×.
@@ -65,7 +69,8 @@ impl Oversampler {
         Self {
             factor,
             up: [first.clone(), second.clone()],
-            down: [second, first],
+            // The extra sample makes the inner round trip a multiple of 4.
+            down: [second.delayed_by_one(), first],
             middle: vec![0.0; 2 * MAX_BLOCK].into_boxed_slice(),
             high: vec![0.0; 4 * MAX_BLOCK].into_boxed_slice(),
         }
@@ -77,30 +82,47 @@ impl Oversampler {
     }
 
     /// The delay of a round trip (up, then down), in frames at the base
-    /// rate. Not always a whole number of frames.
-    pub fn latency(&self) -> f32 {
-        let outer = self.up[0].round_trip_delay() as f32 / 2.0;
+    /// rate.
+    pub fn latency(&self) -> usize {
+        // `down[1]` is the outer stage, `down[0]` the inner (with its extra
+        // sample).
+        let outer = self.down[1].round_trip_delay() / 2;
         match self.factor {
             Factor::Two => outer,
-            Factor::Four => outer + self.up[1].round_trip_delay() as f32 / 4.0,
+            Factor::Four => outer + self.down[0].round_trip_delay() / 4,
         }
     }
 
     /// Raises `input` to the high rate in `output`, which must be
     /// `factor` times as long.
+    ///
+    /// # Panics
+    ///
+    /// If `input` is longer than [`MAX_BLOCK`] or `output` is the wrong
+    /// length.
     pub fn upsample(&mut self, input: &[f32], output: &mut [f32]) {
         upsample(self.factor, &mut self.up, &mut self.middle, input, output);
     }
 
     /// Brings `input` at the high rate back to the base rate in `output`,
     /// which must be `factor` times shorter.
+    ///
+    /// # Panics
+    ///
+    /// If `output` is longer than [`MAX_BLOCK`] or `input` is the wrong
+    /// length.
     pub fn downsample(&mut self, input: &[f32], output: &mut [f32]) {
         downsample(self.factor, &mut self.down, &mut self.middle, input, output);
     }
 
     /// Runs `shape` on `block` at the high rate, in place: up, shape,
     /// down. The block comes back [`Oversampler::latency`] frames late.
+    ///
+    /// # Panics
+    ///
+    /// If `block` is longer than [`MAX_BLOCK`].
     pub fn process(&mut self, block: &mut [f32], mut shape: impl FnMut(&mut [f32])) {
+        assert!(block.len() <= MAX_BLOCK, "block longer than MAX_BLOCK");
         let high = &mut self.high[..block.len() * self.factor.ratio()];
         upsample(self.factor, &mut self.up, &mut self.middle, block, high);
         shape(high);
