@@ -37,11 +37,6 @@ impl LpgEnvelope {
         }
     }
 
-    /// Closes the gate and forgets any ping in progress.
-    pub fn reset(&mut self) {
-        *self = Self::new();
-    }
-
     /// Starts a ping: the gate opens at `attack` per block, then decays.
     pub fn trigger(&mut self) {
         self.ramp_up = true;
@@ -133,11 +128,6 @@ impl LowPassGate {
             gain: BlockRamp::new(0.0),
             filter: Svf::new(sample_rate, 1_000.0, GATE_Q),
         }
-    }
-
-    pub fn reset(&mut self) {
-        self.gain.snap(0.0);
-        self.filter.reset();
     }
 
     /// Gates `block` in place, gliding from the last block's gain to `gain`.
