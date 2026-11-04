@@ -329,6 +329,9 @@ you are changing before you change it.
   implements, how it writes its outputs, and moving a guest to a new version.
 - [Shared runtime](docs/shared-runtime.md): how clients find, edit and
   recover from lost replies to the one daemon that plays the music.
+- [DSP provenance](docs/dsp-provenance.md): what may be ported from other
+  projects, what must be written clean-room, and where tables and samples
+  come from.
 - [Atomic structural edits](docs/apply-edits.md) and
   [authored inspection](docs/authored-inspection.md): changing and reading the
   running invention's document.

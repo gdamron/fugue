@@ -145,6 +145,24 @@ jobs:
       - name: Check Spectrogram on wasm32
         run: cargo check --lib --target wasm32-unknown-unknown --features spectrogram
 
+  # Every crate in the dependency tree must carry a license on the allow-list
+  # in deny.toml (see docs/dsp-provenance.md). It reads only Cargo metadata,
+  # so it runs on every PR, docs-only ones included, in well under a minute.
+  licenses:
+    name: Check Dependency Licenses
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@v4
+
+      # Pinned (v2.1.1, which bundles cargo-deny 0.20.2) so a new cargo-deny
+      # release can't turn every PR red on its own. Bump it deliberately.
+      - name: Check Licenses
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
+        with:
+          command: check licenses
+
   # One stable check that is green when tests passed or were rightly skipped,
   # so a docs-only PR still reports a result. Require this check, not the
   # individual jobs, if CI checks become required. It leaves out windows-test
@@ -156,6 +174,7 @@ jobs:
       - changes
       - test
       - feature-tests
+      - licenses
     runs-on: ubuntu-latest
     steps:
       - name: Check Job Results

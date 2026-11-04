@@ -9,6 +9,12 @@
 
 - [FUG-ID](https://linear.app/ilusiv/issue/FUG-ID)
 
+### Provenance
+
+<!-- Keep the one that applies (see docs/dsp-provenance.md). A PR with no DSP is original. -->
+
+Provenance: original / ported from <source> (MIT, noted) / clean-room (consulted: …)
+
 ### Screenshots
 
 <!-- Add a screenshot or two to demonstrate the changes made. -->
