@@ -1,0 +1,48 @@
+{
+  "version": "1.0.0",
+  "title": "Noise Surf and Hats",
+  "description": "Pink noise swells like surf under a slow filter sweep while white noise, high-passed and gated on eighth notes, plays a hi-hat.",
+  "modules": [
+    { "id": "clock", "type": "clock", "config": { "bpm": 96.0, "gate_length": 0.1 } },
+    { "id": "noise", "type": "noise", "config": { "seed": 1975, "level": 1.0 } },
+    {
+      "id": "surf_filter",
+      "type": "filter",
+      "config": { "filter_type": "lowpass", "cutoff": 900.0, "resonance": 0.2, "cutoff_mod_depth": 700.0 }
+    },
+    { "id": "surf_sweep", "type": "lfo", "config": { "rate": 0.11, "waveform": "sine" } },
+    { "id": "swell", "type": "lfo", "config": { "rate": 0.07, "waveform": "triangle" } },
+    { "id": "surf_vca", "type": "vca" },
+    {
+      "id": "hat_filter",
+      "type": "filter",
+      "config": { "filter_type": "highpass", "cutoff": 7000.0, "resonance": 0.1 }
+    },
+    {
+      "id": "hat_env",
+      "type": "adsr",
+      "config": { "attack": 0.001, "decay": 0.045, "sustain": 0.0, "release": 0.03 }
+    },
+    { "id": "hat_vca", "type": "vca" },
+    {
+      "id": "mixer",
+      "type": "mixer",
+      "config": { "channel_count": 2, "levels": [1.0, 0.6], "pans": [0.0, 0.3] }
+    },
+    { "id": "dac", "type": "dac" }
+  ],
+  "connections": [
+    { "from": "noise", "from_port": "pink", "to": "surf_filter", "to_port": "audio" },
+    { "from": "surf_sweep", "from_port": "bipolar", "to": "surf_filter", "to_port": "cutoff_mod" },
+    { "from": "surf_filter", "from_port": "audio", "to": "surf_vca", "to_port": "audio" },
+    { "from": "swell", "from_port": "unipolar", "to": "surf_vca", "to_port": "level" },
+    { "from": "surf_vca", "from_port": "audio", "to": "mixer", "to_port": "audio.0" },
+    { "from": "noise", "from_port": "white", "to": "hat_filter", "to_port": "audio" },
+    { "from": "clock", "from_port": "beat_x2", "to": "hat_env", "to_port": "gate" },
+    { "from": "hat_filter", "from_port": "audio", "to": "hat_vca", "to_port": "audio" },
+    { "from": "hat_env", "from_port": "envelope", "to": "hat_vca", "to_port": "level" },
+    { "from": "hat_vca", "from_port": "audio", "to": "mixer", "to_port": "audio.1" },
+    { "from": "mixer", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
+    { "from": "mixer", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
+  ]
+}

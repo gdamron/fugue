@@ -283,9 +283,9 @@ impl Default for ModuleRegistry {
         use crate::modules::{
             AdsrFactory, AgentFactory, AudioFileSinkFactory, CellSequencerFactory, ClockFactory,
             CodeFactory, ControlSchedulerFactory, DacFactory, DivisiFactory, FilterFactory,
-            LfoFactory, MelodyFactory, MixerFactory, OscillatorFactory, ReverbFactory,
-            SampleInstrumentFactory, SampleKitFactory, SamplePlayerFactory, SampleSlicerFactory,
-            StepSequencerFactory, VcaFactory,
+            LfoFactory, MelodyFactory, MixerFactory, NoiseFactory, OscillatorFactory,
+            ReverbFactory, SampleInstrumentFactory, SampleKitFactory, SamplePlayerFactory,
+            SampleSlicerFactory, StepSequencerFactory, VcaFactory,
         };
 
         let mut reg = Self::new();
@@ -300,6 +300,7 @@ impl Default for ModuleRegistry {
         reg.register(LfoFactory);
         reg.register(FilterFactory);
         reg.register(MixerFactory);
+        reg.register(NoiseFactory);
         reg.register(AdsrFactory);
         reg.register(VcaFactory);
         reg.register(MelodyFactory);

@@ -73,8 +73,8 @@ pub use modules::{
     AudioFileSinkHandle, AudioFileSinkStats, Clock, ClockFactory, CodeControls, CodeFactory,
     ControlScheduler, ControlSchedulerControls, ControlSchedulerFactory, DacFactory, DacModule,
     Filter, FilterFactory, FilterType, Lfo, LfoFactory, MelodyFactory, MelodyGenerator, Mixer,
-    MixerFactory, NullBackend, Oscillator, OscillatorFactory, OscillatorType, SampleKit,
-    SampleKitFactory, SamplePlayer, SamplePlayerFactory, SampleSlicer,
+    MixerFactory, Noise, NoiseFactory, NullBackend, Oscillator, OscillatorFactory, OscillatorType,
+    SampleKit, SampleKitFactory, SamplePlayer, SamplePlayerFactory, SampleSlicer,
     SampleSlicerFactory, StreamErrorKind, Vca, VcaFactory,
 };
 
