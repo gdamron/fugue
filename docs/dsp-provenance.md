@@ -11,11 +11,11 @@ to use in the issue or PR first, and check them against this page.
 
 ## The rules
 
-1. **MIT sources may be ported.** Translate them to
-   idiomatic Fugue Rust: `f32`, block processing, a `ControlTable`, no
-   allocation or locks on the audio thread. Adapt the code to Fugue's idioms
-   rather than transliterating it line by line. A translation is still a
-   derivative work, so every ported file carries an
+1. **MIT sources may be ported.** Translate them to idiomatic Fugue Rust:
+   `f32`, block processing, a `ControlTable`, no allocation or locks on the
+   audio thread. Adapt the code to Fugue's idioms rather than
+   transliterating it line by line. A translation is still a derivative
+   work, so every ported file carries an
    [attribution header](#attribution-header) and the source gets an entry in
    [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) with its original
    license text.
@@ -46,10 +46,9 @@ to use in the issue or PR first, and check them against this page.
 Textbook forms (a one-pole damper, an allpass, a delay line, a biquad from
 the RBJ cookbook, a Hadamard or Householder mix) are common knowledge, not
 anyone's expression. Writing them from the textbook is generally original
-work. The
-line is crossed when an implementation follows one particular source's
-structure, names and tuning constants closely; then that source's license
-applies.
+work. The line is crossed when an implementation follows one particular
+source's structure, names and tuning constants closely; then that source's
+license applies.
 
 ## Attribution header
 
