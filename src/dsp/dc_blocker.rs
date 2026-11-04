@@ -9,10 +9,15 @@
 
 use std::f32::consts::TAU;
 
-/// The default corner, in hertz: low enough to keep a 20 Hz fundamental,
-/// high enough that an offset settles (to 1/500 of its size) within
-/// 70 ms.
+/// The default corner, in hertz: low enough that a 20 Hz fundamental
+/// loses under 2 dB, high enough that an offset settles (to 1/500 of its
+/// size) within 70 ms.
 pub const DC_BLOCKER_CUTOFF_HZ: f32 = 15.0;
+
+/// A decaying state smaller than this is flushed to zero: after silence it
+/// would otherwise settle into subnormal numbers, which are slow on some
+/// processors.
+const SUBNORMAL_FLUSH: f32 = 1.0e-20;
 
 /// A highpass that removes DC and leaves the audible band alone.
 #[derive(Clone, Copy, Debug)]
@@ -43,7 +48,10 @@ impl DcBlocker {
     /// Filters one sample.
     #[inline]
     pub fn process(&mut self, input: f32) -> f32 {
-        let output = input - self.input + self.pole * self.output;
+        let mut output = input - self.input + self.pole * self.output;
+        if output.abs() < SUBNORMAL_FLUSH {
+            output = 0.0;
+        }
         self.input = input;
         self.output = output;
         output
@@ -74,5 +82,19 @@ mod tests {
             }
         }
         assert!((peak - 1.0).abs() < 2e-3, "peak {peak}");
+    }
+
+    #[test]
+    fn silence_settles_to_exactly_zero_and_reset_clears_the_state() {
+        let mut blocker = DcBlocker::new(RATE);
+        blocker.process(1.0);
+        let mut last = 1.0;
+        for _ in 0..RATE * 2 {
+            last = blocker.process(0.0);
+        }
+        assert_eq!(last, 0.0);
+        blocker.process(0.5);
+        blocker.reset();
+        assert_eq!(blocker.process(0.0), 0.0);
     }
 }

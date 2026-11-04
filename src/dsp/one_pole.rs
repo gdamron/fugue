@@ -8,6 +8,10 @@
 
 use std::f32::consts::PI;
 
+/// A state smaller than this is flushed to zero, so that silence does not
+/// leave the filter running on slow subnormal numbers.
+const SUBNORMAL_FLUSH: f32 = 1.0e-20;
+
 /// A one-pole lowpass and highpass. The cutoff's coefficient (a `tan`) is
 /// recomputed only when the cutoff changes.
 #[derive(Clone, Copy, Debug)]
@@ -40,9 +44,17 @@ impl OnePole {
     }
 
     /// Moves the cutoff, clamped to just below Nyquist. A cutoff equal to
-    /// the current one costs nothing.
+    /// the current one costs nothing; one that is not a number is ignored.
     #[inline]
     pub fn set_cutoff(&mut self, cutoff_hz: f32) {
+        if cutoff_hz.is_nan() {
+            if self.cutoff_hz.is_nan() {
+                // Construction with a NaN cutoff: start fully closed.
+                self.cutoff_hz = 0.0;
+                self.coefficient = 0.0;
+            }
+            return;
+        }
         let cutoff = cutoff_hz.clamp(0.0, 0.49 * self.sample_rate);
         if cutoff.to_bits() == self.cutoff_hz.to_bits() {
             return;
@@ -63,6 +75,9 @@ impl OnePole {
         let v = (input - self.state) * self.coefficient;
         let lowpass = v + self.state;
         self.state = lowpass + v;
+        if self.state.abs() < SUBNORMAL_FLUSH {
+            self.state = 0.0;
+        }
         OnePoleOutput {
             lowpass,
             highpass: input - lowpass,
@@ -102,5 +117,22 @@ mod tests {
         filter.set_cutoff(1e9);
         assert!(filter.cutoff() < RATE as f32 / 2.0);
         assert!(filter.lowpass(1.0).is_finite());
+        filter.set_cutoff(f32::NAN);
+        assert!(filter.cutoff().is_finite());
+        assert!(OnePole::new(RATE, f32::NAN).lowpass(1.0).is_finite());
+    }
+
+    #[test]
+    fn silence_settles_to_exactly_zero_and_reset_clears_the_state() {
+        let mut filter = OnePole::new(RATE, 20.0);
+        filter.process(1.0);
+        let mut last = filter.process(0.0);
+        for _ in 0..RATE * 4 {
+            last = filter.process(0.0);
+        }
+        assert_eq!(last.lowpass, 0.0);
+        filter.process(0.5);
+        filter.reset();
+        assert_eq!(filter.lowpass(0.0), 0.0);
     }
 }
