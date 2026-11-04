@@ -64,8 +64,8 @@ from, under which license, and where the notice lives:
 
 Add the source to `THIRD_PARTY_NOTICES.md` the first time anything from it
 is ported: the project, the revision ported from, the files used, the
-copyright line, and the full license text. Later ports from the same source add their files to that
-entry.
+copyright line, and the full license text. Later ports from the same
+source add their files to that entry.
 
 ## Mutable Instruments' eurorack firmware
 
@@ -74,9 +74,9 @@ eurorack firmware ([github.com/pichenettes/eurorack](https://github.com/pichenet
 the project works from the fork at
 [github.com/gdamron/eurorack](https://github.com/gdamron/eurorack)).
 
-The firmware's licensing is mixed: the README puts the STM32 projects under MIT, the
-AVR projects under GPL-3.0 and the hardware under CC-BY-SA-3.0. A
-file-by-file audit (2026-11-02) found:
+The firmware's licensing is mixed: the README puts the STM32 projects
+under MIT, the AVR projects under GPL-3.0 and the hardware under
+CC-BY-SA-3.0. A file-by-file audit (2026-11-02) found:
 
 | Source | License | How we may use it |
 | --- | --- | --- |
