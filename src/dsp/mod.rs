@@ -10,12 +10,14 @@
 //! - [`OnePole`] - First-order lowpass and highpass
 //! - [`DcBlocker`] - Removes a constant offset
 //! - [`Oversampler`] - Runs a process at 2× or 4× the sample rate
+//! - [`BandLimitedOscillator`] - Saw, pulse, triangle and sine without aliasing, with hard sync
 //! - [`sine`] / [`cosine`] - Sine and cosine from a table built at compile time
 //! - `declick_gain` - The curved fade that ends a sound without a click
 //! - `RealFft` - Radix-2 power spectrum for off-thread analysis (feature
 //!   `spectrogram`)
 
 mod allpass;
+mod band_limited;
 mod damper;
 mod dc_blocker;
 mod declick;
@@ -31,6 +33,7 @@ mod rng;
 mod sine_table;
 
 pub use allpass::Allpass;
+pub use band_limited::{BandLimitedOscillator, Shape};
 pub use damper::Damper;
 pub use dc_blocker::{DcBlocker, DC_BLOCKER_CUTOFF_HZ};
 #[cfg(test)]
