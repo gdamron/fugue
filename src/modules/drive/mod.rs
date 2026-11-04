@@ -12,7 +12,11 @@
 //! ```
 //!
 //! Its defaults suit a building block in a feedback loop (a tape delay's
-//! saturation): fully wet, mild drive, automatic level on.
+//! saturation): fully wet, mild drive, automatic level on. In a loop, mind
+//! two things: automatic level lifts signals quieter than −12 dBFS as drive
+//! rises (by up to about 14 dB at full drive), so keep the loop's feedback
+//! lower or turn `auto_level` off; and with oversampling the module adds
+//! its latency (a few frames) to the loop's delay.
 
 use std::sync::Arc;
 
@@ -101,17 +105,20 @@ fn oversampling_factor(oversampling: u32) -> Option<Factor> {
 /// # Controls
 /// - `drive`: 0 to 1. For the curves, the gain in front of them (0 dB to
 ///   +24 dB, +18 dB for fold); for `bits`, 16 bits down to 3; for `rate`,
-///   every sample kept down to one in 64
+///   every sample kept down to one in 64 (counted in frames, so coarser
+///   at lower sample rates)
 /// - `shape`: `soft` (tanh-like), `hard` (clip), `fold` (foldback),
 ///   `asymmetric` (even harmonics), `bits`, `rate`. A change crossfades
 ///   over 20 ms
 /// - `pre_tone`, `post_tone`: tilts (−1 dark to 1 bright, ±6 dB about
 ///   800 Hz) before and after the shape
-/// - `bias`: an offset into the shape; off centre adds even harmonics, and
-///   a DC blocker after the shape removes the offset it leaves
+/// - `bias`: an offset into the curves (bits and rate ignore it); off
+///   centre adds even harmonics, and a DC blocker after the shape removes
+///   the offset it leaves
 /// - `level`: output level, 0 to 1
 /// - `auto_level`: on, a signal peaking at −12 dBFS keeps its level as
-///   `drive` moves; louder signals come out quieter as they saturate
+///   `drive` moves; louder signals come out quieter as they saturate, and
+///   quieter ones through the curves louder
 /// - `mix`: 0 dry to 1 fully driven
 ///
 /// Every number glides and every switch crossfades, so nothing clicks.
