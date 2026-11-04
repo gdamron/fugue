@@ -92,11 +92,16 @@ impl ModuleFactory for MacroOscillatorFactory {
 /// # Inputs
 /// - `frequency`: pitch in Hz; when connected it overrides the control
 /// - `frequency_mod`: frequency modulation, scaled by `frequency_mod_depth`
-/// - `trigger`: each rising edge pings the low-pass gate
+/// - `trigger`: each rising edge pings the low-pass gate (ignored while
+///   `level` is connected)
 /// - `level`: when connected, how far the low-pass gate is open, 0 to 1
 ///
 /// With neither `trigger` nor `level` connected the voice sounds
-/// continuously, with no gate.
+/// continuously, with no gate; patching or unpatching them fades.
+///
+/// The models render in blocks of 12 frames, whatever the host's block
+/// size, so the output runs 12 frames (0.25 ms at 48 kHz) behind the
+/// inputs and sounds the same at any block size.
 ///
 /// # Outputs
 /// - `audio`: the model's main sound
@@ -127,6 +132,16 @@ pub struct MacroOscillator {
     last_hz: f32,
     last_note: f32,
 
+    /// Inputs gathered for the next engine block: how many frames, the
+    /// sums of frequency (with FM) and level, and whether a trigger rose.
+    gathered: usize,
+    frequency_sum: f32,
+    level_sum: f32,
+    rising: bool,
+    /// The last engine block, played out while the next one gathers.
+    ready_audio: [f32; ENGINE_BLOCK],
+    ready_aux: [f32; ENGINE_BLOCK],
+
     inputs: [[f32; MAX_BLOCK]; 4],
     connected: [bool; 4],
     audio: [f32; MAX_BLOCK],
@@ -150,6 +165,12 @@ impl MacroOscillator {
             voice: Voice::new(sample_rate, 0),
             last_hz: 440.0,
             last_note: 69.0,
+            gathered: 0,
+            frequency_sum: 0.0,
+            level_sum: 0.0,
+            rising: false,
+            ready_audio: [0.0; ENGINE_BLOCK],
+            ready_aux: [0.0; ENGINE_BLOCK],
             inputs: [[0.0; MAX_BLOCK]; 4],
             connected: [false; 4],
             audio: [0.0; MAX_BLOCK],
@@ -179,35 +200,62 @@ impl MacroOscillator {
         self.last_note
     }
 
-    /// The frequency for frames `range`: their mean, so audio-rate FM is
-    /// smoothed rather than sampled once per engine block.
-    fn block_frequency(&self, range: std::ops::Range<usize>) -> f32 {
-        let n = range.len() as f32;
-        let fm = &self.inputs[FREQUENCY_MOD_IN][range.clone()];
-        let fm = fm.iter().sum::<f32>() / n * self.frequency_mod_depth;
-        let base = if self.connected[FREQUENCY_IN] {
-            self.inputs[FREQUENCY_IN][range].iter().sum::<f32>() / n
+    /// Gathers frame `i` of the inputs into the next engine block.
+    fn gather(&mut self, i: usize) {
+        let mut hz = if self.connected[FREQUENCY_IN] {
+            self.inputs[FREQUENCY_IN][i]
         } else {
             self.frequency
         };
-        base + fm
+        if self.connected[FREQUENCY_MOD_IN] {
+            hz += self.inputs[FREQUENCY_MOD_IN][i] * self.frequency_mod_depth;
+        }
+        // Bounded, so a wild sample can't overflow the block's sum; one
+        // that is not a number holds the last pitch.
+        self.frequency_sum += if hz.is_nan() {
+            self.last_hz
+        } else {
+            hz.clamp(0.0, self.sample_rate)
+        };
+        let level = self.inputs[LEVEL_IN][i];
+        self.level_sum += if level.is_nan() {
+            0.0
+        } else {
+            level.clamp(-16.0, 16.0)
+        };
+        // Edges are tracked even while `level` rules, so unpatching it
+        // doesn't fire a stale trigger.
+        self.rising |= self.voice.trigger_edge(self.inputs[TRIGGER_IN][i]);
+        self.gathered += 1;
     }
 
-    /// What drives the gate over frames `range`.
-    fn block_gate(&mut self, range: std::ops::Range<usize>) -> Gate {
-        if self.connected[LEVEL_IN] {
-            let n = range.len() as f32;
-            let level = self.inputs[LEVEL_IN][range].iter().sum::<f32>() / n;
-            Gate::Level(level)
+    /// Renders the gathered inputs into the next engine block.
+    fn render_block(&mut self) {
+        let n = self.gathered.max(1) as f32;
+        let gate = if self.connected[LEVEL_IN] {
+            Gate::Level(self.level_sum / n)
         } else if self.connected[TRIGGER_IN] {
-            let mut rising = false;
-            for i in range {
-                rising |= self.voice.trigger_edge(self.inputs[TRIGGER_IN][i]);
+            Gate::Ping {
+                rising: self.rising,
             }
-            Gate::Ping { rising }
         } else {
             Gate::Open
-        }
+        };
+        let block = Block {
+            model: self.model,
+            note: self.note_for(self.frequency_sum / n),
+            harmonics: self.harmonics,
+            timbre: self.timbre,
+            morph: self.morph,
+            gate,
+            decay: self.decay,
+        };
+        self.voice
+            .render(&block, &mut self.ready_audio, &mut self.ready_aux);
+        self.gathered = 0;
+        self.frequency_sum = 0.0;
+        self.level_sum = 0.0;
+        self.rising = false;
     }
 }
 
@@ -218,30 +266,16 @@ impl Module for MacroOscillator {
 
     fn process(&mut self, frames: usize) -> bool {
         let frames = frames.min(MAX_BLOCK);
-        let mut start = 0;
-        while start < frames {
-            let end = (start + ENGINE_BLOCK).min(frames);
-            let hz = self.block_frequency(start..end);
-            let block = Block {
-                model: self.model,
-                note: self.note_for(hz),
-                harmonics: self.harmonics,
-                timbre: self.timbre,
-                morph: self.morph,
-                gate: self.block_gate(start..end),
-                decay: self.decay,
-            };
-            self.voice.render(
-                &block,
-                &mut self.audio[start..end],
-                &mut self.aux[start..end],
-            );
-            for i in start..end {
-                let level = self.level.next_value();
-                self.audio[i] = (self.audio[i] * level).clamp(-1.0, 1.0);
-                self.aux[i] = (self.aux[i] * level).clamp(-1.0, 1.0);
+        for i in 0..frames {
+            // Play the last block while gathering the next one.
+            let level = self.level.next_value();
+            let k = self.gathered;
+            self.audio[i] = (self.ready_audio[k] * level).clamp(-1.0, 1.0);
+            self.aux[i] = (self.ready_aux[k] * level).clamp(-1.0, 1.0);
+            self.gather(i);
+            if self.gathered == ENGINE_BLOCK {
+                self.render_block();
             }
-            start = end;
         }
         true
     }

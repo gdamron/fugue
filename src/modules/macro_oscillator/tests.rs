@@ -5,8 +5,12 @@ use serde_json::json;
 const SR: u32 = 48_000;
 
 fn build(config: serde_json::Value) -> Box<dyn Module + Send> {
+    build_at(SR, config)
+}
+
+fn build_at(sample_rate: u32, config: serde_json::Value) -> Box<dyn Module + Send> {
     match ModuleRegistry::default()
-        .build(TYPE_ID, SR, &config)
+        .build(TYPE_ID, sample_rate, &config)
         .expect("builds")
         .module
     {
@@ -42,12 +46,56 @@ fn virtual_analog_plays_at_its_frequency() {
     }
 }
 
+/// Plays a trigger every 0.1 s with a vibrato on `frequency_mod`, in
+/// host blocks of `block` frames.
+fn play_patched(block: usize, frames: usize) -> Vec<f32> {
+    let mut module = build(json!({ "frequency": 330.0, "frequency_mod_depth": 20.0 }));
+    module.set_input_connected(FREQUENCY_MOD_IN, true);
+    module.set_input_connected(TRIGGER_IN, true);
+    let mut out = Vec::with_capacity(frames);
+    while out.len() < frames {
+        let n = block.min(frames - out.len());
+        for i in 0..n {
+            let t = out.len() + i;
+            module.input_block_mut(FREQUENCY_MOD_IN)[i] = (t as f32 * 0.001).sin();
+            module.input_block_mut(TRIGGER_IN)[i] = if t % 4_800 < 100 { 1.0 } else { 0.0 };
+        }
+        module.process(n);
+        out.extend_from_slice(&module.output_block(0)[..n]);
+    }
+    out
+}
+
 #[test]
 fn block_size_does_not_change_the_sound() {
-    let config = json!({ "frequency": 330.0, "harmonics": 0.7 });
-    let a = render(build(config.clone()).as_mut(), 4_800, 256);
-    let b = render(build(config).as_mut(), 4_800, 12);
-    assert_eq!(a, b);
+    let reference = play_patched(64, 24_000);
+    for block in [1, 7, 12, 100, 1024] {
+        assert!(
+            play_patched(block, 24_000) == reference,
+            "blocks of {block}"
+        );
+    }
+}
+
+#[test]
+fn inputs_that_are_not_numbers_pass_without_sticking() {
+    let mut module = build(json!({}));
+    for port in [FREQUENCY_IN, FREQUENCY_MOD_IN, LEVEL_IN] {
+        module.set_input_connected(port, true);
+    }
+    for bad in [f32::NAN, f32::INFINITY, f32::MAX] {
+        for port in [FREQUENCY_IN, FREQUENCY_MOD_IN, LEVEL_IN] {
+            module.input_block_mut(port)[..64].fill(bad);
+        }
+        module.process(64);
+    }
+    module.input_block_mut(FREQUENCY_IN)[..64].fill(220.0);
+    module.input_block_mut(FREQUENCY_MOD_IN)[..64].fill(0.0);
+    module.input_block_mut(LEVEL_IN)[..64].fill(1.0);
+    let x = render(module.as_mut(), 9_600, 64);
+    assert!(x.iter().all(|s| s.is_finite()));
+    let peak = x[4_800..].iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    assert!(peak > 0.1, "recovers to {peak}");
 }
 
 #[test]
@@ -77,6 +125,26 @@ fn model_takes_a_name_in_config_and_refuses_an_unknown_position() {
     let mut module = build(json!({ "model": "virtual_analog" }));
     assert_eq!(module.get_control("model"), Ok(0.0));
     assert!(module.set_control("model", MODEL_COUNT as f32).is_err());
+}
+
+#[test]
+fn decay_keeps_its_time_at_other_sample_rates() {
+    for rate in [44_100, 96_000] {
+        let mut module = build_at(rate, json!({ "decay": 0.5 }));
+        module.set_input_connected(TRIGGER_IN, true);
+        module.input_block_mut(TRIGGER_IN)[..64].fill(1.0);
+        module.process(64);
+        module.input_block_mut(TRIGGER_IN)[..64].fill(0.0);
+        let at = |seconds: f32| (seconds * rate as f32) as usize;
+        let x = render(module.as_mut(), at(0.6), 64);
+        let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        let early = peak(&x[..at(0.05)]);
+        assert!(
+            peak(&x[at(0.4)..at(0.45)]) > early * 2e-3,
+            "{rate} Hz closes early"
+        );
+        assert!(peak(&x[at(0.55)..]) < early * 2e-3, "{rate} Hz rings on");
+    }
 }
 
 #[test]
