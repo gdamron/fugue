@@ -17,6 +17,8 @@ use self::controls::{BPM, ELAPSED, GATE_LENGTH, POSITION, RESET, TABLE};
 mod controls;
 mod inputs;
 mod outputs;
+#[cfg(test)]
+mod tests;
 mod timeline;
 
 /// Factory for constructing Clock modules from configuration.
@@ -71,6 +73,11 @@ impl ModuleFactory for ClockFactory {
 /// Outputs a gate on every beat (`beat`), and at subdivisions and multiples
 /// of it (`beat_x2`, `beat_x4`, `beat_d2`, `beat_d4`), for driving
 /// downstream modules. The engine has no metre: bars are the composer's.
+///
+/// The `bpm` output carries the tempo itself as a signal, so a module that
+/// times itself by tempo (a delay set in note values) can be patched to
+/// follow the clock rather than reading it from the invention. It changes
+/// on the sample the tempo does.
 ///
 /// # Tempo changes are phase-continuous
 ///
@@ -219,6 +226,7 @@ impl Clock {
             pwm(0.5),  // beat_d2: one pulse every 2 beats
             pwm(2.0),  // beat_x2: 2 pulses per beat
             pwm(4.0),  // beat_x4: 4 pulses per beat
+            self.bpm,
         );
     }
 
@@ -339,7 +347,7 @@ impl Module for Clock {
 
     fn gate_beats(&self, port: &str) -> Option<(u64, f64)> {
         let index = outputs::OUTPUTS.iter().position(|output| *output == port)?;
-        Some((self.instance, outputs::GATE_BEATS[index]))
+        Some((self.instance, *outputs::GATE_BEATS.get(index)?))
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
