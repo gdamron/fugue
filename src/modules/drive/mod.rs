@@ -117,7 +117,9 @@ fn oversampling_factor(oversampling: u32) -> Option<Factor> {
 ///   centre adds even harmonics, and a DC blocker after the shape removes
 ///   the offset it leaves
 /// - `level`: output level, 0 to 1
-/// - `auto_level`: off by default. On (for a standalone insert), a signal
+/// - `auto_level`: off by default, when the curves top out at about −2 dB
+///   (room for the oversampling filter's overshoot). On (for a standalone
+///   insert), a signal
 ///   peaking at −12 dBFS keeps its level as `drive` moves; louder signals
 ///   come out quieter as they saturate, and quieter ones through the curves
 ///   louder
