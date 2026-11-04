@@ -296,6 +296,7 @@ impl Default for ModuleRegistry {
         reg.register(ChanceFactory);
         reg.register(ClockFactory);
         reg.register(DivisiFactory);
+        reg.register(crate::modules::DrumMapFactory);
         reg.register(CodeFactory);
         reg.register(ControlSchedulerFactory);
         reg.register(OscillatorFactory);
