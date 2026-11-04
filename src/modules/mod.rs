@@ -10,6 +10,7 @@
 //! - [`StepSequencer`] / [`Step`] - Deterministic step sequencer
 //! - [`Adsr`] - Envelope generator
 //! - [`Vca`] - Voltage controlled amplifier
+//! - [`Noise`] - White and pink noise source
 //! - [`DacModule`] - Audio output sink module
 //! - [`AudioFileSink`] - Audio file recording sink module
 //! - [`AudioDriver`] / [`AudioBackend`] - Audio output backends
@@ -35,6 +36,7 @@ pub mod lfo;
 mod lock_scan_tests;
 pub mod melody;
 pub mod mixer;
+pub mod noise;
 pub mod oscillator;
 pub mod reverb;
 #[cfg(not(target_arch = "wasm32"))]
@@ -76,6 +78,7 @@ pub use lfo::Lfo;
 pub use melody::MelodyGenerator;
 
 pub use mixer::Mixer;
+pub use noise::{Noise, NoiseFactory};
 pub use oscillator::{Oscillator, OscillatorType};
 pub use reverb::Reverb;
 #[cfg(not(target_arch = "wasm32"))]

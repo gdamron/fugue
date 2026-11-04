@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 13] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 14] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -50,6 +50,11 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 13] = [
         file_name: "mixer_voices.json",
         title: "Mixer Voices",
         summary: "Layered oscillators mixed into one voice.",
+    },
+    ExampleDefinition {
+        file_name: "noise_surf_and_hats.json",
+        title: "Noise Surf and Hats",
+        summary: "Pink-noise surf under a filter sweep, with a white-noise hi-hat.",
     },
     ExampleDefinition {
         file_name: "step_sequencer.json",
@@ -210,6 +215,7 @@ mod tests {
                 "lfo_vibrato.json",
                 "lfo_tremolo_sync.json",
                 "mixer_voices.json",
+                "noise_surf_and_hats.json",
                 "step_sequencer.json",
                 "control_scheduler.json",
                 "development_file_patch.json",
