@@ -11,6 +11,7 @@
 //! - [`PinkFilter`] - Shapes white noise into pink (−3 dB/oct)
 //! - [`OnePole`] - First-order lowpass and highpass
 //! - [`DcBlocker`] - Removes a constant offset
+//! - [`LookaheadLimiter`] - A stereo-linked lookahead brickwall limiter
 //! - [`Oversampler`] - Runs a process at 2× or 4× the sample rate
 //! - [`BandLimitedOscillator`] - Saw, pulse, triangle and sine without aliasing, with hard sync
 //! - [`sine`] / [`cosine`] - Sine and cosine from a table built at compile time
@@ -35,6 +36,7 @@ mod drive;
 #[cfg(feature = "spectrogram")]
 mod fft;
 mod halfband;
+mod limiter;
 mod one_pole;
 mod oversampler;
 mod pink;
@@ -58,6 +60,7 @@ pub use delay_line::DelayLine;
 pub use drive::{DriveProcessor, DriveShape, REFERENCE_PEAK};
 #[cfg(feature = "spectrogram")]
 pub(crate) use fft::RealFft;
+pub use limiter::LookaheadLimiter;
 pub use one_pole::{OnePole, OnePoleOutput};
 pub use oversampler::{Factor, Oversampler};
 pub use pink::PinkFilter;
