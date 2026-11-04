@@ -305,6 +305,7 @@ impl Default for ModuleRegistry {
         reg.register(MixerFactory);
         reg.register(NoiseFactory);
         reg.register(DriveFactory);
+        reg.register(crate::modules::LimiterFactory);
         reg.register(AdsrFactory);
         reg.register(VcaFactory);
         reg.register(MelodyFactory);

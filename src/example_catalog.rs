@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 18] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 19] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -65,6 +65,11 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 18] = [
         file_name: "drive_bass_and_crushed_bells.json",
         title: "Drive: Bass and Crushed Bells",
         summary: "A bass warmed by asymmetric drive under bit-crushed bells.",
+    },
+    ExampleDefinition {
+        file_name: "limiter_hot_mix.json",
+        title: "Limiter: Hot Generative Mix",
+        summary: "Generative voices pushed past full scale, held under -1 dBFS by a limiter.",
     },
     ExampleDefinition {
         file_name: "step_sequencer.json",
@@ -238,6 +243,7 @@ mod tests {
                 "noise_surf_and_hats.json",
                 "delay_dotted_echo.json",
                 "drive_bass_and_crushed_bells.json",
+                "limiter_hot_mix.json",
                 "step_sequencer.json",
                 "chance_groove.json",
                 "drum_map.json",
