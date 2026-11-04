@@ -20,7 +20,6 @@ use crate::dsp::LookaheadLimiter;
 use crate::factory::{apply_control_keys, GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
-use crate::modules::mixer::gain_ramp_frames;
 use crate::traits::ControlMeta;
 use crate::{Module, MAX_BLOCK};
 
@@ -36,6 +35,9 @@ const LOOKAHEAD_KEY: ConfigKey = ConfigKey::float("lookahead");
 const DEFAULT_LOOKAHEAD: f32 = 0.005;
 const MIN_LOOKAHEAD: f32 = 0.0005;
 const MAX_LOOKAHEAD: f32 = 0.02;
+
+/// How long a ceiling change glides, in seconds.
+const CEILING_GLIDE: f32 = 0.02;
 
 const PORTS: [&str; 2] = ["audio_left", "audio_right"];
 
@@ -99,7 +101,9 @@ fn lookahead_frames(sample_rate: u32, seconds: f32) -> usize {
 ///   exceeds it. A change glides over 20 ms and, like the audio, is heard a
 ///   lookahead later
 /// - `release`: 0.001 to 2 s (default 0.1): after a peak has passed, the
-///   level recovers 63% of the way back in this time
+///   level recovers 63% of the way back in this time. The level also
+///   moves no faster than the lookahead allows, so a release shorter than
+///   the lookahead recovers in about a lookahead
 /// - `reduction` (read-only): the most the limiter pulled down during the
 ///   last block, in dB (0 when idle)
 ///
@@ -130,7 +134,7 @@ impl Limiter {
             sample_rate,
             lookahead_frames(sample_rate, lookahead),
             decibels_to_level(DEFAULT_CEILING),
-            gain_ramp_frames(sample_rate),
+            (CEILING_GLIDE * sample_rate as f32).round() as u32,
             DEFAULT_RELEASE,
         );
         let mut module = Self {
