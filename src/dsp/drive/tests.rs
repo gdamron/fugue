@@ -139,22 +139,22 @@ fn changing_shape_or_drive_mid_tone_never_jumps() {
 }
 
 #[test]
-fn moving_the_bias_on_bits_glides_the_offset() {
-    // At drive 1 the grid step is a quarter: a bias sweep crosses grid
-    // lines, and the offset taken off for it must glide, not snap.
-    let input = sine(110.0, 0.8, RATE as usize / 2);
-    let mut d = processor(DriveShape::Bits, 1.0);
-    let mut out = render(&mut d, &input[..9600], 64);
-    for (n, chunk) in input[9600..].chunks(64).enumerate() {
-        d.set_bias(-0.6 + 1.2 * n as f32 / 225.0);
-        out.extend(render(&mut d, chunk, 64));
+fn bits_and_rate_ignore_the_bias_so_moving_it_never_steps_the_level() {
+    // A bias snapped to the grid would step the level as it moved, on
+    // silence and quiet tails most of all.
+    let quiet = sine(110.0, 0.01, 9600);
+    for shape in [DriveShape::Bits, DriveShape::Rate] {
+        let mut still = processor(shape, 1.0);
+        let mut moved = processor(shape, 1.0);
+        let mut a = Vec::new();
+        let mut b = Vec::new();
+        for (n, chunk) in quiet.chunks(64).enumerate() {
+            moved.set_bias(-1.0 + 2.0 * n as f32 / 150.0);
+            a.extend(render(&mut still, chunk, 64));
+            b.extend(render(&mut moved, chunk, 64));
+        }
+        assert_eq!(a, b, "{shape:?}");
     }
-    let steady = [-0.6, 0.0, 0.6]
-        .iter()
-        .map(|&bias| steady_step(DriveShape::Bits, &[1.0], bias, &input))
-        .fold(0.0, f32::max);
-    let step = largest_step(&out[4800..]);
-    assert!(step <= 1.25 * steady + 0.01, "step {step}, steady {steady}");
 }
 
 #[test]

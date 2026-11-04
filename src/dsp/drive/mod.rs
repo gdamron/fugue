@@ -112,9 +112,6 @@ pub struct DriveProcessor {
     active: [bool; DriveShape::COUNT],
     shapers: [Waveshaper; CURVE_COUNT],
     hold: SampleHold,
-    /// What bits take off for the bias, gliding: the grid snaps the bias to
-    /// a step, and a snap of the offset would click.
-    bits_offset: LinearRamp,
     dc: DcBlocker,
     /// The input, delayed to line up with the oversampled path.
     dry_line: DelayLine,
@@ -155,7 +152,6 @@ impl DriveProcessor {
             active: [false; DriveShape::COUNT],
             shapers,
             hold: SampleHold::new(),
-            bits_offset: LinearRamp::new(0.0, glide_frames),
             dc: DcBlocker::new(sample_rate),
             dry_line: DelayLine::new(latency + 1),
             crush_line: DelayLine::new(latency + 1),
@@ -199,8 +195,8 @@ impl DriveProcessor {
         self.post.set_tilt(tilt);
     }
 
-    /// An offset into the curves and bits, −1 to 1 (clamped): off centre
-    /// adds even harmonics. The offset it leaves is removed. Rate ignores
+    /// An offset into the curves, −1 to 1 (clamped): off centre adds even
+    /// harmonics. The offset it leaves is removed. Bits and rate ignore
     /// it.
     pub fn set_bias(&mut self, bias: f32) {
         self.bias.set_target(signed(bias));
@@ -232,7 +228,6 @@ impl DriveProcessor {
             &mut self.auto_level,
             &mut self.level,
             &mut self.mix,
-            &mut self.bits_offset,
         ];
         for ramp in ramps.into_iter().chain(&mut self.weights) {
             ramp.settle();
@@ -259,9 +254,9 @@ impl DriveProcessor {
             if self.active[bits.index()] {
                 let (step, compensation) = self.calibration.at(bits, frame.drive);
                 let gain = 1.0 + frame.auto_level * (compensation - 1.0);
-                self.bits_offset.set_target(quantize(frame.bias, step));
-                let offset = self.bits_offset.next_value();
-                let shaped = quantize(self.crush[i] + frame.bias, step) - offset;
+                // No bias: an offset snapped to the grid would step the
+                // level whenever it moved.
+                let shaped = quantize(self.crush[i], step);
                 wet += frame.weights[bits.index()] * gain * shaped;
             }
             if self.active[rate.index()] {
@@ -326,11 +321,7 @@ impl DriveProcessor {
             }
             match shape {
                 DriveShape::Rate => self.hold.reset(),
-                DriveShape::Bits => {
-                    let first = self.frames[0];
-                    let (step, _) = self.calibration.at(shape, first.drive);
-                    self.bits_offset.snap(quantize(first.bias, step));
-                }
+                DriveShape::Bits => {}
                 _ => self.shapers[n].rest_at(self.frames[0].bias),
             }
         }
