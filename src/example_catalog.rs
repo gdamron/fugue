@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 16] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 17] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -55,6 +55,11 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 16] = [
         file_name: "noise_surf_and_hats.json",
         title: "Noise Surf and Hats",
         summary: "Pink-noise surf under a filter sweep, with a white-noise hi-hat.",
+    },
+    ExampleDefinition {
+        file_name: "delay_dotted_echo.json",
+        title: "Dotted Eighth Echo",
+        summary: "A plucked line through a dotted-eighth delay timed by the clock.",
     },
     ExampleDefinition {
         file_name: "step_sequencer.json",
@@ -226,6 +231,7 @@ mod tests {
                 "lfo_tremolo_sync.json",
                 "mixer_voices.json",
                 "noise_surf_and_hats.json",
+                "delay_dotted_echo.json",
                 "step_sequencer.json",
                 "chance_groove.json",
                 "drum_map.json",
