@@ -197,3 +197,59 @@ fn a_fractional_time_keeps_the_output_within_one() {
     let out = run(&mut delay, &input);
     assert!(out.iter().all(|v| v.abs() <= 1.0));
 }
+
+/// Rising zero crossings of `signal`, interpolated between samples.
+fn crossings(signal: &[f32]) -> Vec<f32> {
+    (1..signal.len())
+        .filter(|&n| signal[n - 1] < 0.0 && signal[n] >= 0.0)
+        .map(|n| (n - 1) as f32 + signal[n - 1] / (signal[n - 1] - signal[n]))
+        .collect()
+}
+
+#[test]
+fn a_slewing_delay_starts_at_a_time_written_before_it_plays() {
+    let sine: Vec<f32> = (0..RATE as usize)
+        .map(|n| 0.5 * (std::f32::consts::TAU * 440.0 * n as f32 / RATE as f32).sin())
+        .collect();
+    let mut written = Delay::new(RATE, 1.0);
+    written.set_control("glide", 1.0).unwrap();
+    written.set_control("time", 0.15).unwrap();
+    written.set_control("feedback", 0.5).unwrap();
+    written.process(0);
+    let mut built = Delay::new(RATE, 1.0);
+    built.set_control("glide", 1.0).unwrap();
+    built.set_control("time", 0.15).unwrap();
+    built.set_control("feedback", 0.5).unwrap();
+    built.heads.settle();
+    built.feedback.settle();
+    let heard = run(&mut written, &sine);
+    assert_eq!(heard, run(&mut built, &sine));
+    // The echo is at the sine's pitch from its first cycle: no slew in.
+    let periods: Vec<f32> = crossings(&heard[7_200..9_600])
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .collect();
+    let expected = RATE as f32 / 440.0;
+    assert!(periods.iter().all(|p| (p / expected - 1.0).abs() < 1e-3));
+}
+
+#[test]
+fn a_patched_tempo_on_the_first_block_lands_at_once() {
+    let mut delay = Delay::new(RATE, 1.0);
+    delay.set_control("glide", 1.0).unwrap();
+    delay.set_control("division", 3.0).unwrap();
+    let bpm = INPUTS.iter().position(|&port| port == "bpm").unwrap();
+    delay.set_input_connected(bpm, true);
+    delay.input_block_mut(bpm).fill(90.0);
+    let mut input = vec![0.0; 48_000];
+    input[0] = 0.5;
+    let mut out = Vec::new();
+    for chunk in input.chunks(MAX_BLOCK) {
+        delay.input_block_mut(0)[..chunk.len()].copy_from_slice(chunk);
+        delay.input_block_mut(bpm)[..chunk.len()].fill(90.0);
+        delay.process(chunk.len());
+        out.extend_from_slice(&delay.output_block(0)[..chunk.len()]);
+    }
+    // A quarter at 90 bpm is 32,000 samples, exactly, from the start.
+    assert_eq!(out[32_000], 0.5);
+}

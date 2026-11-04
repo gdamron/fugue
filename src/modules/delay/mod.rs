@@ -195,6 +195,10 @@ pub struct Delay {
     cells: Arc<ControlCells>,
     inputs: DelayInputs,
     out: [f32; MAX_BLOCK],
+    /// Whether a frame has been played. Until then a change of time or
+    /// feedback (a development's starting values, a patched tempo) lands
+    /// at once instead of gliding there.
+    heard: bool,
 }
 
 impl Delay {
@@ -230,6 +234,7 @@ impl Delay {
             cells,
             inputs: DelayInputs::new(),
             out: [0.0; MAX_BLOCK],
+            heard: false,
         };
         for control in [TIME, DIVISION, BPM, FEEDBACK, GLIDE, TIME_MOD_DEPTH, HOLD] {
             if let Some(value) = delay.cells.load(control) {
@@ -280,6 +285,12 @@ impl Module for Delay {
 
     fn process(&mut self, frames: usize) -> bool {
         self.heads.retarget(self.time_samples());
+        if !self.heard && frames > 0 {
+            // The first frame plays where the controls and tempo are now.
+            self.heads.settle();
+            self.feedback.settle();
+            self.heard = true;
+        }
         let modulation = self.time_mod_depth * self.sample_rate as f32;
         for i in 0..frames {
             let reads = self.heads.next();
