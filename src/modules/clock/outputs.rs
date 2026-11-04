@@ -2,9 +2,11 @@
 
 use crate::MAX_BLOCK;
 
-pub const OUTPUTS: [&str; 5] = ["beat", "beat_d4", "beat_d2", "beat_x2", "beat_x4"];
+/// The gate outputs, then `bpm`, the tempo as a signal.
+pub const OUTPUTS: [&str; 6] = ["beat", "beat_d4", "beat_d2", "beat_x2", "beat_x4", "bpm"];
 
-/// How many beats apart each output's gates rise, in [`OUTPUTS`] order.
+/// How many beats apart each gate output's gates rise, in [`OUTPUTS`]
+/// order. `bpm` carries no gates, so it has no entry.
 pub(super) const GATE_BEATS: [f64; 5] = [1.0, 4.0, 2.0, 0.5, 0.25];
 
 pub struct ClockOutputs {
@@ -13,6 +15,7 @@ pub struct ClockOutputs {
     beat_d2: [f32; MAX_BLOCK],
     beat_x2: [f32; MAX_BLOCK],
     beat_x4: [f32; MAX_BLOCK],
+    bpm: [f32; MAX_BLOCK],
 }
 
 impl ClockOutputs {
@@ -23,10 +26,12 @@ impl ClockOutputs {
             beat_d2: [0.0; MAX_BLOCK],
             beat_x2: [0.0; MAX_BLOCK],
             beat_x4: [0.0; MAX_BLOCK],
+            bpm: [0.0; MAX_BLOCK],
         }
     }
 
-    /// Writes all five beat outputs for frame `i`.
+    /// Writes all five beat outputs and the tempo for frame `i`.
+    #[allow(clippy::too_many_arguments)]
     #[inline]
     pub fn set_all(
         &mut self,
@@ -36,7 +41,9 @@ impl ClockOutputs {
         beat_d2: f32,
         beat_x2: f32,
         beat_x4: f32,
+        bpm: f32,
     ) {
+        self.bpm[i] = bpm;
         self.beat[i] = beat;
         self.beat_d4[i] = beat_d4;
         self.beat_d2[i] = beat_d2;
@@ -52,7 +59,8 @@ impl ClockOutputs {
             1 => &self.beat_d4,
             2 => &self.beat_d2,
             3 => &self.beat_x2,
-            _ => &self.beat_x4,
+            4 => &self.beat_x4,
+            _ => &self.bpm,
         }
     }
 
@@ -63,6 +71,7 @@ impl ClockOutputs {
             "beat_d2" => Ok(self.beat_d2[0]),
             "beat_x2" => Ok(self.beat_x2[0]),
             "beat_x4" => Ok(self.beat_x4[0]),
+            "bpm" => Ok(self.bpm[0]),
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }
