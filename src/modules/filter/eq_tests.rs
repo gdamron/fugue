@@ -79,3 +79,12 @@ fn shelves_stop_steepening_past_q_2() {
     at_max.design(FilterType::LowShelf, 500.0, 12.0, 18.0);
     assert_eq!(at_two.coefficients.k, at_max.coefficients.k);
 }
+
+#[test]
+fn a_notch_does_not_redesign_for_a_boost_it_ignores() {
+    let mut design = EqDesign::new(RATE);
+    design.design(FilterType::Notch, 1000.0, 0.0, 2.0);
+    design.coefficients.k = f32::NAN;
+    design.design(FilterType::Notch, 1000.0, 6.0, 2.0);
+    assert!(design.coefficients.k.is_nan());
+}

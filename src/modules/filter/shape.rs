@@ -134,6 +134,12 @@ impl EqDesign {
     /// and `q`, unless nothing moved.
     #[inline(always)]
     pub(super) fn design(&mut self, filter_type: FilterType, cutoff: f32, boost: f32, q: f32) {
+        // A notch ignores boost, so a boost glide costs it nothing.
+        let boost = if filter_type == FilterType::Notch && !self.boost.is_nan() {
+            self.boost
+        } else {
+            boost
+        };
         let same_shape = filter_type == self.filter_type && q == self.q;
         if same_shape && cutoff == self.cutoff && boost == self.boost {
             return;

@@ -105,7 +105,7 @@ const DECLS: &[ControlDecl] = &[
             max: MAX_Q,
         },
         RtValue::F32(DEFAULT_Q),
-        "Width of a bell or notch, steepness of a shelf",
+        "Width of a bell or notch; steepness of a shelf (which stops at 2)",
     )
     .log()
     .precision(2)
