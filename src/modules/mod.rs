@@ -30,6 +30,7 @@ pub mod clock;
 pub mod code;
 pub mod control_scheduler;
 pub mod dac;
+pub mod delay;
 pub mod divisi;
 pub mod drum_map;
 pub mod filter;
@@ -77,6 +78,7 @@ pub use dac::{
     default_sample_rate, AudioBackend, AudioDiagnostics, AudioDiagnosticsSnapshot, AudioDriver,
     DacModule, NullBackend, StreamErrorKind,
 };
+pub use delay::{Delay, DelayFactory};
 pub use filter::{Filter, FilterType};
 pub use lfo::Lfo;
 pub use melody::MelodyGenerator;
