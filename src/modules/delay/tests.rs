@@ -253,3 +253,19 @@ fn a_patched_tempo_on_the_first_block_lands_at_once() {
     // A quarter at 90 bpm is 32,000 samples, exactly, from the start.
     assert_eq!(out[32_000], 0.5);
 }
+
+#[test]
+fn feedback_written_before_it_plays_holds_from_the_first_repeat() {
+    // 96 samples, shorter than the feedback ramp, so a ramping feedback
+    // would shrink the first repeats.
+    let mut delay = Delay::new(RATE, 1.0);
+    delay.set_control("time", 96.0 / RATE as f32).unwrap();
+    delay.set_control("feedback", 0.5).unwrap();
+    delay.process(0);
+    let mut input = vec![0.0; 480];
+    input[0] = 0.5;
+    let out = run(&mut delay, &input);
+    assert_eq!(out[96], 0.5);
+    assert!((out[192] - 0.25).abs() < 1e-6, "second repeat {}", out[192]);
+    assert!((out[288] - 0.125).abs() < 1e-6, "third repeat {}", out[288]);
+}
