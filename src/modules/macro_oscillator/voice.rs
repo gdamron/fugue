@@ -9,6 +9,7 @@
 use super::engine::{semitones_to_ratio, EngineParameters, ENGINE_BLOCK};
 use super::engines::{Engines, MODEL_COUNT};
 use super::lpg::{LowPassGate, LpgEnvelope, TUNED_RATE};
+use crate::dsp::BlockRamp;
 
 /// How long a model change takes to crossfade, in seconds.
 const CROSSFADE_SECONDS: f32 = 0.02;
@@ -17,6 +18,10 @@ const CROSSFADE_SECONDS: f32 = 0.02;
 /// one. The middle is the classic plucked sound.
 const LPG_COLOUR: f32 = 0.5;
 
+/// How long patching or unpatching `trigger` and `level` takes to fade
+/// between the gated and the ungated sound, in seconds.
+const BYPASS_SECONDS: f32 = 0.005;
+
 /// A trigger is high above this and low again below [`TRIGGER_LOW`].
 const TRIGGER_HIGH: f32 = 0.3;
 const TRIGGER_LOW: f32 = 0.1;
@@ -24,7 +29,7 @@ const TRIGGER_LOW: f32 = 0.1;
 /// What drives the low-pass gate this block.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Gate {
-    /// Neither `trigger` nor `level` is patched: the gate stays open.
+    /// Neither `trigger` nor `level` is patched: the gate is bypassed.
     Open,
     /// `trigger` is patched alone: each rising edge pings the gate.
     Ping { rising: bool },
@@ -57,9 +62,24 @@ pub(super) struct Voice {
     envelope: LpgEnvelope,
     gate_audio: LowPassGate,
     gate_aux: LowPassGate,
+    /// How far the gate is bypassed, 0 to 1: it fades rather than cuts
+    /// when `trigger` or `level` is patched or unpatched.
+    bypass: BlockRamp,
+    /// How far `bypass` moves per frame.
+    bypass_step: f32,
+    /// Whether a block has been rendered: the first starts at its own
+    /// bypass, with no fade.
+    started: bool,
+    /// The `decay` the gate coefficients below were computed for, and the
+    /// coefficients per block of 12 frames at the tuned rate.
+    decay: f32,
+    short_decay: f32,
+    decay_tail: f32,
     trigger_high: bool,
     out: [f32; ENGINE_BLOCK],
     aux: [f32; ENGINE_BLOCK],
+    dry: [f32; ENGINE_BLOCK],
+    dry_aux: [f32; ENGINE_BLOCK],
 }
 
 impl Voice {
@@ -77,9 +97,17 @@ impl Voice {
             envelope: LpgEnvelope::new(),
             gate_audio: LowPassGate::new(sample_rate),
             gate_aux: LowPassGate::new(sample_rate),
+            bypass: BlockRamp::new(1.0),
+            bypass_step: 1.0 / (BYPASS_SECONDS * rate),
+            started: false,
+            decay: f32::NAN,
+            short_decay: 0.0,
+            decay_tail: 0.0,
             trigger_high: false,
             out: [0.0; ENGINE_BLOCK],
             aux: [0.0; ENGINE_BLOCK],
+            dry: [0.0; ENGINE_BLOCK],
+            dry_aux: [0.0; ENGINE_BLOCK],
         }
     }
 
@@ -105,7 +133,11 @@ impl Voice {
         audio.fill(0.0);
         aux.fill(0.0);
 
-        let accent = match block.gate {
+        let gate = match block.gate {
+            Gate::Level(level) => Gate::Level(compress_level(level)),
+            gate => gate,
+        };
+        let accent = match gate {
             Gate::Level(level) => level,
             _ => 0.8,
         };
@@ -118,7 +150,7 @@ impl Voice {
             accent,
         };
         self.mix_engines(block.model, &p, audio, aux);
-        self.apply_gate(block, &p, audio, aux);
+        self.apply_gate(gate, block.decay, &p, audio, aux);
     }
 
     /// Runs every engine with a share of the output and sums them, moving
@@ -160,24 +192,41 @@ impl Voice {
 
     fn apply_gate(
         &mut self,
-        block: &Block,
+        gate: Gate,
+        decay: f32,
         p: &EngineParameters,
         audio: &mut [f32],
         aux: &mut [f32],
     ) {
+        let size = audio.len();
+        if decay.to_bits() != self.decay.to_bits() {
+            self.decay = decay;
+            self.short_decay = 0.05 * semitones_to_ratio(-96.0 * decay);
+            self.decay_tail =
+                0.005 * semitones_to_ratio(-72.0 * decay + 12.0 * LPG_COLOUR) - self.short_decay;
+        }
         // The gate's coefficients are per 12 frames at 48 kHz.
-        let scale = audio.len() as f32 / ENGINE_BLOCK as f32 * self.rate_scale;
-        let short_decay = 0.05 * semitones_to_ratio(-96.0 * block.decay) * scale;
-        let decay_tail =
-            0.005 * semitones_to_ratio(-72.0 * block.decay + 12.0 * LPG_COLOUR) * scale
-                - short_decay;
+        let scale = size as f32 / ENGINE_BLOCK as f32 * self.rate_scale;
+        let (short_decay, decay_tail) = (self.short_decay * scale, self.decay_tail * scale);
         let rise = (0.6 * scale).min(1.0);
-        match block.gate {
+        let bypass_target = if gate == Gate::Open { 1.0 } else { 0.0 };
+        if !self.started {
+            self.started = true;
+            self.bypass.snap(bypass_target);
+        }
+        let from = self.bypass.value();
+        let travel = self.bypass_step * size as f32;
+        let to = if bypass_target > from {
+            (from + travel).min(1.0)
+        } else {
+            (from - travel).max(0.0)
+        };
+        match gate {
+            // The gate opens with the bypass, so an unpatch fades in at the
+            // bypass's pace and a trigger patched later decays from open.
             Gate::Open => {
-                self.envelope.reset();
-                self.gate_audio.reset();
-                self.gate_aux.reset();
-                return;
+                self.envelope
+                    .process_level(to, short_decay, decay_tail, LPG_COLOUR, rise);
             }
             Gate::Ping { rising } => {
                 if rising {
@@ -192,7 +241,6 @@ impl Voice {
                     .process_ping(attack, short_decay, decay_tail, LPG_COLOUR, rise);
             }
             Gate::Level(level) => {
-                let level = (1.3 * level / (0.3 + level.abs())).clamp(0.0, 1.0);
                 self.envelope
                     .process_level(level, short_decay, decay_tail, LPG_COLOUR, rise);
             }
@@ -202,8 +250,42 @@ impl Voice {
             self.envelope.cutoff(),
             self.envelope.hf_bleed(),
         );
+        if from == 1.0 && to == 1.0 {
+            // Bypassed: the gate still runs, so it is ready when patched.
+            self.dry[..size].copy_from_slice(audio);
+            self.dry_aux[..size].copy_from_slice(aux);
+            self.gate_audio
+                .process(gain, cutoff, bleed, &mut self.dry[..size]);
+            self.gate_aux
+                .process(gain, cutoff, bleed, &mut self.dry_aux[..size]);
+            self.bypass.snap(1.0);
+            return;
+        }
+        self.dry[..size].copy_from_slice(audio);
+        self.dry_aux[..size].copy_from_slice(aux);
         self.gate_audio.process(gain, cutoff, bleed, audio);
         self.gate_aux.process(gain, cutoff, bleed, aux);
+        if from == 0.0 && to == 0.0 {
+            self.bypass.snap(0.0);
+            return;
+        }
+        let steps = self.bypass.steps(to, size);
+        for (i, b) in steps.enumerate() {
+            audio[i] += (self.dry[i] - audio[i]) * b;
+            aux[i] += (self.dry_aux[i] - aux[i]) * b;
+        }
+    }
+}
+
+/// A `level` input bent the way a vactrol responds: quick to open, then
+/// leveling off, 0 to 1. A level that is not a number counts as closed.
+fn compress_level(level: f32) -> f32 {
+    let level = level.clamp(-16.0, 16.0);
+    let level = 1.3 * level / (0.3 + level.abs());
+    if level.is_finite() {
+        level.clamp(0.0, 1.0)
+    } else {
+        0.0
     }
 }
 
@@ -257,6 +339,55 @@ mod tests {
         let late = audio.iter().fold(0.0f32, |m, s| m.max(s.abs()));
         assert!(early > 0.1, "sounds at {early}");
         assert!(late < 1e-3, "fades to {late}");
+    }
+
+    fn peak(voice: &mut Voice, gate: Gate) -> f32 {
+        let (mut audio, mut aux) = ([0.0; 12], [0.0; 12]);
+        voice.render(&block(0, gate), &mut audio, &mut aux);
+        audio.iter().fold(0.0f32, |m, s| m.max(s.abs()))
+    }
+
+    /// The RMS of `blocks` blocks of 12 (eight is 2 ms).
+    fn rms(voice: &mut Voice, gate: Gate, blocks: usize) -> f32 {
+        let (mut audio, mut aux) = ([0.0; 12], [0.0; 12]);
+        let mut sum = 0.0;
+        for _ in 0..blocks {
+            voice.render(&block(0, gate), &mut audio, &mut aux);
+            sum += audio.iter().map(|s| s * s).sum::<f32>();
+        }
+        (sum / (12 * blocks) as f32).sqrt()
+    }
+
+    #[test]
+    fn patching_a_trigger_fades_rather_than_cuts() {
+        let mut voice = Voice::new(48_000, 0);
+        rms(&mut voice, Gate::Open, 400);
+        let open = rms(&mut voice, Gate::Open, 8);
+        // Patched: the sound decays from where it was, not from silence.
+        let ping = Gate::Ping { rising: false };
+        let first = rms(&mut voice, ping, 8);
+        assert!(first > 0.5 * open, "{first} after {open}");
+        rms(&mut voice, ping, 2_000);
+        // Unpatched: the ungated sound fades in over a few milliseconds.
+        let first = rms(&mut voice, Gate::Open, 8);
+        assert!(first < 0.6 * open, "{first} straight after unpatching");
+        rms(&mut voice, Gate::Open, 40);
+        let back = rms(&mut voice, Gate::Open, 8);
+        assert!(back > 0.8 * open, "{back}, open {open}");
+    }
+
+    #[test]
+    fn a_level_that_is_not_a_number_does_not_stick() {
+        let mut voice = Voice::new(48_000, 0);
+        peak(&mut voice, Gate::Level(f32::NAN));
+        peak(&mut voice, Gate::Level(f32::INFINITY));
+        let mut loud = 0.0f32;
+        for _ in 0..400 {
+            let p = peak(&mut voice, Gate::Level(1.0));
+            assert!(p.is_finite());
+            loud = loud.max(p);
+        }
+        assert!(loud > 0.1, "recovers to {loud}");
     }
 
     #[test]

@@ -58,7 +58,7 @@ impl LpgEnvelope {
         rise: f32,
     ) {
         if self.ramp_up {
-            self.vactrol_state += attack;
+            self.vactrol_state += attack.min(1.0);
             if self.vactrol_state >= 1.0 {
                 self.vactrol_state = 1.0;
                 self.ramp_up = false;
@@ -92,7 +92,14 @@ impl LpgEnvelope {
         } else {
             short_decay + (1.0 - state_4) * decay_tail
         };
-        self.vactrol_state += coefficient * error;
+        // A fast decay can overshoot past 0 at a low sample rate: hold it
+        // to one step.
+        self.vactrol_state += coefficient.min(1.0) * error;
+        // A closed gate settles at exactly 0 rather than creeping through
+        // subnormals, and a bad level can't leave it stuck.
+        if !self.vactrol_state.is_finite() || self.vactrol_state.abs() < 1e-9 {
+            self.vactrol_state = 0.0;
+        }
 
         self.gain = self.vactrol_state;
         self.frequency = 0.003 + 0.3 * state_4 + hf * 0.04;
