@@ -38,6 +38,7 @@ pub mod drum_map;
 pub mod filter;
 pub(crate) mod indexed_names;
 pub mod lfo;
+pub mod limiter;
 #[cfg(test)]
 mod lock_scan_tests;
 pub mod melody;
@@ -83,6 +84,7 @@ pub use dac::{
 pub use delay::{Delay, DelayFactory};
 pub use filter::{Filter, FilterType};
 pub use lfo::Lfo;
+pub use limiter::{Limiter, LimiterFactory};
 pub use melody::MelodyGenerator;
 
 pub use drive::{Drive, DriveFactory};

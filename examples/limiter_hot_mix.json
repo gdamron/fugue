@@ -1,0 +1,71 @@
+{
+  "version": "1.0.0",
+  "title": "Limiter: Hot Generative Mix",
+  "description": "Two generative voices and a bass pushed well past full scale, held under -1 dBFS by a lookahead limiter before the dac. Turn the mixer's master up or down, or the limiter's ceiling and release, and watch its reduction control.",
+  "modules": [
+    { "id": "clock", "type": "clock", "config": { "bpm": 112.0 } },
+    {
+      "id": "lead_melody",
+      "type": "melody",
+      "config": { "root_note": 67, "degrees": [0, 2, 4, 7, 9, 12], "note_weights": [1.2, 0.8, 1.0, 1.2, 0.8, 0.6], "seed": 7 }
+    },
+    { "id": "lead_osc", "type": "oscillator", "config": { "waveform": "square" } },
+    {
+      "id": "lead_filter",
+      "type": "filter",
+      "config": { "filter_type": "lowpass", "cutoff": 1800.0, "resonance": 0.4, "cutoff_mod_depth": 2500.0 }
+    },
+    {
+      "id": "lead_env",
+      "type": "adsr",
+      "config": { "attack": 0.003, "decay": 0.12, "sustain": 0.4, "release": 0.15 }
+    },
+    { "id": "lead_vca", "type": "vca" },
+    {
+      "id": "bass_melody",
+      "type": "melody",
+      "config": { "root_note": 43, "degrees": [0, 7, 12], "note_weights": [2.0, 1.0, 0.7], "seed": 11 }
+    },
+    { "id": "bass_osc", "type": "oscillator", "config": { "waveform": "sawtooth" } },
+    {
+      "id": "bass_filter",
+      "type": "filter",
+      "config": { "filter_type": "lowpass", "cutoff": 400.0, "resonance": 0.3, "cutoff_mod_depth": 1200.0 }
+    },
+    {
+      "id": "bass_env",
+      "type": "adsr",
+      "config": { "attack": 0.004, "decay": 0.2, "sustain": 0.6, "release": 0.1 }
+    },
+    { "id": "bass_vca", "type": "vca" },
+    {
+      "id": "mixer",
+      "type": "mixer",
+      "config": { "channel_count": 2, "levels": [1.0, 1.0], "pans": [0.2, -0.1], "master": 1.6 }
+    },
+    { "id": "limiter", "type": "limiter", "config": { "ceiling": -1.0, "release": 0.12 } },
+    { "id": "dac", "type": "dac" }
+  ],
+  "connections": [
+    { "from": "clock", "from_port": "beat_x2", "to": "lead_melody", "to_port": "gate" },
+    { "from": "lead_melody", "from_port": "frequency", "to": "lead_osc", "to_port": "frequency" },
+    { "from": "lead_melody", "from_port": "gate", "to": "lead_env", "to_port": "gate" },
+    { "from": "lead_osc", "from_port": "audio", "to": "lead_filter", "to_port": "audio" },
+    { "from": "lead_env", "from_port": "envelope", "to": "lead_filter", "to_port": "cutoff_mod" },
+    { "from": "lead_filter", "from_port": "audio", "to": "lead_vca", "to_port": "audio" },
+    { "from": "lead_env", "from_port": "envelope", "to": "lead_vca", "to_port": "level" },
+    { "from": "lead_vca", "from_port": "audio", "to": "mixer", "to_port": "audio.0" },
+    { "from": "clock", "from_port": "beat", "to": "bass_melody", "to_port": "gate" },
+    { "from": "bass_melody", "from_port": "frequency", "to": "bass_osc", "to_port": "frequency" },
+    { "from": "bass_melody", "from_port": "gate", "to": "bass_env", "to_port": "gate" },
+    { "from": "bass_osc", "from_port": "audio", "to": "bass_filter", "to_port": "audio" },
+    { "from": "bass_env", "from_port": "envelope", "to": "bass_filter", "to_port": "cutoff_mod" },
+    { "from": "bass_filter", "from_port": "audio", "to": "bass_vca", "to_port": "audio" },
+    { "from": "bass_env", "from_port": "envelope", "to": "bass_vca", "to_port": "level" },
+    { "from": "bass_vca", "from_port": "audio", "to": "mixer", "to_port": "audio.1" },
+    { "from": "mixer", "from_port": "audio_left", "to": "limiter", "to_port": "audio_left" },
+    { "from": "mixer", "from_port": "audio_right", "to": "limiter", "to_port": "audio_right" },
+    { "from": "limiter", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
+    { "from": "limiter", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
+  ]
+}
