@@ -31,6 +31,7 @@ pub mod code;
 pub mod control_scheduler;
 pub mod dac;
 pub mod divisi;
+pub mod drum_map;
 pub mod filter;
 pub(crate) mod indexed_names;
 pub mod lfo;
