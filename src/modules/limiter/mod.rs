@@ -98,8 +98,10 @@ fn lookahead_frames(sample_rate: u32, seconds: f32) -> usize {
 ///
 /// # Controls
 /// - `ceiling`: −24 to 0 dBFS (default −1): no output sample's magnitude
-///   exceeds it. A change glides over 20 ms and, like the audio, is heard a
-///   lookahead later
+///   exceeds it. A change glides over 20 ms and applies to the audio
+///   entering from then on, which is heard a lookahead later; a lower
+///   ceiling starts bringing the level down up to a lookahead ahead of it,
+///   as for any peak
 /// - `release`: 0.001 to 2 s (default 0.1): after a peak has passed, the
 ///   level recovers 63% of the way back in this time. The level also
 ///   moves no faster than the lookahead allows, so a release shorter than
