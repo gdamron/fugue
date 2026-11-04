@@ -1,4 +1,4 @@
-//! The filter's controls, config and responses.
+//! The filter's controls, config and classic responses.
 
 use super::*;
 use crate::factory::ModuleFactory;
@@ -9,7 +9,7 @@ fn test_filter_controls() {
 
     // Test control metadata
     let controls = filter.controls();
-    assert_eq!(controls.len(), 4);
+    assert_eq!(controls.len(), 6);
     assert_eq!(controls[0].key, "cutoff");
     assert_eq!(controls[1].key, "resonance");
     assert_eq!(controls[2].key, "filter_type");
@@ -108,6 +108,13 @@ fn every_filter_type_spelling_still_loads() {
         ("band_pass", "bandpass"),
         ("bpf", "bandpass"),
         ("band", "bandpass"),
+        ("bell", "bell"),
+        ("peak", "bell"),
+        ("lowshelf", "lowshelf"),
+        ("low_shelf", "lowshelf"),
+        ("high_shelf", "highshelf"),
+        ("notch", "notch"),
+        ("band_stop", "notch"),
     ] {
         let config = serde_json::json!({ "filter_type": spelled });
         let built = registry.build("filter", 48_000, &config).unwrap();
@@ -116,7 +123,7 @@ fn every_filter_type_spelling_still_loads() {
         surface.set_control("filter_type", spelled.into()).unwrap();
         assert_eq!(surface.get_control("filter_type").unwrap(), read.into());
     }
-    let config = serde_json::json!({ "filter_type": "notch" });
+    let config = serde_json::json!({ "filter_type": "allpass" });
     assert!(registry.build("filter", 48_000, &config).is_err());
     // Anything but text still leaves the default.
     for config in [
@@ -157,6 +164,6 @@ fn controls_clamp_as_they_always_did() {
     assert_eq!(filter.get_control("resonance").unwrap(), 1.0);
     filter.set_control("cutoff_mod_depth", -1.0).unwrap();
     assert_eq!(filter.get_control("cutoff_mod_depth").unwrap(), 0.0);
-    assert!(filter.set_control("filter_type", 3.0).is_err());
+    assert!(filter.set_control("filter_type", 7.0).is_err());
     assert!(filter.set_control("cutoff", f32::NAN).is_err());
 }

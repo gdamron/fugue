@@ -9,6 +9,13 @@
 //! - **Low-pass (LPF)** - Removes frequencies above cutoff, warm/dark sound
 //! - **High-pass (HPF)** - Removes frequencies below cutoff, thin/bright sound
 //! - **Band-pass (BPF)** - Passes frequencies around cutoff, vocal/nasal sound
+//! - **Bell** - Boosts or cuts `boost` dB around the cutoff, `q` wide
+//! - **Low shelf / high shelf** - Boost or cut everything below / above it
+//! - **Notch** - Removes the cutoff, `q` wide
+//!
+//! The EQ responses (bell, shelves, notch) follow the RBJ cookbook's
+//! magnitudes and ignore `resonance`; lowpass, highpass and bandpass ignore
+//! `boost` and `q`.
 //!
 //! # Features
 //!
@@ -43,8 +50,11 @@ use crate::control_request::{
 use crate::traits::ControlMeta;
 use crate::Module;
 
-use self::controls::{CUTOFF, CUTOFF_MOD_DEPTH, FILTER_TYPE, RESONANCE, TABLE};
-use self::shape::{Coefficients, Stage};
+use self::controls::{
+    BOOST, CUTOFF, CUTOFF_MOD_DEPTH, DEFAULT_Q, FILTER_TYPE, MAX_BOOST, MAX_Q, MIN_Q, Q, RESONANCE,
+    TABLE,
+};
+use self::shape::{Coefficients, EqDesign, Stage};
 
 mod controls;
 mod factory;
@@ -66,26 +76,43 @@ pub enum FilterType {
     HighPass,
     /// Band-pass filter - passes frequencies around cutoff.
     BandPass,
+    /// Bell - boosts or cuts around the cutoff.
+    Bell,
+    /// Low shelf - boosts or cuts below the cutoff.
+    LowShelf,
+    /// High shelf - boosts or cuts above the cutoff.
+    HighShelf,
+    /// Notch - removes the cutoff.
+    Notch,
 }
 
 impl FilterType {
+    const ALL: [FilterType; 7] = [
+        FilterType::LowPass,
+        FilterType::HighPass,
+        FilterType::BandPass,
+        FilterType::Bell,
+        FilterType::LowShelf,
+        FilterType::HighShelf,
+        FilterType::Notch,
+    ];
+
     /// Its position among the `filter_type` options.
     fn position(self) -> u32 {
-        match self {
-            FilterType::LowPass => 0,
-            FilterType::HighPass => 1,
-            FilterType::BandPass => 2,
-        }
+        Self::ALL.iter().position(|t| *t == self).unwrap_or(0) as u32
     }
 
     /// The type at `position` among the `filter_type` options.
     fn from_position(position: u32) -> Option<Self> {
-        match position {
-            0 => Some(FilterType::LowPass),
-            1 => Some(FilterType::HighPass),
-            2 => Some(FilterType::BandPass),
-            _ => None,
-        }
+        Self::ALL.get(position as usize).copied()
+    }
+
+    /// Whether this is an EQ response (shaped by `boost` and `q`).
+    fn is_eq(self) -> bool {
+        !matches!(
+            self,
+            FilterType::LowPass | FilterType::HighPass | FilterType::BandPass
+        )
     }
 }
 
@@ -94,17 +121,21 @@ impl FilterType {
 /// Uses the degree-7 Taylor series in Horner form. Max error < 0.2% for
 /// x < 0.75 rad (cutoff < 10.5 kHz at 44.1 kHz), which is inaudible for
 /// filter coefficient calculations. Roughly 10× faster than libm tan().
+/// Above that it falls short (a 20 kHz cutoff sounds near 19 kHz at
+/// 48 kHz), but lowpass, highpass and bandpass keep it so existing
+/// inventions sound as they always have; the EQ responses use the exact
+/// [`crate::dsp::tan_quarter_turn`].
 #[inline(always)]
 fn fast_tan(x: f32) -> f32 {
     let x2 = x * x;
     x * (1.0 + x2 * (0.333_333_34 + x2 * (0.133_333_34 + x2 * 0.053_968_26)))
 }
 
-/// A resonant filter for subtractive synthesis.
+/// A resonant filter for subtractive synthesis, and the bands of an EQ.
 ///
 /// Uses a state-variable filter (SVF) topology, which provides excellent
 /// stability and can produce low-pass, high-pass, and band-pass outputs
-/// simultaneously.
+/// simultaneously; the EQ responses mix those taps with the input.
 ///
 /// # Inputs
 ///
@@ -121,8 +152,11 @@ fn fast_tan(x: f32) -> f32 {
 ///
 /// - `cutoff` - Base cutoff frequency in Hz (default: 1000.0)
 /// - `resonance` - Resonance/Q 0.0-1.0 (default: 0.0)
-/// - `filter_type` - Filter type (0=LowPass, 1=HighPass, 2=BandPass)
+/// - `filter_type` - lowpass, highpass, bandpass, bell, lowshelf, highshelf
+///   or notch
 /// - `cutoff_mod_depth` - CV modulation depth in Hz (default: 5000.0)
+/// - `boost` - EQ gain in dB, -24 to 24 (default: 0)
+/// - `q` - EQ width or steepness, 0.1 to 18 (default: 0.7071)
 pub struct Filter {
     sample_rate: u32,
 
@@ -131,11 +165,11 @@ pub struct Filter {
     resonance: f32,
     filter_type: FilterType,
     cutoff_mod_depth: f32,
+    boost: f32,
+    q: f32,
     cells: Arc<ControlCells>,
-    // Where cutoff and resonance writes are on their way to the controls.
+    // Where cutoff, resonance, boost and q writes are on their way.
     glide: glide::ControlGlide,
-
-    // TPT SVF integrator state
     stage: Stage,
 
     // Signal inputs
@@ -144,11 +178,14 @@ pub struct Filter {
     // Cached output
     outputs: outputs::FilterOutputs,
 
-    // Cached SVF coefficients — recomputed only when effective cutoff or
-    // resonance changes. Sentinel -1.0 forces computation on first call.
+    // Cached lowpass/highpass/bandpass coefficients, recomputed only when
+    // the effective cutoff or resonance changes. Sentinel -1.0 forces
+    // computation on first call.
     coeff_cutoff: f32,
     coeff_resonance: f32,
     classic: Coefficients,
+    // The EQ responses' coefficients, recomputed only on change.
+    eq: EqDesign,
 }
 
 impl Filter {
@@ -168,6 +205,8 @@ impl Filter {
             resonance: 0.0,
             filter_type: FilterType::LowPass,
             cutoff_mod_depth: 5000.0,
+            boost: 0.0,
+            q: DEFAULT_Q,
             cells,
             glide: glide::ControlGlide::new(sample_rate, 1000.0, 0.0),
             stage: Stage::default(),
@@ -176,6 +215,7 @@ impl Filter {
             coeff_cutoff: -1.0,
             coeff_resonance: -1.0,
             classic: Coefficients::default(),
+            eq: EqDesign::new(sample_rate),
         };
         for index in 0..TABLE.len() {
             let index = ControlIndex(index as u16);
@@ -185,7 +225,6 @@ impl Filter {
         }
         filter
     }
-
     /// Sets the filter type (legacy API).
     pub fn with_filter_type(mut self, filter_type: FilterType) -> Self {
         self.set_filter_type(filter_type);
@@ -225,10 +264,19 @@ impl Filter {
         let _ = apply_declared(self, RESONANCE, RtValue::F32(resonance));
     }
 
-    /// Processes one sample through the filter using the trapezoidal integrated
-    /// SVF (Andrew Simper / Cytomic). Unconditionally stable at all frequencies.
+    /// The effective cutoff for frame `i`: the control or input, plus the
+    /// modulation, in range.
     #[inline(always)]
-    fn process_sample_with(
+    fn cutoff_at(&self, i: usize, control_cutoff: f32, cutoff_mod_depth: f32) -> f32 {
+        let base_cutoff = self.inputs.cutoff(i, control_cutoff);
+        (base_cutoff + self.inputs.cutoff_mod(i) * cutoff_mod_depth).clamp(20.0, 20000.0)
+    }
+
+    /// Processes one sample through the lowpass, highpass or bandpass
+    /// response using the trapezoidal integrated SVF (Andrew Simper /
+    /// Cytomic). Unconditionally stable at all frequencies.
+    #[inline(always)]
+    fn classic_sample(
         &mut self,
         i: usize,
         control_cutoff: f32,
@@ -236,10 +284,8 @@ impl Filter {
         cutoff_mod_depth: f32,
         filter_type: FilterType,
     ) -> f32 {
-        let base_cutoff = self.inputs.cutoff(i, control_cutoff);
+        let effective_cutoff = self.cutoff_at(i, control_cutoff, cutoff_mod_depth);
         let base_resonance = self.inputs.resonance(i, control_resonance);
-        let effective_cutoff =
-            (base_cutoff + self.inputs.cutoff_mod(i) * cutoff_mod_depth).clamp(20.0, 20000.0);
         let effective_resonance = base_resonance.clamp(0.0, 0.99);
 
         // Recompute SVF coefficients only when cutoff or resonance changes.
@@ -255,6 +301,25 @@ impl Filter {
 
         let input = self.inputs.audio(i);
         self.stage.classic(&self.classic, filter_type, input)
+    }
+
+    /// Processes one sample through an EQ response.
+    #[inline(always)]
+    fn eq_sample(
+        &mut self,
+        i: usize,
+        control_cutoff: f32,
+        cutoff_mod_depth: f32,
+        filter_type: FilterType,
+    ) -> f32 {
+        let effective_cutoff = self.cutoff_at(i, control_cutoff, cutoff_mod_depth);
+        let boost = self.glide.next_boost(self.boost);
+        let q = self.glide.next_q(self.q);
+        self.eq.design(filter_type, effective_cutoff, boost, q);
+        let input = self.inputs.audio(i);
+        let coefficients = &self.eq.coefficients;
+        let (bandpass, lowpass) = self.stage.tick(coefficients, input);
+        coefficients.mix(input, bandpass, lowpass)
     }
 
     /// Resets the filter state.
@@ -277,19 +342,28 @@ impl Module for Filter {
         let cutoff_mod_depth = self.cutoff_mod_depth;
         let filter_type = self.filter_type;
 
-        let mut i = 0;
-        while i < frames {
-            let cutoff = self.glide.next_cutoff(self.cutoff);
-            let resonance = self.glide.next_resonance(self.resonance);
-            let audio = self.process_sample_with(
-                i,
-                if cutoff_connected { 0.0 } else { cutoff },
-                if resonance_connected { 0.0 } else { resonance },
-                cutoff_mod_depth,
-                filter_type,
-            );
-            self.outputs.set(i, audio);
-            i += 1;
+        if filter_type.is_eq() {
+            for i in 0..frames {
+                let cutoff = self.glide.next_cutoff(self.cutoff);
+                let cutoff = if cutoff_connected { 0.0 } else { cutoff };
+                let audio = self.eq_sample(i, cutoff, cutoff_mod_depth, filter_type);
+                self.outputs.set(i, audio);
+            }
+        } else {
+            let mut i = 0;
+            while i < frames {
+                let cutoff = self.glide.next_cutoff(self.cutoff);
+                let resonance = self.glide.next_resonance(self.resonance);
+                let audio = self.classic_sample(
+                    i,
+                    if cutoff_connected { 0.0 } else { cutoff },
+                    if resonance_connected { 0.0 } else { resonance },
+                    cutoff_mod_depth,
+                    filter_type,
+                );
+                self.outputs.set(i, audio);
+                i += 1;
+            }
         }
         if frames > 0 {
             self.glide.heard();
@@ -351,6 +425,16 @@ impl Module for Filter {
                 self.cutoff_mod_depth = depth.max(0.0);
                 RtValue::F32(self.cutoff_mod_depth)
             }
+            (BOOST, RtValue::F32(boost)) => {
+                self.boost = boost.clamp(-MAX_BOOST, MAX_BOOST);
+                self.glide.boost_to(self.boost);
+                RtValue::F32(self.boost)
+            }
+            (Q, RtValue::F32(q)) => {
+                self.q = q.clamp(MIN_Q, MAX_Q);
+                self.glide.q_to(self.q);
+                RtValue::F32(self.q)
+            }
             _ => return Err(Refusal::Unsupported),
         };
         Ok(applied)
@@ -369,6 +453,8 @@ impl Module for Filter {
     }
 }
 
+#[cfg(test)]
+mod eq_tests;
 #[cfg(test)]
 mod glide_tests;
 #[cfg(test)]

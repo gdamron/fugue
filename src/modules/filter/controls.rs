@@ -6,12 +6,28 @@ pub(super) const CUTOFF: ControlIndex = ControlIndex(0);
 pub(super) const RESONANCE: ControlIndex = ControlIndex(1);
 pub(super) const FILTER_TYPE: ControlIndex = ControlIndex(2);
 pub(super) const CUTOFF_MOD_DEPTH: ControlIndex = ControlIndex(3);
+pub(super) const BOOST: ControlIndex = ControlIndex(4);
+pub(super) const Q: ControlIndex = ControlIndex(5);
+
+/// The `boost` range, in dB.
+pub(super) const MAX_BOOST: f32 = 24.0;
+/// The `q` range of the EQ responses.
+pub(super) const MIN_Q: f32 = 0.1;
+pub(super) const MAX_Q: f32 = 18.0;
+/// The `q` an EQ response starts with: a shelf without overshoot.
+pub(super) const DEFAULT_Q: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
 /// The filter types, in [`super::FilterType`] order.
-const FILTER_TYPES: &[&str] = &["lowpass", "highpass", "bandpass"];
+const FILTER_TYPES: &[&str] = &[
+    "lowpass",
+    "highpass",
+    "bandpass",
+    "bell",
+    "lowshelf",
+    "highshelf",
+    "notch",
+];
 
-/// Other spellings of the filter types that have always loaded, with the
-/// option each means.
 const FILTER_TYPE_SPELLINGS: &[(&str, &str)] = &[
     ("low_pass", "lowpass"),
     ("lpf", "lowpass"),
@@ -22,6 +38,12 @@ const FILTER_TYPE_SPELLINGS: &[(&str, &str)] = &[
     ("band_pass", "bandpass"),
     ("bpf", "bandpass"),
     ("band", "bandpass"),
+    ("peak", "bell"),
+    ("peaking", "bell"),
+    ("low_shelf", "lowshelf"),
+    ("high_shelf", "highshelf"),
+    ("bandstop", "notch"),
+    ("band_stop", "notch"),
 ];
 
 const DECLS: &[ControlDecl] = &[
@@ -64,6 +86,30 @@ const DECLS: &[ControlDecl] = &[
     .unit("Hz")
     .precision(0)
     .clamped(0.0, f32::MAX),
+    ControlDecl::new(
+        "boost",
+        DeclKind::Number {
+            min: -MAX_BOOST,
+            max: MAX_BOOST,
+        },
+        RtValue::F32(0.0),
+        "Gain at the band in dB for bell and shelves; negative cuts",
+    )
+    .unit("dB")
+    .precision(1)
+    .clamped(-MAX_BOOST, MAX_BOOST),
+    ControlDecl::new(
+        "q",
+        DeclKind::Number {
+            min: MIN_Q,
+            max: MAX_Q,
+        },
+        RtValue::F32(DEFAULT_Q),
+        "Width of a bell or notch, steepness of a shelf",
+    )
+    .log()
+    .precision(2)
+    .clamped(MIN_Q, MAX_Q),
 ];
 
 pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);

@@ -9,6 +9,9 @@ use crate::factory::{apply_control_keys, GraphModule, ModuleBuildResult, ModuleF
 use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
 
+/// Controls a config may also start, by their own names.
+const EQ_CONTROL_KEYS: &[&str] = &["boost", "q"];
+
 /// Factory for constructing Filter modules from configuration.
 pub struct FilterFactory;
 
@@ -46,7 +49,9 @@ impl ModuleFactory for FilterFactory {
         let named = config
             .get("filter_type")
             .is_some_and(|value| value.is_string());
-        apply_control_keys(&surface, config, |key| named && key == "filter_type")?;
+        apply_control_keys(&surface, config, |key| {
+            (named && key == "filter_type") || EQ_CONTROL_KEYS.contains(&key)
+        })?;
         let filter = Filter::with_cells(sample_rate, cells);
 
         Ok(ModuleBuildResult {
