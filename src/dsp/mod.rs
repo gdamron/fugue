@@ -10,6 +10,7 @@
 //! - [`OnePole`] - First-order lowpass and highpass
 //! - [`DcBlocker`] - Removes a constant offset
 //! - [`Oversampler`] - Runs a process at 2× or 4× the sample rate
+//! - [`sine`] / [`cosine`] - Sine and cosine from a table built at compile time
 //! - `declick_gain` - The curved fade that ends a sound without a click
 //! - `RealFft` - Radix-2 power spectrum for off-thread analysis (feature
 //!   `spectrogram`)
@@ -27,6 +28,7 @@ mod oversampler;
 mod pink;
 mod ramp;
 mod rng;
+mod sine_table;
 
 pub use allpass::Allpass;
 pub use damper::Damper;
@@ -42,3 +44,4 @@ pub use oversampler::{Factor, Oversampler};
 pub use pink::PinkFilter;
 pub use ramp::LinearRamp;
 pub use rng::Rng;
+pub use sine_table::{cosine, sine};
