@@ -17,8 +17,12 @@ pub struct Rig {
 
 impl Rig {
     pub fn new(config: Value) -> Self {
+        Self::at_rate(config, SR)
+    }
+
+    pub fn at_rate(config: Value, sample_rate: u32) -> Self {
         let built = ModuleRegistry::default()
-            .build("drive", SR, &config)
+            .build("drive", sample_rate, &config)
             .unwrap_or_else(|err| panic!("drive builds with {config}: {err}"));
         let m = match built.module {
             GraphModule::Module(m) => m,
@@ -66,7 +70,11 @@ impl Rig {
 }
 
 pub fn sine(amp: f64, freq: f64) -> impl Fn(usize) -> f32 {
-    move |i| (amp * (2.0 * PI * freq * i as f64 / SRF).sin()) as f32
+    sine_at(amp, freq, SRF)
+}
+
+pub fn sine_at(amp: f64, freq: f64, sample_rate: f64) -> impl Fn(usize) -> f32 {
+    move |i| (amp * (2.0 * PI * freq * i as f64 / sample_rate).sin()) as f32
 }
 
 pub fn secs(s: f64) -> usize {
