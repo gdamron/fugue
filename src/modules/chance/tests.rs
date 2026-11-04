@@ -1,4 +1,6 @@
 use super::*;
+use crate::music::scales::{in_key, scale_degrees, strongest_degrees};
+use crate::music::Note;
 
 fn chance(config: serde_json::Value) -> Box<dyn Module> {
     match ChanceFactory.build(48_000, &config).unwrap().module {
@@ -9,13 +11,13 @@ fn chance(config: serde_json::Value) -> Box<dyn Module> {
 
 /// One step per 4-frame block: the clock high for two frames. Returns
 /// every output at the step's first frame.
-fn step(module: &mut dyn Module) -> [f32; 3] {
+fn step(module: &mut dyn Module) -> [f32; 9] {
     module.input_block_mut(0)[..4].copy_from_slice(&[1.0, 1.0, 0.0, 0.0]);
     module.process(4);
     std::array::from_fn(|port| module.output_block(port)[0])
 }
 
-fn steps(module: &mut dyn Module, count: usize) -> Vec<[f32; 3]> {
+fn steps(module: &mut dyn Module, count: usize) -> Vec<[f32; 9]> {
     (0..count).map(|_| step(module)).collect()
 }
 
@@ -44,10 +46,12 @@ fn gates_follow_the_clock_pulse() {
 fn a_locked_loop_repeats_with_its_length() {
     for length in [1, 3, 8, 16] {
         let mut module = chance(serde_json::json!({
-            "seed": 9, "repetition": 1.0, "loop_length": length,
+            "seed": 9, "repetition": 1.0, "loop_length": length, "steps": 0.4,
         }));
         let played = steps(module.as_mut(), 64);
-        for (index, out) in played.iter().enumerate().skip(length) {
+        // Channels 1 and 2 hold where they started until their gate first
+        // fires, so compare from the second pass.
+        for (index, out) in played.iter().enumerate().skip(2 * length) {
             assert_eq!(
                 out,
                 &played[index - length],
@@ -60,16 +64,28 @@ fn a_locked_loop_repeats_with_its_length() {
 #[test]
 fn a_mutating_loop_keeps_most_of_its_steps() {
     let mut module = chance(serde_json::json!({
-        "seed": 4, "repetition": 0.5, "loop_length": 8,
+        "seed": 4, "repetition": 0.5, "loop_length": 8, "steps": 0.4,
     }));
-    let played = steps(module.as_mut(), 4_000);
-    let kept = (8..4_000)
-        .filter(|&i| played[i][0] == played[i - 8][0])
+    let played = steps(module.as_mut(), 800);
+    let kept = (8..800)
+        .filter(|&i| played[i][8] == played[i - 8][8])
         .count() as f32
-        / 3_992.0;
-    // Three quarters of the steps replay at the middle of the range; a
-    // fresh toss matches the old one half the time.
-    assert!((kept - 0.875).abs() < 0.03, "{kept}");
+        / 792.0;
+    // Three quarters of the steps replay at the middle of the range.
+    assert!((kept - 0.75).abs() < 0.06, "{kept}");
+}
+
+#[test]
+fn quantized_pitches_stay_in_key() {
+    let mut module = chance(serde_json::json!({
+        "seed": 5, "key": "Eb", "scale": "dorian", "spread": 1.0,
+    }));
+    let allowed = in_key(strongest_degrees(scale_degrees(4), 12), 3);
+    for out in steps(module.as_mut(), 2_000) {
+        let note = Note::from_frequency(out[5]).midi_note;
+        assert!(allowed & 1 << (note % 12) != 0, "{note}");
+        assert!((48..=72).contains(&note), "{note}");
+    }
 }
 
 #[test]
@@ -86,8 +102,8 @@ fn the_same_seed_plays_the_same() {
     steps(one.as_mut(), 37);
     one.set_control("seed", 11.0).unwrap();
     let mut fresh = chance(serde_json::json!({ "seed": 11 }));
-    let restarted: Vec<f32> = steps(one.as_mut(), 50).iter().map(|o| o[0]).collect();
-    let first: Vec<f32> = steps(fresh.as_mut(), 50).iter().map(|o| o[0]).collect();
+    let restarted: Vec<f32> = steps(one.as_mut(), 50).iter().map(|o| o[8]).collect();
+    let first: Vec<f32> = steps(fresh.as_mut(), 50).iter().map(|o| o[8]).collect();
     assert_eq!(restarted, first);
 }
 
@@ -100,7 +116,7 @@ fn reset_starts_the_bar_again() {
     module.process(2);
     module.input_block_mut(1)[..4].fill(0.0);
     let again = steps(module.as_mut(), 5);
-    let gates = |played: &[[f32; 3]]| played.iter().map(|o| (o[0], o[1])).collect::<Vec<_>>();
+    let gates = |played: &[[f32; 9]]| played.iter().map(|o| (o[0], o[1])).collect::<Vec<_>>();
     assert_eq!(gates(&first), gates(&again));
     assert_eq!(gates(&first)[0], (1.0, 0.0));
     assert_eq!(gates(&first)[4], (0.0, 1.0));
@@ -109,6 +125,8 @@ fn reset_starts_the_bar_again() {
 #[test]
 fn controls_are_refused_out_of_their_options() {
     let mut module = chance(serde_json::json!({}));
+    assert!(module.set_control("key", 12.0).is_err());
+    assert!(module.set_control("scale", 99.0).is_err());
     assert!(module.set_control("mode", 3.0).is_err());
     module.set_control("loop_length", 40.0).unwrap();
     assert_eq!(module.get_control("loop_length").unwrap(), 16.0);

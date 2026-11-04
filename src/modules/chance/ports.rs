@@ -4,7 +4,17 @@ use crate::MAX_BLOCK;
 
 pub const INPUTS: [&str; 2] = ["clock", "reset"];
 
-pub const OUTPUTS: [&str; 3] = ["gate_1", "gate_2", "tick"];
+pub const OUTPUTS: [&str; 9] = [
+    "gate_1",
+    "gate_2",
+    "tick",
+    "frequency_1",
+    "frequency_2",
+    "frequency_3",
+    "value_1",
+    "value_2",
+    "value_3",
+];
 
 pub struct Inputs {
     blocks: [[f32; MAX_BLOCK]; 2],
@@ -44,21 +54,28 @@ impl Inputs {
 }
 
 pub struct Outputs {
-    blocks: [[f32; MAX_BLOCK]; 3],
+    blocks: [[f32; MAX_BLOCK]; 9],
 }
 
 impl Outputs {
     pub fn new() -> Self {
         Self {
-            blocks: [[0.0; MAX_BLOCK]; 3],
+            blocks: [[0.0; MAX_BLOCK]; 9],
         }
     }
 
-    /// Writes frame `i` of the three gates.
+    /// Writes frame `i` of every output: the three gates, then each
+    /// channel's frequency and value.
     #[inline]
-    pub fn set(&mut self, i: usize, gates: [bool; 3]) {
-        for (block, gate) in self.blocks.iter_mut().zip(gates) {
+    pub fn set(&mut self, i: usize, gates: [bool; 3], frequencies: [f32; 3], values: [f32; 3]) {
+        for (block, gate) in self.blocks[..3].iter_mut().zip(gates) {
             block[i] = if gate { 1.0 } else { 0.0 };
+        }
+        for (block, frequency) in self.blocks[3..6].iter_mut().zip(frequencies) {
+            block[i] = frequency;
+        }
+        for (block, value) in self.blocks[6..].iter_mut().zip(values) {
+            block[i] = value;
         }
     }
 
