@@ -35,7 +35,8 @@ pub enum DriveShape {
     Asymmetric,
     /// Fewer bits: drive coarsens the grid from 16 bits to 3.
     Bits,
-    /// A lower rate: drive holds each sample for 1 to 64 frames.
+    /// A lower rate: drive holds each sample for 1 to 64 frames (counted
+    /// in frames, so it sounds coarser at lower sample rates).
     Rate,
 }
 
@@ -77,6 +78,11 @@ struct Frame {
     bias: f32,
     auto_level: f32,
     weights: [f32; DriveShape::COUNT],
+    /// For each active curve: the gain in front of it, the level after it,
+    /// and what the bias alone would leave (taken off as a constant).
+    curve_gain: [f32; CURVE_COUNT],
+    curve_level: [f32; CURVE_COUNT],
+    curve_rest: [f32; CURVE_COUNT],
 }
 
 /// Saturation, distortion and bit or rate reduction of one signal.
@@ -106,6 +112,9 @@ pub struct DriveProcessor {
     active: [bool; DriveShape::COUNT],
     shapers: [Waveshaper; CURVE_COUNT],
     hold: SampleHold,
+    /// What bits take off for the bias, gliding: the grid snaps the bias to
+    /// a step, and a snap of the offset would click.
+    bits_offset: LinearRamp,
     dc: DcBlocker,
     /// The input, delayed to line up with the oversampled path.
     dry_line: DelayLine,
@@ -146,6 +155,7 @@ impl DriveProcessor {
             active: [false; DriveShape::COUNT],
             shapers,
             hold: SampleHold::new(),
+            bits_offset: LinearRamp::new(0.0, glide_frames),
             dc: DcBlocker::new(sample_rate),
             dry_line: DelayLine::new(latency + 1),
             crush_line: DelayLine::new(latency + 1),
@@ -189,8 +199,9 @@ impl DriveProcessor {
         self.post.set_tilt(tilt);
     }
 
-    /// An offset into the shape, −1 to 1 (clamped): off centre adds even
-    /// harmonics. The offset it leaves is removed.
+    /// An offset into the curves and bits, −1 to 1 (clamped): off centre
+    /// adds even harmonics. The offset it leaves is removed. Rate ignores
+    /// it.
     pub fn set_bias(&mut self, bias: f32) {
         self.bias.set_target(signed(bias));
     }
@@ -221,6 +232,7 @@ impl DriveProcessor {
             &mut self.auto_level,
             &mut self.level,
             &mut self.mix,
+            &mut self.bits_offset,
         ];
         for ramp in ramps.into_iter().chain(&mut self.weights) {
             ramp.settle();
@@ -232,6 +244,9 @@ impl DriveProcessor {
     /// silence.
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
         let frames = input.len().min(output.len()).min(MAX_BLOCK);
+        if frames == 0 {
+            return;
+        }
         self.read_settings(&input[..frames]);
         let any_curve = self.active[..CURVE_COUNT].contains(&true);
         if any_curve {
@@ -244,8 +259,9 @@ impl DriveProcessor {
             if self.active[bits.index()] {
                 let (step, compensation) = self.calibration.at(bits, frame.drive);
                 let gain = 1.0 + frame.auto_level * (compensation - 1.0);
-                let biased = quantize(self.crush[i] + frame.bias, step);
-                let shaped = biased - quantize(frame.bias, step);
+                self.bits_offset.set_target(quantize(frame.bias, step));
+                let offset = self.bits_offset.next_value();
+                let shaped = quantize(self.crush[i] + frame.bias, step) - offset;
                 wet += frame.weights[bits.index()] * gain * shaped;
             }
             if self.active[rate.index()] {
@@ -276,15 +292,33 @@ impl DriveProcessor {
                 drive: self.drive.next_value(),
                 bias: self.bias.next_value(),
                 auto_level: self.auto_level.next_value(),
-                weights: [0.0; DriveShape::COUNT],
+                ..Frame::default()
             };
             for (n, weight) in self.weights.iter_mut().enumerate() {
                 frame.weights[n] = weight.next_value();
                 active[n] |= frame.weights[n] != 0.0;
             }
+            for (n, shape) in DriveShape::ALL[..CURVE_COUNT].iter().enumerate() {
+                if frame.weights[n] == 0.0 {
+                    continue;
+                }
+                let (gain, compensation) = self.calibration.at(*shape, frame.drive);
+                frame.curve_gain[n] = gain;
+                frame.curve_level[n] = 1.0 + frame.auto_level * (compensation - 1.0);
+                frame.curve_rest[n] = self.shapers[n].curve().apply(frame.bias);
+            }
             self.frames[i] = frame;
         }
-        // A shape coming back in starts from rest, not from where it left.
+        // A shape coming back in starts from rest, not from where it left;
+        // so do the oversampler's filters, which stopped mid-tail when no
+        // curve was left to run.
+        let curves_back =
+            active[..CURVE_COUNT].contains(&true) && !self.active[..CURVE_COUNT].contains(&true);
+        if curves_back {
+            if let Some(oversampler) = self.oversampler.as_mut() {
+                oversampler.reset();
+            }
+        }
         for shape in DriveShape::ALL {
             let n = shape.index();
             if !active[n] || self.active[n] {
@@ -292,7 +326,11 @@ impl DriveProcessor {
             }
             match shape {
                 DriveShape::Rate => self.hold.reset(),
-                DriveShape::Bits => {}
+                DriveShape::Bits => {
+                    let first = self.frames[0];
+                    let (step, _) = self.calibration.at(shape, first.drive);
+                    self.bits_offset.snap(quantize(first.bias, step));
+                }
                 _ => self.shapers[n].rest_at(self.frames[0].bias),
             }
         }
@@ -302,7 +340,6 @@ impl DriveProcessor {
     /// Runs the active curves over the toned block in `work`, oversampled
     /// when the processor has an oversampler.
     fn shape_curves(&mut self, frames: usize) {
-        let calibration = self.calibration;
         let settings = &self.frames[..frames];
         let active = self.active;
         let shapers = &mut self.shapers;
@@ -312,17 +349,14 @@ impl DriveProcessor {
                 let frame = &settings[j / ratio];
                 let x = *sample;
                 let mut y = 0.0;
-                for ((n, shaper), shape) in shapers.iter_mut().enumerate().zip(DriveShape::ALL) {
+                for (n, shaper) in shapers.iter_mut().enumerate() {
                     if !active[n] {
                         continue;
                     }
-                    let (gain, compensation) = calibration.at(shape, frame.drive);
-                    let level = 1.0 + frame.auto_level * (compensation - 1.0);
                     // The bias alone would leave a constant: take it off
                     // here, and the DC blocker takes what moves.
-                    let rest = shaper.curve().apply(frame.bias);
-                    let shaped = shaper.process(gain * x + frame.bias) - rest;
-                    y += frame.weights[n] * level * shaped;
+                    let shaped = shaper.process(frame.curve_gain[n] * x + frame.bias);
+                    y += frame.weights[n] * frame.curve_level[n] * (shaped - frame.curve_rest[n]);
                 }
                 *sample = y;
             }

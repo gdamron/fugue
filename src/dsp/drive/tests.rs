@@ -90,23 +90,71 @@ fn the_dry_share_lines_up_with_the_driven_one() {
     assert!(error < 5e-3, "error {error}");
 }
 
-#[test]
-fn changing_shape_or_drive_mid_tone_never_jumps() {
-    let input = sine(110.0, 0.5, RATE as usize);
-    let mut d = processor(DriveShape::Soft, 0.25);
-    let mut out = render(&mut d, &input[..4800], 64);
-    // Through every shape in turn, the drive swinging between extremes.
-    for (n, chunk) in input[4800..].chunks(4800).enumerate() {
-        d.set_shape(DriveShape::ALL[(n + 1) % DriveShape::COUNT]);
-        d.set_drive(if n % 2 == 0 { 1.0 } else { 0.1 });
-        out.extend(render(&mut d, chunk, 64));
-    }
-    // A click would be a jump of most of the range between two samples.
-    let biggest = out
+/// The largest step between two neighbouring samples.
+fn largest_step(values: &[f32]) -> f32 {
+    values
         .windows(2)
         .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0, f32::max)
+}
+
+/// The largest step `shape` takes on `input` at each of `drives`, settled.
+fn steady_step(shape: DriveShape, drives: &[f32], bias: f32, input: &[f32]) -> f32 {
+    drives
+        .iter()
+        .map(|&drive| {
+            let mut d = processor(shape, drive);
+            d.set_bias(bias);
+            d.settle();
+            largest_step(&render(&mut d, input, 64)[4800..])
+        })
+        .fold(0.0, f32::max)
+}
+
+#[test]
+fn changing_shape_or_drive_mid_tone_never_jumps() {
+    // A click is a step bigger than either setting takes on its own: a
+    // crossfade or glide moves each sample only a little more.
+    let input = sine(110.0, 0.5, RATE as usize / 2);
+    for from in DriveShape::ALL {
+        for to in DriveShape::ALL {
+            let mut d = processor(from, 1.0);
+            let mut out = render(&mut d, &input[..9600], 64);
+            d.set_shape(to);
+            d.set_drive(0.1);
+            out.extend(render(&mut d, &input[9600..], 64));
+            let steady = steady_step(from, &[1.0, 0.1], 0.0, &input).max(steady_step(
+                to,
+                &[1.0, 0.1],
+                0.0,
+                &input,
+            ));
+            let step = largest_step(&out[4800..]);
+            assert!(
+                step <= 1.25 * steady + 0.01,
+                "{from:?} to {to:?}: step {step}, steady {steady}"
+            );
+        }
+    }
+}
+
+#[test]
+fn moving_the_bias_on_bits_glides_the_offset() {
+    // At drive 1 the grid step is a quarter: a bias sweep crosses grid
+    // lines, and the offset taken off for it must glide, not snap.
+    let input = sine(110.0, 0.8, RATE as usize / 2);
+    let mut d = processor(DriveShape::Bits, 1.0);
+    let mut out = render(&mut d, &input[..9600], 64);
+    for (n, chunk) in input[9600..].chunks(64).enumerate() {
+        d.set_bias(-0.6 + 1.2 * n as f32 / 225.0);
+        out.extend(render(&mut d, chunk, 64));
+    }
+    let steady = [-0.6, 0.0, 0.6]
+        .iter()
+        .map(|&bias| steady_step(DriveShape::Bits, &[1.0], bias, &input))
         .fold(0.0, f32::max);
-    assert!(biggest < 0.5, "step {biggest}");
+    let step = largest_step(&out[4800..]);
+    assert!(step <= 1.25 * steady + 0.01, "step {step}, steady {steady}");
 }
 
 #[test]

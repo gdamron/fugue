@@ -104,6 +104,12 @@ impl Calibration {
                         compensation,
                     };
                 }
+                // Drive 0 is exactly unity, so a processor at rest in a
+                // feedback loop adds no gain of its own.
+                let rest = row[0].compensation;
+                for point in row.iter_mut() {
+                    point.compensation /= rest;
+                }
             }
             Calibration { points }
         })
@@ -133,12 +139,7 @@ mod tests {
     fn drive_zero_is_clean_and_drive_one_reaches_each_extreme() {
         let table = Calibration::get();
         for shape in &DriveShape::ALL[..4] {
-            let (gain, compensation) = table.at(*shape, 0.0);
-            assert_eq!(gain, 1.0);
-            assert!(
-                (compensation - 1.0).abs() < 0.05,
-                "{shape:?}: {compensation}"
-            );
+            assert_eq!(table.at(*shape, 0.0), (1.0, 1.0), "{shape:?}");
         }
         let (gain, compensation) = table.at(DriveShape::Hard, 1.0);
         assert!((gain - 15.85).abs() < 0.01);
