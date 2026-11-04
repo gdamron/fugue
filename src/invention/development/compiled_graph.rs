@@ -83,9 +83,10 @@ impl Grouping {
     /// loop's members starts there, as the main graph's does from the
     /// modules upstream of the development. A development is built without
     /// its enclosing graph, so this is the delay the same wiring gets flat
-    /// when the modules feeding its inputs come first, in the inputs'
-    /// declared order: a parent listing them otherwise can delay the other
-    /// route of a loop entered at two inputs.
+    /// when the enclosing graph's depth-first walk reaches the inputs'
+    /// targets in the inputs' declared order, ahead of the rest: one that
+    /// reaches them otherwise can delay the other route of a loop entered
+    /// at two inputs.
     pub(super) fn of(n: usize, routes: &[(usize, usize)], entries: &[usize]) -> Self {
         let mut downstream: Vec<Vec<usize>> = (0..n).map(|_| Vec::new()).collect();
         for &(from, to) in routes {
