@@ -46,6 +46,7 @@ mod ramp;
 mod rng;
 mod sine_table;
 mod svf;
+mod tan;
 mod tilt;
 mod waveshape;
 
@@ -71,5 +72,6 @@ pub use ramp::LinearRamp;
 pub use rng::Rng;
 pub use sine_table::{cosine, sine};
 pub use svf::{Svf, SvfOutput, SVF_MIN_CUTOFF_HZ};
+pub use tan::tan_quarter_turn;
 pub use tilt::{Tilt, TILT_PIVOT_HZ, TILT_RANGE_DB};
 pub use waveshape::{Curve, Waveshaper};
