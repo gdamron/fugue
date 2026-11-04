@@ -5,8 +5,10 @@
 
 use serde_json::{json, Value};
 
+use crate::alloc_counter::allocator_events;
+use crate::invention::manual_backend::{start_manual, SAMPLE_RATE};
 use crate::invention::RenderEngine;
-use crate::{ControlValue, Invention};
+use crate::{ControlValue, Invention, InventionBuilder};
 
 const RATE: u32 = 48_000;
 
@@ -176,4 +178,31 @@ fn a_retarget_beside_a_loop_plays_as_loaded() {
     // The write is heard: the scheduled oscillator changes pitch.
     let unwritten = render_writing(&looped_pattern(OLD), None);
     assert!(first_difference(&loaded, &unwritten).is_some());
+}
+
+#[test]
+fn a_looped_development_runs_live_without_allocating() {
+    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(nested()).unwrap();
+    let (_running, pump) = start_manual(runtime);
+    pump.render(4);
+    for block in 0..8 {
+        let ((), allocs, frees) = allocator_events(|| pump.block());
+        assert_eq!((allocs, frees), (0, 0), "block {block}");
+    }
+}
+
+#[test]
+fn a_live_retarget_beside_a_loop_costs_the_audio_thread_nothing() {
+    let doc: Invention = serde_json::from_str(&looped_pattern(OLD)).unwrap();
+    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(doc).unwrap();
+    let (running, pump) = start_manual(runtime);
+    pump.render(4);
+    running
+        .set_control("p", "schedule", ControlValue::String(NEW.into()))
+        .unwrap();
+    // The block that adopts the reordered groups, and the ones after it.
+    for block in 0..4 {
+        let ((), allocs, frees) = allocator_events(|| pump.block());
+        assert_eq!((allocs, frees), (0, 0), "block {block}");
+    }
 }

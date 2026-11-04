@@ -84,6 +84,8 @@ fn run_block(
 /// Runs feedback group `group` sample by sample, each member in its
 /// per-sample order, so a back-edge observes a one-sample delay whatever
 /// the block size.
+// The frame indexes the inputs, every member's outputs and the carry alike.
+#[allow(clippy::needless_range_loop)]
 fn run_feedback_group(
     graph: &mut CompiledDevelopmentGraph,
     inputs: &[[f32; MAX_BLOCK]],
