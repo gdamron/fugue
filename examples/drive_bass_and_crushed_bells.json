@@ -1,0 +1,95 @@
+{
+  "version": "1.0.0",
+  "title": "Drive: Bass and Crushed Bells",
+  "description": "A filtered sawtooth bass warmed by asymmetric drive, under a triangle arpeggio crushed to a few bits. Try the bass drive's shape (soft, hard, fold) and drive, or the bells' drive for more or less grit.",
+  "modules": [
+    { "id": "clock", "type": "clock", "config": { "bpm": 104.0 } },
+    {
+      "id": "bass_seq",
+      "type": "step_sequencer",
+      "config": {
+        "root_note": 36,
+        "step_count": 8,
+        "gate_length": 0.6,
+        "pattern": [
+          { "note": 0, "gate_length": 0.8 },
+          { "note": 0, "gate_length": 0.3 },
+          { "note": 12, "gate_length": 0.4 },
+          { "note": 0, "gate_length": 0.5 },
+          { "note": 3, "gate_length": 0.8 },
+          { "note": null },
+          { "note": 5, "gate_length": 0.4 },
+          { "note": 7, "gate_length": 0.5 }
+        ]
+      }
+    },
+    { "id": "bass_osc", "type": "oscillator", "config": { "waveform": "sawtooth" } },
+    {
+      "id": "bass_filter",
+      "type": "filter",
+      "config": { "filter_type": "lowpass", "cutoff": 500.0, "resonance": 0.3, "cutoff_mod_depth": 1800.0 }
+    },
+    {
+      "id": "bass_env",
+      "type": "adsr",
+      "config": { "attack": 0.005, "decay": 0.18, "sustain": 0.5, "release": 0.12 }
+    },
+    { "id": "bass_vca", "type": "vca" },
+    {
+      "id": "bass_drive",
+      "type": "drive",
+      "config": { "shape": "asymmetric", "drive": 0.6, "bias": 0.15, "post_tone": -0.3 }
+    },
+    {
+      "id": "bell_seq",
+      "type": "step_sequencer",
+      "config": {
+        "root_note": 72,
+        "step_count": 8,
+        "gate_length": 0.3,
+        "pattern": [
+          { "note": 0 }, { "note": 7 }, { "note": 12 }, { "note": 15 },
+          { "note": 14 }, { "note": 12 }, { "note": 7 }, { "note": 3 }
+        ]
+      }
+    },
+    { "id": "bell_osc", "type": "oscillator", "config": { "waveform": "triangle" } },
+    {
+      "id": "bell_env",
+      "type": "adsr",
+      "config": { "attack": 0.002, "decay": 0.25, "sustain": 0.0, "release": 0.2 }
+    },
+    { "id": "bell_vca", "type": "vca" },
+    {
+      "id": "bell_drive",
+      "type": "drive",
+      "config": { "shape": "bits", "drive": 0.75, "mix": 0.8 }
+    },
+    {
+      "id": "mixer",
+      "type": "mixer",
+      "config": { "channel_count": 2, "levels": [0.8, 0.35], "pans": [0.0, 0.25] }
+    },
+    { "id": "dac", "type": "dac" }
+  ],
+  "connections": [
+    { "from": "clock", "from_port": "beat_x2", "to": "bass_seq", "to_port": "clock" },
+    { "from": "bass_seq", "from_port": "frequency", "to": "bass_osc", "to_port": "frequency" },
+    { "from": "bass_seq", "from_port": "gate", "to": "bass_env", "to_port": "gate" },
+    { "from": "bass_osc", "from_port": "audio", "to": "bass_filter", "to_port": "audio" },
+    { "from": "bass_env", "from_port": "envelope", "to": "bass_filter", "to_port": "cutoff_mod" },
+    { "from": "bass_filter", "from_port": "audio", "to": "bass_vca", "to_port": "audio" },
+    { "from": "bass_env", "from_port": "envelope", "to": "bass_vca", "to_port": "level" },
+    { "from": "bass_vca", "from_port": "audio", "to": "bass_drive", "to_port": "audio" },
+    { "from": "bass_drive", "from_port": "audio", "to": "mixer", "to_port": "audio.0" },
+    { "from": "clock", "from_port": "beat_x4", "to": "bell_seq", "to_port": "clock" },
+    { "from": "bell_seq", "from_port": "frequency", "to": "bell_osc", "to_port": "frequency" },
+    { "from": "bell_seq", "from_port": "gate", "to": "bell_env", "to_port": "gate" },
+    { "from": "bell_osc", "from_port": "audio", "to": "bell_vca", "to_port": "audio" },
+    { "from": "bell_env", "from_port": "envelope", "to": "bell_vca", "to_port": "level" },
+    { "from": "bell_vca", "from_port": "audio", "to": "bell_drive", "to_port": "audio" },
+    { "from": "bell_drive", "from_port": "audio", "to": "mixer", "to_port": "audio.1" },
+    { "from": "mixer", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
+    { "from": "mixer", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
+  ]
+}
