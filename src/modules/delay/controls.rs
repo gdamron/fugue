@@ -7,7 +7,8 @@ pub(super) const DIVISION: ControlIndex = ControlIndex(1);
 pub(super) const BPM: ControlIndex = ControlIndex(2);
 pub(super) const FEEDBACK: ControlIndex = ControlIndex(3);
 pub(super) const GLIDE: ControlIndex = ControlIndex(4);
-pub(super) const TIME_MOD_DEPTH: ControlIndex = ControlIndex(5);
+pub(super) const HOLD: ControlIndex = ControlIndex(5);
+pub(super) const TIME_MOD_DEPTH: ControlIndex = ControlIndex(6);
 
 /// The longest time any delay's controls offer, in seconds.
 pub(super) const LONGEST_SECONDS: f32 = 60.0;
@@ -122,6 +123,12 @@ const DECLS: &[ControlDecl] = &[
         DeclKind::Choice(GLIDES),
         RtValue::U32(0),
         "How a time change is heard: crossfade between read heads, or slew the head like tape",
+    ),
+    ControlDecl::new(
+        "hold",
+        DeclKind::Bool,
+        RtValue::Bool(false),
+        "Stop recording and loop the last division",
     ),
     ControlDecl::new(
         "time_mod_depth",

@@ -7,7 +7,8 @@
 //! loop keeps them within ±1 even past unity feedback. The tempo arrives as
 //! a control or a patched `bpm` input (a clock's `bpm` output), never from
 //! the invention, so a delay set to a dotted eighth follows whatever clock
-//! it is patched to. Time changes never click (see [`heads`]).
+//! it is patched to. Time changes never click (see [`heads`]), and `hold`
+//! freezes the last division into a loop (see [`hold`]).
 //!
 //! # Example Invention
 //!
@@ -38,14 +39,18 @@ use crate::traits::ControlMeta;
 use crate::{Module, MAX_BLOCK};
 
 use self::controls::{
-    BPM, DIVISION, DIVISION_BEATS, FEEDBACK, GLIDE, LONGEST_SECONDS, MOST_FEEDBACK, TABLE, TIME,
-    TIME_MOD_DEPTH,
+    BPM, DIVISION, DIVISION_BEATS, FEEDBACK, GLIDE, HOLD, LONGEST_SECONDS, MOST_FEEDBACK, TABLE,
+    TIME, TIME_MOD_DEPTH,
 };
 use self::heads::{Glide, Heads};
+use self::hold::Hold;
 use self::inputs::{DelayInputs, INPUTS};
 
 mod controls;
 mod heads;
+mod hold;
+#[cfg(test)]
+mod hold_tests;
 mod inputs;
 #[cfg(test)]
 mod tests;
@@ -142,8 +147,8 @@ impl ModuleFactory for DelayFactory {
     }
 }
 
-/// A mono delay line with feedback, a soft clip in the loop and click-free
-/// time changes.
+/// A mono delay line with feedback, a soft clip in the loop, click-free
+/// time changes and a hold loop.
 ///
 /// # Inputs
 /// - `audio`: the signal to delay
@@ -163,6 +168,7 @@ impl ModuleFactory for DelayFactory {
 /// - `feedback`: 0 to 1.1; past 1 the repeats self-oscillate, held within
 ///   ±1 by the soft clip. It glides, so it never clicks.
 /// - `glide`: `crossfade` (default) or `slew` (see [`heads`])
+/// - `hold`: stop recording and loop the last division (see [`hold`])
 /// - `time_mod_depth`: seconds of delay per unit of `time_mod`
 ///
 /// # Config
@@ -179,6 +185,7 @@ pub struct Delay {
     longest: f64,
     line: DelayLine,
     heads: Heads,
+    hold: Hold,
     feedback: LinearRamp,
     // Controls, applied on the thread running the delay.
     time: f32,
@@ -212,8 +219,9 @@ impl Delay {
         let mut delay = Self {
             sample_rate: rate,
             longest,
-            line: DelayLine::new(longest as usize + READ_MARGIN),
+            line: DelayLine::new(longest as usize + READ_MARGIN + Hold::headroom(sample_rate)),
             heads: Heads::new(sample_rate, 1.0, Glide::Crossfade),
+            hold: Hold::new(sample_rate),
             feedback: LinearRamp::new(0.0, gain_ramp_frames(sample_rate)),
             time: 0.25,
             division: 0,
@@ -223,7 +231,7 @@ impl Delay {
             inputs: DelayInputs::new(),
             out: [0.0; MAX_BLOCK],
         };
-        for control in [TIME, DIVISION, BPM, FEEDBACK, GLIDE, TIME_MOD_DEPTH] {
+        for control in [TIME, DIVISION, BPM, FEEDBACK, GLIDE, TIME_MOD_DEPTH, HOLD] {
             if let Some(value) = delay.cells.load(control) {
                 let _ = apply_declared(&mut delay, control, value);
             }
@@ -283,11 +291,15 @@ impl Module for Delay {
                 live += reads.weight * (incoming - live);
             }
             let feedback = self.feedback.next_value();
-            let input = self.inputs.audio[i];
-            let input = if input.is_finite() { input } else { 0.0 };
-            self.line
-                .write_and_advance(soft_clip(input + feedback * live));
-            self.out[i] = live;
+            if self.hold.recording() {
+                let input = self.inputs.audio[i];
+                let input = if input.is_finite() { input } else { 0.0 };
+                let level = self.hold.write_level();
+                self.line
+                    .write_and_advance(soft_clip(input + feedback * live) * level);
+                self.hold.recorded();
+            }
+            self.out[i] = self.hold.next(live, &self.line);
         }
         true
     }
@@ -355,6 +367,15 @@ impl Module for Delay {
             (GLIDE, RtValue::U32(position)) => {
                 let glide = Glide::from_position(position).ok_or(Refusal::Unsupported)?;
                 self.heads.set_glide(glide);
+                value
+            }
+            (HOLD, RtValue::Bool(hold)) => {
+                if hold {
+                    let length = self.time_samples().round() as usize;
+                    self.hold.engage(length, &self.line);
+                } else {
+                    self.hold.release();
+                }
                 value
             }
             _ => return Err(Refusal::Unsupported),
