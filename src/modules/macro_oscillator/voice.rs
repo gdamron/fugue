@@ -92,7 +92,7 @@ impl Voice {
             sample_period: 1.0 / rate,
             fade_step: 1.0 / (CROSSFADE_SECONDS * rate),
             rate_scale: TUNED_RATE / rate,
-            engines: Engines::new(),
+            engines: Engines::new(sample_rate),
             shares,
             envelope: LpgEnvelope::new(),
             gate_audio: LowPassGate::new(sample_rate),

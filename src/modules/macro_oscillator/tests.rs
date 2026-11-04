@@ -171,3 +171,45 @@ fn a_trigger_pings_the_gate() {
         peak(&late)
     );
 }
+
+#[test]
+fn every_model_stays_bounded_at_every_macro_corner() {
+    for model in engines::MODELS {
+        for hz in [30.0, 440.0, 6000.0] {
+            for corner in 0..27 {
+                let [h, t, m] = [corner % 3, corner / 3 % 3, corner / 9].map(|v| v as f32 * 0.5);
+                let mut module = build(json!({
+                    "model": model, "frequency": hz, "harmonics": h, "timbre": t, "morph": m,
+                }));
+                let x = render(module.as_mut(), SR as usize / 10, 256);
+                let peak = x.iter().fold(0.0f32, |p, v| p.max(v.abs()));
+                assert!(
+                    peak.is_finite() && peak < 1.5,
+                    "{model} {hz} Hz {h}/{t}/{m}: {peak}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn each_macro_changes_the_new_models_sound() {
+    let play = |model: &str, key: &str, value: f32| {
+        let mut module = build(json!({ "model": model, "frequency": 220.0, key: value }));
+        render(module.as_mut(), SR as usize / 10, 64)
+    };
+    for model in ["waveshaping", "fm"] {
+        for key in ["harmonics", "timbre", "morph"] {
+            let (low, high) = (play(model, key, 0.1), play(model, key, 0.9));
+            let change = low
+                .iter()
+                .zip(&high)
+                .map(|(a, b)| (a - b).abs())
+                .sum::<f32>();
+            assert!(
+                change / low.len() as f32 > 0.01,
+                "{model}: {key} does nothing"
+            );
+        }
+    }
+}

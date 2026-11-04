@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 20] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 22] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -75,6 +75,16 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 20] = [
         file_name: "macro_oscillator_pluck.json",
         title: "Macro Oscillator Pluck",
         summary: "A sequenced macro oscillator plucked by its own low-pass gate.",
+    },
+    ExampleDefinition {
+        file_name: "macro_oscillator_folded_bass.json",
+        title: "Macro Oscillator Folded Bass",
+        summary: "A wavefolded bassline from the macro oscillator's waveshaping model.",
+    },
+    ExampleDefinition {
+        file_name: "macro_oscillator_fm_bells.json",
+        title: "Macro Oscillator FM Bells",
+        summary: "Inharmonic two-operator FM bells ringing through a long gate decay.",
     },
     ExampleDefinition {
         file_name: "step_sequencer.json",
@@ -250,6 +260,8 @@ mod tests {
                 "drive_bass_and_crushed_bells.json",
                 "limiter_hot_mix.json",
                 "macro_oscillator_pluck.json",
+                "macro_oscillator_folded_bass.json",
+                "macro_oscillator_fm_bells.json",
                 "step_sequencer.json",
                 "chance_groove.json",
                 "drum_map.json",
