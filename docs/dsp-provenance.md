@@ -70,7 +70,10 @@ entry.
 ## Mutable Instruments' eurorack firmware
 
 Much of the first-party DSP work draws on Mutable Instruments' open-source
-eurorack firmware ([github.com/pichenettes/eurorack](https://github.com/pichenettes/eurorack)).
+eurorack firmware ([github.com/pichenettes/eurorack](https://github.com/pichenettes/eurorack);
+the project works from the fork at
+[github.com/gdamron/eurorack](https://github.com/gdamron/eurorack)). Record
+the revision a port came from in its notices entry.
 Its licensing is mixed: the README puts the STM32 projects under MIT, the
 AVR projects under GPL-3.0 and the hardware under CC-BY-SA-3.0. A
 file-by-file audit (2026-11-02) found:
