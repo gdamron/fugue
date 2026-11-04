@@ -24,6 +24,7 @@ pub(crate) use replacing::ReplacingKeys;
 /// - `adsr` - Envelope generator
 /// - `vca` - Voltage controlled amplifier
 /// - `melody` - Algorithmic melody generation
+/// - `chance` - Random rhythms with a repetition loop
 ///
 /// # Example
 ///
@@ -281,9 +282,9 @@ impl Default for ModuleRegistry {
     /// Creates a registry with all built-in module factories.
     fn default() -> Self {
         use crate::modules::{
-            AdsrFactory, AgentFactory, AudioFileSinkFactory, CellSequencerFactory, ClockFactory,
-            CodeFactory, ControlSchedulerFactory, DacFactory, DivisiFactory, FilterFactory,
-            LfoFactory, MelodyFactory, MixerFactory, NoiseFactory, OscillatorFactory,
+            AdsrFactory, AgentFactory, AudioFileSinkFactory, CellSequencerFactory, ChanceFactory,
+            ClockFactory, CodeFactory, ControlSchedulerFactory, DacFactory, DivisiFactory,
+            FilterFactory, LfoFactory, MelodyFactory, MixerFactory, NoiseFactory, OscillatorFactory,
             ReverbFactory, SampleInstrumentFactory, SampleKitFactory, SamplePlayerFactory,
             SampleSlicerFactory, StepSequencerFactory, VcaFactory,
         };
@@ -292,6 +293,7 @@ impl Default for ModuleRegistry {
         reg.register(AgentFactory);
         reg.register(AudioFileSinkFactory);
         reg.register(CellSequencerFactory);
+        reg.register(ChanceFactory);
         reg.register(ClockFactory);
         reg.register(DivisiFactory);
         reg.register(CodeFactory);

@@ -8,6 +8,7 @@
 //! - [`Mixer`] - Multi-channel audio mixer
 //! - [`MelodyGenerator`] - Algorithmic melody generation
 //! - [`StepSequencer`] / [`Step`] - Deterministic step sequencer
+//! - [`Chance`] - Random rhythms with a repetition loop
 //! - [`Adsr`] - Envelope generator
 //! - [`Vca`] - Voltage controlled amplifier
 //! - [`Noise`] - White and pink noise source
@@ -24,6 +25,7 @@ pub mod adsr;
 pub mod agent;
 pub mod audio_file_sink;
 pub mod cell_sequencer;
+pub mod chance;
 pub mod clock;
 pub mod code;
 pub mod control_scheduler;
@@ -59,6 +61,7 @@ pub use audio_file_sink::{
     AudioFileSink, AudioFileSinkFactory, AudioFileSinkHandle, AudioFileSinkStats,
 };
 pub use cell_sequencer::CellSequencer;
+pub use chance::Chance;
 pub use clock::Clock;
 pub use code::CodeControls;
 pub use control_scheduler::{
@@ -97,6 +100,7 @@ pub use youtube_sink::{YoutubeSink, YoutubeSinkHandle, YoutubeSinkStats};
 pub use adsr::AdsrFactory;
 pub use agent::AgentFactory;
 pub use cell_sequencer::CellSequencerFactory;
+pub use chance::ChanceFactory;
 pub use clock::ClockFactory;
 pub use code::CodeFactory;
 pub use control_scheduler::ControlSchedulerFactory;
