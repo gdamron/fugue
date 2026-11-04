@@ -5,6 +5,7 @@
 //! - [`Damper`] - One-pole lowpass filter
 //! - [`Allpass`] - Schroeder allpass diffuser
 //! - [`LinearRamp`] - A value that glides to each new target
+//! - [`BlockRamp`] - A once-per-block value spread across the block
 //! - [`Rng`] - A fast seeded random number generator for the audio thread
 //! - [`PinkFilter`] - Shapes white noise into pink (−3 dB/oct)
 //! - [`OnePole`] - First-order lowpass and highpass
@@ -23,6 +24,7 @@
 
 mod allpass;
 mod band_limited;
+mod block_ramp;
 mod crush;
 mod damper;
 mod dc_blocker;
@@ -43,6 +45,7 @@ mod waveshape;
 
 pub use allpass::Allpass;
 pub use band_limited::{BandLimitedOscillator, Shape};
+pub use block_ramp::{BlockRamp, BlockSteps};
 pub use crush::{bit_step, quantize, SampleHold};
 pub use damper::Damper;
 pub use dc_blocker::{DcBlocker, DC_BLOCKER_CUTOFF_HZ};
