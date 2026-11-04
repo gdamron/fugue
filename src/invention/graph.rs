@@ -57,7 +57,7 @@ pub(crate) mod notes;
 mod process;
 mod publication;
 mod requests;
-mod scc;
+pub(crate) mod scc;
 mod staging;
 pub(crate) mod taps;
 mod unwind;

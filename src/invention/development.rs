@@ -1,6 +1,4 @@
-use crate::control_request::{
-    take_automation, ControlCells, ControlIndex, ControlTable, FrameScope, Refusal, RtValue,
-};
+use crate::control_request::{ControlCells, ControlIndex, ControlTable, Refusal, RtValue};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::invention::graph::RoutingConnection;
 use crate::invention::runtime::{
@@ -30,6 +28,8 @@ mod fan_out;
 #[cfg(test)]
 mod fan_out_tests;
 #[cfg(test)]
+mod feedback_tests;
+#[cfg(test)]
 mod instrument_fan_out_tests;
 #[cfg(test)]
 mod instrument_note_off_tests;
@@ -41,6 +41,7 @@ mod lost_tests;
 mod order_tests;
 #[cfg(test)]
 mod payload_tests;
+mod process;
 #[cfg(test)]
 mod ramp_tests;
 mod replacing;
@@ -54,7 +55,7 @@ mod unwind_tests;
 
 use compiled_graph::{
     enclosure_of, module_indexes_slice, routes_of, unique_port_names, CompiledDevelopmentGraph,
-    ExternalInputRoute, ExternalOutputRoute,
+    ExternalInputRoute, ExternalOutputRoute, Grouping,
 };
 use control_surface::DevelopmentControlSurface;
 use declared_controls::{enclose, DevelopmentControls};
@@ -238,7 +239,6 @@ pub(crate) struct DevelopmentModule {
     name: String,
     input_ports: Vec<&'static str>,
     output_ports: Vec<&'static str>,
-    input_routes: Vec<Vec<ExternalInputRoute>>,
     /// Per-external-input-port block buffer (fed by the parent graph).
     input_buffers: Vec<[f32; MAX_BLOCK]>,
     /// Per-external-output-port block buffer (read by the parent graph).
@@ -297,11 +297,23 @@ impl DevelopmentModule {
                 Some((controls, declared)) => (Some(controls), Some(declared)),
                 None => (None, None),
             };
-        // What the surface orders the inner modules again from when a
-        // payload retargets one (see `retarget`).
+        // The inner modules grouped by their routes, as the main graph
+        // groups its own: each loop runs sample by sample, the rest a block
+        // at a time (see `process`).
+        let routes = routes_of(&runtime.routing, &module_indexes_slice(&module_list));
+        let entries: Vec<usize> = definition
+            .inputs
+            .iter()
+            .filter_map(|input| module_indexes.get(input.to.as_str()).copied())
+            .collect();
+        let grouping = Grouping::of(module_list.len(), &routes, &entries);
+        // What the surface orders the inner groups again from when a
+        // payload retargets one of their modules (see `retarget`).
         let order = InnerOrder {
             ids: module_list.iter().map(|(id, _)| id.clone()).collect(),
-            routes: routes_of(&runtime.routing, &module_indexes_slice(&module_list)),
+            routes,
+            group_of: grouping.group_of.clone(),
+            groups: grouping.groups.len(),
         };
         // The surface keeps the internal directory alive once `runtime` is
         // consumed, so inner schedulers can still resolve schedules.
@@ -368,27 +380,19 @@ impl DevelopmentModule {
             &output_ports,
             &outputs,
         ));
-        let mut graph = CompiledDevelopmentGraph::from_modules(module_list, &runtime.routing)?;
+        let mut graph = CompiledDevelopmentGraph::from_modules(
+            module_list,
+            &runtime.routing,
+            &input_routes,
+            grouping,
+        )?;
 
         // Mark every sub-module input port that receives a signal (from an
         // external input or an internal route) as connected, so modules that
         // arbitrate signal-vs-control use the incoming value.
-        for routes in &input_routes {
+        for (module, routes) in graph.modules.iter_mut().zip(&graph.routes) {
             for route in routes {
-                if let Some(module) = graph.modules.get_mut(route.module_index) {
-                    module
-                        .module_mut()
-                        .set_input_connected(route.port_index, true);
-                }
-            }
-        }
-        for to_module in 0..graph.input_routes.len() {
-            let count = graph.input_routes[to_module].len();
-            for c in 0..count {
-                let to_port = graph.input_routes[to_module][c].to_port;
-                if let Some(module) = graph.modules.get_mut(to_module) {
-                    module.module_mut().set_input_connected(to_port, true);
-                }
+                module.module_mut().set_input_connected(route.to_port, true);
             }
         }
 
@@ -400,7 +404,6 @@ impl DevelopmentModule {
                 name: name.to_string(),
                 input_ports,
                 output_ports,
-                input_routes,
                 input_buffers: vec![[0.0; MAX_BLOCK]; input_count],
                 output_buffers: vec![[0.0; MAX_BLOCK]; output_count],
                 outputs,
@@ -411,108 +414,6 @@ impl DevelopmentModule {
             control_surface,
         ))
     }
-
-    /// Processes the internal sub-graph a whole block at a time (acyclic case).
-    /// Each internal module's `process(frames)` is called once per block,
-    /// restoring block amortization through nested voices.
-    fn process_block(&mut self, frames: usize) {
-        // Feed external input ports (overwrite, as the prior dev module did).
-        for index in 0..self.input_routes.len() {
-            for r in 0..self.input_routes[index].len() {
-                let mi = self.input_routes[index][r].module_index;
-                let pp = self.input_routes[index][r].port_index;
-                let dst = self.graph.modules[mi].module_mut().input_block_mut(pp);
-                dst[..frames].copy_from_slice(&self.input_buffers[index][..frames]);
-            }
-        }
-
-        self.graph.current_sample += frames as u64;
-
-        // Process internal modules full-block in topological order.
-        for oi in 0..self.graph.process_order.len() {
-            let m = self.graph.process_order[oi];
-            for c in 0..self.graph.input_routes[m].len() {
-                let conn = self.graph.input_routes[m][c];
-                let base = conn.from_port * MAX_BLOCK;
-                let dst = self.graph.modules[m]
-                    .module_mut()
-                    .input_block_mut(conn.to_port);
-                dst[..frames]
-                    .copy_from_slice(&self.graph.out_bufs[conn.from_module][base..base + frames]);
-            }
-
-            take_automation(self.graph.modules[m].module_mut());
-            self.graph.modules[m].module_mut().process(frames);
-
-            let n_out = self.graph.out_counts[m];
-            for p in 0..n_out {
-                let base = p * MAX_BLOCK;
-                let src = self.graph.modules[m].module().output_block(p);
-                self.graph.out_bufs[m][base..base + frames].copy_from_slice(&src[..frames]);
-            }
-        }
-
-        // Cache external output ports.
-        for oi in 0..self.outputs.len() {
-            let from = self.outputs[oi].module_index;
-            let base = self.outputs[oi].port_index * MAX_BLOCK;
-            self.output_buffers[oi][..frames]
-                .copy_from_slice(&self.graph.out_bufs[from][base..base + frames]);
-        }
-    }
-
-    /// Processes the internal sub-graph sample-by-sample. Used only when the
-    /// sub-graph contains a feedback loop, where back-edges must observe a
-    /// one-sample delay (the pre-block behavior).
-    fn process_per_sample(&mut self, frames: usize) {
-        for i in 0..frames {
-            // Where an inner scheduler's entries fall (see
-            // `control_request::hold`).
-            let _frame_zero = FrameScope::frame(i);
-            for (index, routes) in self.input_routes.iter().enumerate() {
-                let value = self.input_buffers[index][i];
-                for route in routes {
-                    if let Some(module) = self.graph.modules.get_mut(route.module_index) {
-                        module.module_mut().input_block_mut(route.port_index)[0] = value;
-                    }
-                }
-            }
-
-            self.graph.current_sample += 1;
-
-            for oi in 0..self.graph.process_order.len() {
-                let module_index = self.graph.process_order[oi];
-                let count = self.graph.input_routes[module_index].len();
-                for c in 0..count {
-                    let conn = self.graph.input_routes[module_index][c];
-                    let input_value = self
-                        .graph
-                        .modules
-                        .get(conn.from_module)
-                        .map(|module| module.module().output_block(conn.from_port)[0])
-                        .unwrap_or(0.0);
-                    if let Some(module) = self.graph.modules.get_mut(module_index) {
-                        module.module_mut().input_block_mut(conn.to_port)[0] = input_value;
-                    }
-                }
-
-                if let Some(module) = self.graph.modules.get_mut(module_index) {
-                    take_automation(module.module_mut());
-                    module.module_mut().process(1);
-                }
-            }
-
-            for (oi, output) in self.outputs.iter().enumerate() {
-                let value = self
-                    .graph
-                    .modules
-                    .get(output.module_index)
-                    .map(|module| module.module().output_block(output.port_index)[0])
-                    .unwrap_or(0.0);
-                self.output_buffers[oi][i] = value;
-            }
-        }
-    }
 }
 
 impl Module for DevelopmentModule {
@@ -521,11 +422,7 @@ impl Module for DevelopmentModule {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        if self.graph.has_cycle {
-            self.process_per_sample(frames);
-        } else {
-            self.process_block(frames);
-        }
+        self.process_graph(frames);
         true
     }
 
@@ -553,7 +450,7 @@ impl Module for DevelopmentModule {
             return Err((Refusal::Unsupported, payload));
         };
         let modules = &mut self.graph.modules;
-        apply_reordered(&mut self.graph.process_order, payload, |payload| {
+        apply_reordered(&mut self.graph.group_order, payload, |payload| {
             controls.apply_payload(modules, control, payload)
         })
     }

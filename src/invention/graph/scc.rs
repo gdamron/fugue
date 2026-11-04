@@ -1,10 +1,12 @@
+use super::ProcessGroup;
+
 /// Computes strongly-connected components of `adj` (downstream adjacency) via
 /// an iterative Tarjan's algorithm.
 ///
 /// Returns `(comp_id, comps)` where `comp_id[node]` is the node's component
 /// index and `comps` lists each component's members in **topological order**
 /// (sources before sinks).
-pub(super) fn tarjan_scc(adj: &[Vec<usize>], n: usize) -> (Vec<usize>, Vec<Vec<usize>>) {
+pub(crate) fn tarjan_scc(adj: &[Vec<usize>], n: usize) -> (Vec<usize>, Vec<Vec<usize>>) {
     const UNVISITED: usize = usize::MAX;
 
     let mut index = vec![UNVISITED; n];
@@ -76,4 +78,94 @@ pub(super) fn tarjan_scc(adj: &[Vec<usize>], n: usize) -> (Vec<usize>, Vec<Vec<u
     }
 
     (comp_id, comps)
+}
+
+/// Reverse post-order of a depth-first walk along `adj` (downstream
+/// adjacency), starting from each unvisited node in index order and
+/// following edges in list order: a topological order when `adj` has no
+/// loop, and the per-sample order of a feedback group's members when it
+/// has.
+pub(crate) fn topological_order(adj: &[Vec<usize>]) -> Vec<usize> {
+    topological_order_from(adj, &[])
+}
+
+/// [`topological_order`], with the walk starting from `first`, in order,
+/// before the rest in index order: where the graph is entered decides
+/// which route of a loop it reaches last, and so which is delayed.
+pub(crate) fn topological_order_from(adj: &[Vec<usize>], first: &[usize]) -> Vec<usize> {
+    let n = adj.len();
+    // 0 = unvisited, 1 = on stack (in progress), 2 = finished.
+    let mut state = vec![0_u8; n];
+    let mut order: Vec<usize> = Vec::with_capacity(n);
+
+    for start in first.iter().copied().chain(0..n) {
+        if state[start] != 0 {
+            continue;
+        }
+
+        let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
+        state[start] = 1;
+
+        while let Some((node, idx)) = stack.last_mut() {
+            let node = *node;
+            if *idx < adj[node].len() {
+                let next = adj[node][*idx];
+                *idx += 1;
+                // Back-edge (on stack) or already finished: skip.
+                if state[next] == 0 {
+                    state[next] = 1;
+                    stack.push((next, 0));
+                }
+            } else {
+                let (finished, _) = stack.pop().unwrap();
+                state[finished] = 2;
+                order.push(finished);
+            }
+        }
+    }
+
+    order.reverse();
+    order
+}
+
+/// Each node's position in `order`.
+pub(crate) fn positions(order: &[usize]) -> Vec<usize> {
+    let mut pos = vec![0usize; order.len()];
+    for (i, &m) in order.iter().enumerate() {
+        pos[m] = i;
+    }
+    pos
+}
+
+/// The process groups of `adj`: its strongly-connected components in
+/// topological order, each member list ordered by `pos` (see
+/// [`topological_order`]), and a group a feedback group when it has more
+/// than one member or a self-loop. Returns the groups and the group of
+/// each node.
+pub(crate) fn process_groups(adj: &[Vec<usize>], pos: &[usize]) -> (Vec<ProcessGroup>, Vec<usize>) {
+    let n = adj.len();
+    let (_, comps) = tarjan_scc(adj, n);
+    let groups: Vec<ProcessGroup> = comps
+        .into_iter()
+        .map(|mut members| {
+            members.sort_by_key(|&m| pos[m]);
+            let feedback = members.len() > 1 || adj[members[0]].contains(&members[0]);
+            ProcessGroup { members, feedback }
+        })
+        .collect();
+    let mut group_of = vec![0; n];
+    for (g, group) in groups.iter().enumerate() {
+        for &m in &group.members {
+            group_of[m] = g;
+        }
+    }
+    (groups, group_of)
+}
+
+/// Whether a route from `from` to `to` is a back-edge: both in one group,
+/// with the source processed at or after the destination in the
+/// per-sample order, so the destination reads the source's previous
+/// sample.
+pub(crate) fn is_back_edge(group_of: &[usize], pos: &[usize], from: usize, to: usize) -> bool {
+    group_of[from] == group_of[to] && pos[from] >= pos[to]
 }
