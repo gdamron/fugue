@@ -6,6 +6,7 @@
 //! - [`Allpass`] - Schroeder allpass diffuser
 //! - [`LinearRamp`] - A value that glides to each new target
 //! - [`BlockRamp`] - A once-per-block value spread across the block
+//! - [`Svf`] - Resonant state-variable filter (lowpass, bandpass, highpass, notch)
 //! - [`Rng`] - A fast seeded random number generator for the audio thread
 //! - [`PinkFilter`] - Shapes white noise into pink (−3 dB/oct)
 //! - [`OnePole`] - First-order lowpass and highpass
@@ -40,6 +41,7 @@ mod pink;
 mod ramp;
 mod rng;
 mod sine_table;
+mod svf;
 mod tilt;
 mod waveshape;
 
@@ -62,5 +64,6 @@ pub use pink::PinkFilter;
 pub use ramp::LinearRamp;
 pub use rng::Rng;
 pub use sine_table::{cosine, sine};
+pub use svf::{Svf, SvfOutput, SVF_MIN_CUTOFF_HZ};
 pub use tilt::{Tilt, TILT_PIVOT_HZ, TILT_RANGE_DB};
 pub use waveshape::{Curve, Waveshaper};
