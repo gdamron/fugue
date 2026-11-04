@@ -143,29 +143,31 @@ fn analog_fold(x: &[f64; FOLD_SIZE]) -> [f64; FOLD_SIZE] {
 }
 
 /// The modulator ratios `harmonics` steps through: sub-octaves, simple
-/// ratios, unisons and octaves detuned 16 cents flat, and a few inharmonic
-/// ones for bells.
+/// ratios, detuned copies of the sub-octave, unison and octave (beating
+/// against the pure ratio), and a few inharmonic ones for bells.
 ///
-/// The original detunes those three 16 cents sharp, after the pure ratio,
-/// which puts the middle of `harmonics` on a detuned octave: a sideband
-/// then sits 37 cents above the fundamental and outweighs it on high
-/// notes, so the default voice sounds out of tune. Detuning them flat,
-/// before the pure ratio, keeps the same beating sounds and puts the middle
-/// on a pure octave (odd harmonics, exactly in tune).
+/// The original detunes the unison and octave 16 cents sharp, after the
+/// pure ratio, which puts the middle of `harmonics` on a detuned octave: a
+/// sideband then sits 37 cents above the fundamental and outweighs it on
+/// high notes, so the default voice sounds out of tune. Detuning those two
+/// flat, before the pure ratio, keeps the same beating sounds and puts the
+/// middle on a pure octave (odd harmonics, exactly in tune). The
+/// sub-octave keeps its sharp copy, so the bottom stays a pure 0.5.
 fn fm_ratio_list() -> [f64; 23] {
     use std::f64::consts::SQRT_2;
-    let detune = (-16.0f64 / 1200.0).exp2();
+    let sharp = (16.0f64 / 1200.0).exp2();
+    let flat = 1.0 / sharp;
     [
-        0.5 * detune,
         0.5,
+        0.5 * sharp,
         SQRT_2 / 2.0,
         PI / 4.0,
-        detune,
+        flat,
         1.0,
         SQRT_2,
         PI / 2.0,
         7.0 / 4.0,
-        2.0 * detune,
+        2.0 * flat,
         2.0,
         9.0 / 4.0,
         11.0 / 4.0,
@@ -271,14 +273,29 @@ mod tests {
     }
 
     #[test]
-    fn fm_ratios_rise_through_plateaus_from_below_an_octave_down_to_three_up() {
+    fn fm_ratios_rise_through_plateaus_from_an_octave_down_to_three_up() {
         let r = &tables().fm_ratios;
-        assert!((r[0] + 12.16).abs() < 1e-5);
+        assert!((r[0] + 12.0).abs() < 1e-5);
         assert!((r[RATIO_STEPS + 1] - 36.0).abs() < 1e-5);
         assert!(r.windows(2).all(|w| w[1] >= w[0]));
         // The middle sits on a plateau at a pure octave.
-        for i in RATIO_STEPS / 2 - 1..=RATIO_STEPS / 2 + 1 {
-            assert!((r[i] - 12.0).abs() < 1e-5, "{i}: {}", r[i]);
-        }
+        let middle = &r[RATIO_STEPS / 2 - 1..=RATIO_STEPS / 2 + 1];
+        assert!(middle.iter().all(|v| (v - 12.0).abs() < 1e-5), "{middle:?}");
+        // π (for bells) holds a plateau further up.
+        let pi = 12.0 * std::f32::consts::PI.log2();
+        assert!(r[85..=87].iter().all(|v| (v - pi).abs() < 1e-4));
+    }
+
+    /// Spot values computed from the original Python formulas.
+    #[test]
+    fn tables_match_the_reference_formulas() {
+        let t = tables();
+        let close = |a: f32, b: f64| (f64::from(a) - b).abs() < 1e-5;
+        assert!(close(t.shapers[3][SHAPER_HALF + 64], 0.758_714_1)); // bump(0.5)
+        assert!(close(t.shapers[0][SHAPER_HALF + 32], 0.464_803_5)); // inverse_tan(0.25)
+        assert!(close(t.fold[300], -0.502_949_7));
+        assert!(close(t.fold[100], -0.827_300_4));
+        assert!(close(t.fold_2[300], -0.658_519_4));
+        assert!(close(t.fold_2[100], 0.566_553_9));
     }
 }

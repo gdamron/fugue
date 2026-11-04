@@ -76,8 +76,8 @@ impl WaveshapingEngine {
 
             // The slope may overshoot ±1 a touch at its corners: hold the
             // read inside the curve rather than wrapping to its far end.
-            let position = (127.0 * *o + 128.0).clamp(0.0, (SHAPER_SIZE - 2) as f32);
-            let i = position as usize;
+            let position = (127.0 * *o + 128.0).clamp(0.0, (SHAPER_SIZE - 1) as f32);
+            let i = (position as usize).min(SHAPER_SIZE - 2);
             let f = position - i as f32;
             let x = first[i] + (first[i + 1] - first[i]) * f;
             let y = second[i] + (second[i + 1] - second[i]) * f;

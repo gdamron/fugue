@@ -111,6 +111,13 @@ impl Voice {
         }
     }
 
+    /// Starts the voice on `model` (below [`MODEL_COUNT`]) with no
+    /// crossfade, as a freshly built voice would.
+    pub fn start_on(&mut self, model: usize) {
+        self.shares = [0.0; MODEL_COUNT];
+        self.shares[model] = 1.0;
+    }
+
     /// Whether `value` is a trigger's rising edge, with hysteresis so a
     /// slow or noisy edge counts once.
     pub fn trigger_edge(&mut self, value: f32) -> bool {

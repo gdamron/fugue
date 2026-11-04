@@ -138,7 +138,7 @@ mod tests {
     #[test]
     fn harmonics_reaches_unison_and_the_extremes() {
         let table = &tables().fm_ratios;
-        assert!((ratio_interval(table, 0.0) + 12.16).abs() < 1e-4);
+        assert!((ratio_interval(table, 0.0) + 12.0).abs() < 1e-4);
         assert_eq!(ratio_interval(table, 0.5), 12.0);
         assert!((ratio_interval(table, 1.0) - 36.0).abs() < 1e-4);
         // Some setting of harmonics lands exactly on unison.
