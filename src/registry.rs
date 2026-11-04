@@ -309,6 +309,7 @@ impl Default for ModuleRegistry {
         reg.register(GainFactory);
         reg.register(FollowerFactory);
         reg.register(GainCurveFactory);
+        reg.register(crate::modules::MacroOscillatorFactory);
         reg.register(AdsrFactory);
         reg.register(VcaFactory);
         reg.register(MelodyFactory);

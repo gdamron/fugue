@@ -127,8 +127,13 @@ fn every_control_rebuilds_from_the_value_recorded_in_its_config() {
                 (applied != before).then_some(applied)
             });
             let Some(applied) = applied else {
+                // A choice of one option has nothing to change to.
+                let one_option = matches!(
+                    &meta.kind,
+                    ControlKind::String { options: Some(options) } if options.len() < 2
+                );
                 // Read-only controls take no write; anything else must.
-                if surface.set_control(key, before.clone()).is_ok() {
+                if !one_option && surface.set_control(key, before.clone()).is_ok() {
                     misses.push(format!("{name}: no probe changed it"));
                 }
                 continue;

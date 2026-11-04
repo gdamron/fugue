@@ -1,0 +1,99 @@
+//! The macro oscillator's declared controls.
+
+use super::engines::MODELS;
+use crate::control_request::{ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue};
+
+pub(super) const MODEL: ControlIndex = ControlIndex(0);
+pub(super) const FREQUENCY: ControlIndex = ControlIndex(1);
+pub(super) const FREQUENCY_MOD_DEPTH: ControlIndex = ControlIndex(2);
+pub(super) const HARMONICS: ControlIndex = ControlIndex(3);
+pub(super) const TIMBRE: ControlIndex = ControlIndex(4);
+pub(super) const MORPH: ControlIndex = ControlIndex(5);
+pub(super) const LEVEL: ControlIndex = ControlIndex(6);
+pub(super) const DECAY: ControlIndex = ControlIndex(7);
+
+/// The shortest and longest low-pass gate decay, in seconds to fall 60 dB.
+pub(super) const MIN_DECAY: f32 = 0.1;
+pub(super) const MAX_DECAY: f32 = 15.0;
+
+/// A 0-to-1 macro control.
+const fn macro_control(key: &'static str, description: &'static str) -> ControlDecl {
+    ControlDecl::new(
+        key,
+        DeclKind::Number { min: 0.0, max: 1.0 },
+        RtValue::F32(0.5),
+        description,
+    )
+    .precision(3)
+    .clamped(0.0, 1.0)
+}
+
+const DECLS: &[ControlDecl] = &[
+    ControlDecl::new(
+        "model",
+        DeclKind::Choice(MODELS),
+        RtValue::U32(0),
+        "Synthesis model; a change crossfades",
+    ),
+    ControlDecl::new(
+        "frequency",
+        DeclKind::Number {
+            min: 20.0,
+            max: 20000.0,
+        },
+        RtValue::F32(440.0),
+        "Frequency in Hz",
+    )
+    .unit("Hz")
+    .log()
+    .precision(1)
+    .clamped(0.0, f32::MAX),
+    ControlDecl::new(
+        "frequency_mod_depth",
+        DeclKind::Number {
+            min: 0.0,
+            max: 1000.0,
+        },
+        RtValue::F32(0.0),
+        "Frequency modulation depth in Hz",
+    )
+    .unit("Hz"),
+    macro_control(
+        "harmonics",
+        "Harmonic content; for virtual analog, the second oscillator's detune",
+    ),
+    macro_control(
+        "timbre",
+        "Brightness; for virtual analog, pulse width and sync",
+    ),
+    macro_control(
+        "morph",
+        "Waveform morph; for virtual analog, saw to triangle",
+    ),
+    ControlDecl::new(
+        "level",
+        DeclKind::Number { min: 0.0, max: 1.0 },
+        RtValue::F32(1.0),
+        "Output level, 0 to 1",
+    )
+    .clamped(0.0, 1.0),
+    ControlDecl::new(
+        "decay",
+        DeclKind::Number {
+            min: MIN_DECAY,
+            max: MAX_DECAY,
+        },
+        RtValue::F32(1.0),
+        "Time for the low-pass gate to fall 60 dB after a trigger, in seconds",
+    )
+    .unit("s")
+    .log()
+    .clamped(MIN_DECAY, MAX_DECAY),
+];
+
+pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);
+
+/// Each control's starting value, in table order.
+pub(super) fn defaults() -> impl Iterator<Item = RtValue> {
+    DECLS.iter().map(|decl| decl.default)
+}

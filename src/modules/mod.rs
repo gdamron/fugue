@@ -11,6 +11,7 @@
 //! - [`Chance`] - Random rhythms and melodies in key, with a repetition loop
 //! - [`Adsr`] - Envelope generator
 //! - [`Vca`] - Voltage controlled amplifier
+//! - [`MacroOscillator`] - One voice with a choice of synthesis models
 //! - [`Noise`] - White and pink noise source
 //! - [`Drive`] - Saturation, distortion and bit/rate reduction
 //! - [`DacModule`] - Audio output sink module
@@ -42,7 +43,7 @@ pub mod gain_curve;
 pub(crate) mod indexed_names;
 pub mod lfo;
 pub mod limiter;
-mod macro_oscillator;
+pub mod macro_oscillator;
 #[cfg(test)]
 mod lock_scan_tests;
 pub mod melody;
@@ -92,6 +93,7 @@ pub use gain::{Gain, GainFactory};
 pub use gain_curve::{GainCurve, GainCurveFactory};
 pub use lfo::Lfo;
 pub use limiter::{Limiter, LimiterFactory};
+pub use macro_oscillator::{MacroOscillator, MacroOscillatorFactory};
 pub use melody::MelodyGenerator;
 
 pub use drive::{Drive, DriveFactory};
