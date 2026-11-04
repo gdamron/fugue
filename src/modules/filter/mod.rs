@@ -426,10 +426,12 @@ impl Module for Filter {
             }
             (FILTER_TYPE, RtValue::U32(position)) => {
                 let filter_type = FilterType::from_position(position).ok_or(Refusal::Invalid)?;
-                if self.filter_type.is_eq() && !filter_type.is_eq() {
+                if self.filter_type.is_eq() && !filter_type.is_eq() && self.steep.is_live() {
                     // The second stage stood still while an EQ response
-                    // played: start it from rest, not from where it stopped.
+                    // played: start it from rest, and fade it back in rather
+                    // than expose the cold stage at once.
                     self.second_stage.reset();
+                    self.steep.fade_in_again(self.glide.is_heard());
                 }
                 self.filter_type = filter_type;
                 value

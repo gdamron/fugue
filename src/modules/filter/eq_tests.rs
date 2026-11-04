@@ -160,17 +160,26 @@ fn a_steep_bandpass_is_as_loud_at_its_centre() {
 }
 
 #[test]
-fn returning_from_an_eq_response_restarts_the_second_stage() {
-    let mut filter = Filter::new(RATE).with_cutoff(200.0);
-    filter.set_control("slope", 1.0).unwrap();
-    run(&mut filter, 0, 2_000, 100.0);
-    filter.set_filter_type(FilterType::Bell);
-    run(&mut filter, 2_000, 2_000, 100.0);
-    filter.set_filter_type(FilterType::LowPass);
-    assert_eq!(
-        filter
-            .second_stage
-            .tick(&Coefficients::stage(0.0, 1.0), 0.0),
-        (0.0, 0.0)
-    );
+fn returning_from_an_eq_response_fades_the_second_stage_back_in() {
+    // The largest step after switching a flat bell back to a 1 kHz lowpass
+    // under a 100 Hz tone. The lowpass lags the tone, so the switch itself
+    // steps a little; a cold second stage at full share would step by most
+    // of the tone's height.
+    let largest_step = |slope: f32| {
+        let mut filter = Filter::new(RATE).with_cutoff(1000.0);
+        filter.set_control("slope", slope).unwrap();
+        run(&mut filter, 0, 2_000, 100.0);
+        filter.set_filter_type(FilterType::Bell);
+        let before = run(&mut filter, 2_000, 2_000, 100.0);
+        filter.set_filter_type(FilterType::LowPass);
+        let after = run(&mut filter, 4_000, 2_000, 100.0);
+        let step = (after[0] - before[before.len() - 1]).abs();
+        after
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(step, f32::max)
+    };
+    let gentle = largest_step(0.0);
+    let steep = largest_step(1.0);
+    assert!(steep < 1.5 * gentle, "{steep} against {gentle}");
 }

@@ -19,6 +19,8 @@ const MS_PER_SECOND: f32 = 1000.0;
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Crossfade {
     share: LinearRamp,
+    /// Where the share rests or is heading.
+    on: bool,
 }
 
 impl Crossfade {
@@ -27,15 +29,27 @@ impl Crossfade {
         let frames = (sample_rate as f32 * FADE_MS / MS_PER_SECOND).round() as u32;
         Self {
             share: LinearRamp::new(share(on), frames),
+            on,
         }
     }
 
     /// Heads on or off: fading when `heard`, at once before.
     pub(super) fn switch(&mut self, on: bool, heard: bool) {
+        self.on = on;
         if heard {
             self.share.set_target(share(on));
         } else {
             self.share.snap(share(on));
+        }
+    }
+
+    /// Starts again from off, heading where it was heading: for when the
+    /// signal faded in has restarted from rest and must not be exposed at
+    /// once.
+    pub(super) fn fade_in_again(&mut self, heard: bool) {
+        self.share.snap(0.0);
+        if self.on {
+            self.switch(true, heard);
         }
     }
 
