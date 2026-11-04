@@ -89,7 +89,7 @@ fn fold(x: f32) -> f32 {
 }
 
 /// The integral of [`fold`] from 0: a chain of parabolas, periodic, within
-/// [0, ½].
+/// [0, 1].
 fn fold_antiderivative(x: f64) -> f64 {
     let phase = (x + 1.0) * 0.25;
     // Where x sits in its period, 0 to 4, from the trough at −1.

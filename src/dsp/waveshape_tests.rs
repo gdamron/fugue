@@ -27,7 +27,7 @@ fn the_curves_have_their_shapes() {
     assert_eq!(Curve::Hard.apply(2.0), 1.0);
     assert_eq!(Curve::Hard.apply(-0.25), -0.25);
     assert_eq!(Curve::Fold.apply(1.0), 1.0);
-    assert!(Curve::Fold.apply(1.5).abs() - 0.5 < 1e-6);
+    assert!((Curve::Fold.apply(1.5) - 0.5).abs() < 1e-6);
     assert!(Curve::Fold.apply(2.0).abs() < 1e-6);
     assert!((Curve::Fold.apply(-3.0) - 1.0).abs() < 1e-6);
     assert_eq!(Curve::Asymmetric.apply(5.0), 1.0);
