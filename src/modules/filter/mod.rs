@@ -49,8 +49,11 @@ use crate::Module;
 use self::controls::{CUTOFF, CUTOFF_MOD_DEPTH, FILTER_TYPE, RESONANCE, TABLE};
 
 mod controls;
+mod glide;
 mod inputs;
 mod outputs;
+
+pub use self::glide::GLIDE_MS;
 
 /// Filter type selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -128,6 +131,8 @@ pub struct Filter {
     filter_type: FilterType,
     cutoff_mod_depth: f32,
     cells: Arc<ControlCells>,
+    // Where cutoff and resonance writes are on their way to the controls.
+    glide: glide::ControlGlide,
 
     // TPT SVF integrator state
     ic1eq: f32,
@@ -168,6 +173,7 @@ impl Filter {
             filter_type: FilterType::LowPass,
             cutoff_mod_depth: 5000.0,
             cells,
+            glide: glide::ControlGlide::new(sample_rate, 1000.0, 0.0),
             ic1eq: 0.0,
             ic2eq: 0.0,
             inputs: inputs::FilterInputs::new(),
@@ -290,32 +296,30 @@ impl Module for Filter {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        // Scalar controls are block-rate. Cutoff, cutoff CV, and resonance
-        // signal inputs remain audio-rate, and feedback groups call process(1).
-        let control_cutoff = if self.inputs.cutoff_connected() {
-            0.0
-        } else {
-            self.cutoff
-        };
-        let control_resonance = if self.inputs.resonance_connected() {
-            0.0
-        } else {
-            self.resonance
-        };
+        // Cutoff and resonance controls hold still except while a write
+        // glides in (see `glide`). Cutoff, cutoff CV, and resonance signal
+        // inputs remain audio-rate, and feedback groups call process(1).
+        let cutoff_connected = self.inputs.cutoff_connected();
+        let resonance_connected = self.inputs.resonance_connected();
         let cutoff_mod_depth = self.cutoff_mod_depth;
         let filter_type = self.filter_type;
 
         let mut i = 0;
         while i < frames {
+            let cutoff = self.glide.next_cutoff(self.cutoff);
+            let resonance = self.glide.next_resonance(self.resonance);
             let audio = self.process_sample_with(
                 i,
-                control_cutoff,
-                control_resonance,
+                if cutoff_connected { 0.0 } else { cutoff },
+                if resonance_connected { 0.0 } else { resonance },
                 cutoff_mod_depth,
                 filter_type,
             );
             self.outputs.set(i, audio);
             i += 1;
+        }
+        if frames > 0 {
+            self.glide.heard();
         }
         true
     }
@@ -358,10 +362,12 @@ impl Module for Filter {
         let applied = match (control, value) {
             (CUTOFF, RtValue::F32(cutoff)) => {
                 self.cutoff = cutoff.clamp(20.0, 20000.0);
+                self.glide.cutoff_to(self.cutoff);
                 RtValue::F32(self.cutoff)
             }
             (RESONANCE, RtValue::F32(resonance)) => {
                 self.resonance = resonance.clamp(0.0, 1.0);
+                self.glide.resonance_to(self.resonance);
                 RtValue::F32(self.resonance)
             }
             (FILTER_TYPE, RtValue::U32(position)) => {
@@ -439,6 +445,8 @@ impl ModuleFactory for FilterFactory {
     }
 }
 
+#[cfg(test)]
+mod glide_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
