@@ -50,6 +50,8 @@ pub(super) struct Block {
     pub gate: Gate,
     /// The gate's `decay` mapped to the 0-to-1 scale the gate was tuned on.
     pub decay: f32,
+    /// Whether a trigger rose during the block, gating or not.
+    pub trigger: bool,
     /// The key and scale chords are built in.
     pub key: u8,
     pub scale: u8,
@@ -161,6 +163,7 @@ impl Voice {
             timbre: block.timbre,
             morph: block.morph,
             accent,
+            trigger: block.trigger,
             key: block.key,
             scale: block.scale,
         };
@@ -318,6 +321,7 @@ mod tests {
             morph: 0.5,
             gate,
             decay: 0.5,
+            trigger: false,
             key: 0,
             scale: 0,
         }

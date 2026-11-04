@@ -2,6 +2,7 @@
 
 mod grainlet;
 mod harmonic;
+mod impulse_train;
 mod slope;
 mod string_synth;
 mod variable_saw;
@@ -10,6 +11,7 @@ mod z;
 
 pub(super) use grainlet::GrainletOscillator;
 pub(super) use harmonic::{HarmonicOscillator, HARMONIC_BATCH};
+pub(super) use impulse_train::ImpulseTrainOscillator;
 pub(super) use slope::SlopeOscillator;
 pub(super) use string_synth::{StringSynthOscillator, STOPS};
 pub(super) use variable_saw::VariableSawOscillator;

@@ -1,0 +1,46 @@
+{
+  "version": "1.0.0",
+  "title": "Macro Oscillator Vowel Chant",
+  "description": "A low chant on a macro oscillator's speech model: a glottal pulse through five formants holds an open vowel in a low register, and each note's trigger drops the pitch and first formant for 50 ms, a soft consonant at the start of every syllable.",
+  "modules": [
+    { "id": "clock", "type": "clock", "config": { "bpm": 90.0 } },
+    {
+      "id": "seq",
+      "type": "step_sequencer",
+      "config": {
+        "root_note": 45,
+        "step_count": 8,
+        "gate_length": 0.7,
+        "pattern": [
+          { "note": 0 },
+          { "note": 0 },
+          { "note": 3 },
+          { "note": 0 },
+          { "note": 5 },
+          { "note": 3 },
+          { "note": 0 },
+          { "note": -2 }
+        ]
+      }
+    },
+    {
+      "id": "voice",
+      "type": "macro_oscillator",
+      "config": {
+        "model": "speech",
+        "harmonics": 0.45,
+        "timbre": 0.2,
+        "morph": 0.25,
+        "decay": 1.2,
+        "level": 0.9
+      }
+    },
+    { "id": "dac", "type": "dac" }
+  ],
+  "connections": [
+    { "from": "clock", "from_port": "beat", "to": "seq", "to_port": "clock" },
+    { "from": "seq", "from_port": "frequency", "to": "voice", "to_port": "frequency" },
+    { "from": "seq", "from_port": "gate", "to": "voice", "to_port": "trigger" },
+    { "from": "voice", "from_port": "audio", "to": "dac", "to_port": "audio" }
+  ]
+}
