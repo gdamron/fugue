@@ -17,9 +17,15 @@ pub(super) const RANGE: ControlIndex = ControlIndex(8);
 pub(super) const REPETITION: ControlIndex = ControlIndex(9);
 pub(super) const LOOP_LENGTH: ControlIndex = ControlIndex(10);
 pub(super) const SEED: ControlIndex = ControlIndex(11);
+pub(super) const RATE: ControlIndex = ControlIndex(12);
+pub(super) const JITTER: ControlIndex = ControlIndex(13);
 
 /// The rhythm modes, in [`super::rhythm::Mode`] order.
 pub(super) const MODES: &[&str] = &["complementary", "independent", "divider"];
+
+/// Steps per clock pulse, in [`super::timing::Rate`] order: a step every
+/// 4th, 3rd or 2nd pulse, one per pulse, or 2 to 4 per pulse.
+pub(super) const RATES: &[&str] = &["div4", "div3", "div2", "x1", "x2", "x3", "x4"];
 
 /// The longest repetition loop, in steps.
 pub(super) const MAX_LOOP: usize = 16;
@@ -133,6 +139,19 @@ const DECLS: &[ControlDecl] = &[
     )
     .clamped(UNSEEDED, f32::MAX)
     .whole(),
+    ControlDecl::new(
+        "rate",
+        DeclKind::Choice(RATES),
+        RtValue::U32(3),
+        "Steps per clock pulse: div4 to div2 step every few pulses, x2 to x4 \
+         subdivide each pulse (from the second pulse, once the clock's \
+         period is known)",
+    ),
+    unit(
+        "jitter",
+        0.0,
+        "Rhythm: delays each fired gate by a random amount, up to half a step",
+    ),
 ];
 
 pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);

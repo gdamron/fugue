@@ -15,6 +15,8 @@ use super::controls::MAX_LOOP;
 pub(super) struct Draw {
     /// The rhythm's coin tosses: `gate_1`'s, then `gate_2`'s.
     pub(super) coins: [f32; 2],
+    /// How far into the step each gate is delayed, as a share of `jitter`.
+    pub(super) jitter: [f32; 2],
     /// Each melody channel's value.
     pub(super) values: [f32; 3],
 }
@@ -23,6 +25,7 @@ impl Draw {
     fn fresh(rng: &mut StdRng) -> Self {
         Self {
             coins: [rng.random(), rng.random()],
+            jitter: [rng.random(), rng.random()],
             values: [rng.random(), rng.random(), rng.random()],
         }
     }

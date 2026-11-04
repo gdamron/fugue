@@ -131,3 +131,69 @@ fn controls_are_refused_out_of_their_options() {
     module.set_control("loop_length", 40.0).unwrap();
     assert_eq!(module.get_control("loop_length").unwrap(), 16.0);
 }
+
+/// Every frame of `gate_1`, `frequency_1` and `tick` over `pulses` clock
+/// pulses `period` frames apart, high for the first half.
+fn frames(module: &mut dyn Module, period: usize, pulses: usize) -> Vec<[f32; 3]> {
+    let mut played = Vec::new();
+    for frame in 0..period * pulses {
+        let high = frame % period < period / 2;
+        module.input_block_mut(0)[0] = if high { 1.0 } else { 0.0 };
+        module.process(1);
+        let out = |port| module.output_block(port)[0];
+        played.push([out(0), out(3), out(2)]);
+    }
+    played
+}
+
+fn rises(played: &[[f32; 3]], port: usize) -> Vec<usize> {
+    (1..played.len())
+        .filter(|&i| played[i][port] > 0.5 && played[i - 1][port] <= 0.5)
+        .collect()
+}
+
+#[test]
+fn rate_subdivides_the_clock_once_its_period_is_known() {
+    let mut module = chance(serde_json::json!({ "seed": 1, "rate": "x4" }));
+    let played = frames(module.as_mut(), 96, 4);
+    // The first pulse steps once; each later one four times, 24 apart.
+    let ticks = rises(&played, 2);
+    assert_eq!(
+        ticks,
+        vec![96, 120, 144, 168, 192, 216, 240, 264, 288, 312, 336, 360]
+    );
+    // Subdivided, every gate lasts half a step rather than the pulse.
+    assert!(played[96..108].iter().all(|out| out[2] == 1.0));
+    assert!(played[108..120].iter().all(|out| out[2] == 0.0));
+}
+
+#[test]
+fn jitter_delays_gates_within_half_a_step_and_moves_the_pitch_with_them() {
+    let mut module = chance(serde_json::json!({ "seed": 6, "bias": 1.0, "jitter": 1.0 }));
+    let played = frames(module.as_mut(), 100, 40);
+    let gates = rises(&played, 0);
+    assert!(gates.len() >= 38, "{gates:?}");
+    let mut late = 0;
+    for &rise in gates.iter().filter(|&&rise| rise >= 100) {
+        let offset = rise % 100;
+        assert!(offset <= 50, "{rise}");
+        late += usize::from(offset > 0);
+        // The pitch changes as the gate rises, never before.
+        assert_eq!(
+            played[rise - 1][1],
+            played[rise.saturating_sub(offset + 1)][1]
+        );
+    }
+    assert!(late > 30, "{late}");
+}
+
+#[test]
+fn smooth_steps_glide_between_values() {
+    let mut module = chance(serde_json::json!({ "seed": 8, "steps": 0.0, "bias": 1.0 }));
+    let played = frames(module.as_mut(), 100, 6);
+    // From the second pulse the pitch moves on most frames of a step.
+    let moving = (201..300)
+        .filter(|&i| played[i][1] != played[i - 1][1])
+        .count();
+    assert!(moving > 90, "{moving}");
+}
