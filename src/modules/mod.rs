@@ -12,6 +12,7 @@
 //! - [`Adsr`] - Envelope generator
 //! - [`Vca`] - Voltage controlled amplifier
 //! - [`Noise`] - White and pink noise source
+//! - [`Drive`] - Saturation, distortion and bit/rate reduction
 //! - [`DacModule`] - Audio output sink module
 //! - [`AudioFileSink`] - Audio file recording sink module
 //! - [`AudioDriver`] / [`AudioBackend`] - Audio output backends
@@ -32,6 +33,7 @@ pub mod control_scheduler;
 pub mod dac;
 pub mod delay;
 pub mod divisi;
+pub mod drive;
 pub mod drum_map;
 pub mod filter;
 pub(crate) mod indexed_names;
@@ -83,6 +85,7 @@ pub use filter::{Filter, FilterType};
 pub use lfo::Lfo;
 pub use melody::MelodyGenerator;
 
+pub use drive::{Drive, DriveFactory};
 pub use mixer::Mixer;
 pub use noise::{Noise, NoiseFactory};
 pub use oscillator::{Oscillator, OscillatorType};
