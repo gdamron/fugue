@@ -197,3 +197,40 @@ fn smooth_steps_glide_between_values() {
         .count();
     assert!(moving > 90, "{moving}");
 }
+
+#[test]
+fn a_subdivided_bar_keeps_its_downbeats() {
+    // At bias 0 the divider plays only its strongest beats: gate_1 on
+    // steps 0 and 8 of each 16. The first pulse's period is unknown, so
+    // its subdivisions are missed; the bar must still land on the beat.
+    let config = serde_json::json!({ "seed": 1, "rate": "x4", "mode": "divider", "bias": 0.0 });
+    let mut module = chance(config);
+    let played = frames(module.as_mut(), 96, 8);
+    assert_eq!(played[0][0], 1.0);
+    // Sixteenths are 24 frames apart: step 8 is frame 192.
+    assert_eq!(rises(&played, 0), vec![192, 384, 576]);
+}
+
+#[test]
+fn a_rate_change_mid_pulse_keeps_the_bar() {
+    let config = serde_json::json!({ "seed": 1, "mode": "divider", "bias": 0.0 });
+    let mut module = chance(config);
+    let mut played = Vec::new();
+    for frame in 0..96 * 8 {
+        // Late in the third pulse, x1 becomes x4 (rate position 6).
+        if frame == 280 {
+            module.set_control("rate", 6.0).unwrap();
+        }
+        module.input_block_mut(0)[0] = if frame % 96 < 48 { 1.0 } else { 0.0 };
+        module.process(1);
+        played.push(std::array::from_fn(|port| module.output_block(port)[0]));
+    }
+    let ticks = rises(&played, 2);
+    assert!(
+        ticks.windows(2).all(|pair| pair[1] - pair[0] >= 24),
+        "{ticks:?}"
+    );
+    // Steps 0 to 3 a pulse apart, then sixteenths from step 3 at frame 288:
+    // step 8 is frame 288 + 5 * 24.
+    assert_eq!(rises(&played, 0), vec![408, 600]);
+}

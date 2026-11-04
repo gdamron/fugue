@@ -316,7 +316,8 @@ impl Module for Chance {
             }
             (KEY | SCALE, RtValue::U32(_)) => return Err(Refusal::Invalid),
             (RATE, RtValue::U32(position)) => {
-                self.clock.rate = Rate::from_position(position).ok_or(Refusal::Invalid)?;
+                self.clock
+                    .set_rate(Rate::from_position(position).ok_or(Refusal::Invalid)?);
                 value
             }
             (SEED, RtValue::F32(seed)) if seed < 0.0 => {

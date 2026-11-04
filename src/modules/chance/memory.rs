@@ -54,9 +54,8 @@ impl Memory {
     }
 
     /// The draws for loop position `position`: replayed with the chance
-    /// `repetition` sets, otherwise drawn anew and remembered there. One
-    /// decision is drawn every step, so the stream stays in step whatever
-    /// `repetition` is.
+    /// `repetition` sets, otherwise drawn anew and remembered there. The
+    /// same seed and the same control changes always play the same.
     pub(super) fn next(&mut self, rng: &mut StdRng, position: usize, repetition: f32) -> Draw {
         let position = position % MAX_LOOP;
         // A gentle curve: the middle of the range keeps most of the loop

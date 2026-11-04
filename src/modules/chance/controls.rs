@@ -72,7 +72,8 @@ const DECLS: &[ControlDecl] = &[
         "steps",
         0.5,
         "Melody: below 1/3 smooth, to 0.5 stepped, from 0.5 quantized to key \
-         and scale, narrowing toward the scale's strongest degrees at 1",
+         and scale, narrowing toward the scale's strongest degrees at 1 (its tonic, \
+         fifth and third; a chromatic scale's are a major triad)",
     ),
     ControlDecl::new(
         "key",

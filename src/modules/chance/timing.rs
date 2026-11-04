@@ -31,6 +31,9 @@ impl Rate {
 /// Follows the clock input and says which samples are steps.
 pub(super) struct Clock {
     pub(super) rate: Rate,
+    /// A new `rate`, taken on the next pulse so no step is skipped or
+    /// doubled mid-pulse.
+    pending_rate: Option<Rate>,
     /// Samples since the last pulse rose.
     since_pulse: u32,
     /// Samples between the last two pulses; 0 until two have risen.
@@ -56,12 +59,21 @@ impl Clock {
     pub(super) fn new() -> Self {
         Self {
             rate: Rate::ONE,
+            pending_rate: None,
             since_pulse: 0,
             period: 0,
             pulses: 0,
             next_part: u32::MAX,
             seen_pulse: false,
             missed: 0,
+        }
+    }
+
+    /// Changes the rate from the next pulse on; at once before the first.
+    pub(super) fn set_rate(&mut self, rate: Rate) {
+        match self.seen_pulse {
+            true => self.pending_rate = Some(rate),
+            false => self.rate = rate,
         }
     }
 
@@ -77,12 +89,20 @@ impl Clock {
         let mut step = None;
         if rose {
             if self.seen_pulse {
-                self.period = self.since_pulse;
+                // A pulse after a long pause (the clock stopped, or slowed
+                // past half) leaves the period unknown until the next one,
+                // rather than stretching a step over the pause.
+                let paused = self.period > 0 && self.since_pulse / 2 > self.period;
+                self.period = if paused { 0 } else { self.since_pulse };
             }
             self.seen_pulse = true;
             self.since_pulse = 0;
+            // Counted at the rate the last pulse stepped at.
             self.missed = self.rate.per.saturating_sub(self.next_part);
-            if self.pulses % self.rate.every == 0 {
+            if let Some(rate) = self.pending_rate.take() {
+                self.rate = rate;
+            }
+            if self.pulses.is_multiple_of(self.rate.every) {
                 step = Some(Step::OnPulse);
                 self.next_part = 1;
             } else {
@@ -205,6 +225,38 @@ mod tests {
         (1..8).for_each(|_| _ = clock.tick(false));
         clock.tick(true);
         assert_eq!(clock.missed, 0);
+    }
+
+    #[test]
+    fn a_new_rate_waits_for_the_next_pulse() {
+        let mut clock = Clock::new();
+        let at: Vec<usize> = (0..400)
+            .filter_map(|i| {
+                if i == 290 {
+                    clock.set_rate(Rate::from_position(6).unwrap());
+                }
+                clock.tick(i % 100 == 0).map(|_| i)
+            })
+            .collect();
+        assert_eq!(at, vec![0, 100, 200, 300, 325, 350, 375]);
+        assert_eq!(clock.missed, 0);
+    }
+
+    #[test]
+    fn a_pulse_after_a_pause_forgets_the_period() {
+        let mut clock = Clock::new();
+        clock.rate = Rate::from_position(6).unwrap();
+        let mut at = Vec::new();
+        for i in 0..1400 {
+            let rose = i % 100 == 0 && !(200..1000).contains(&i);
+            if clock.tick(rose).is_some() {
+                at.push(i);
+            }
+        }
+        // The pause's pulse steps once and keeps no stretched step length;
+        // the next pulse measures the tempo again and counts what it missed.
+        assert_eq!(&at[..9], &[0, 100, 125, 150, 175, 1000, 1100, 1125, 1150]);
+        assert_eq!(clock.step_length(), Some(25));
     }
 
     #[test]
