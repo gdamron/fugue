@@ -159,14 +159,28 @@ fn bits_and_rate_ignore_the_bias_so_moving_it_never_steps_the_level() {
 
 #[test]
 fn asymmetric_drive_leaves_no_offset() {
+    // Biased curves too, with automatic level on or off: a clamp at the
+    // output would cut one side and leave an offset.
     let input = sine(100.0, 0.8, 2 * RATE as usize);
-    let mut d = processor(DriveShape::Asymmetric, 1.0);
-    d.set_bias(0.5);
-    d.settle();
-    let out = render(&mut d, &input, 512);
-    let tail = &out[RATE as usize..];
-    let mean = tail.iter().sum::<f32>() / tail.len() as f32;
-    assert!(mean.abs() < 1e-3, "mean {mean}");
+    for shape in &DriveShape::ALL[..4] {
+        for auto_level in [true, false] {
+            let mut d = processor(*shape, 1.0);
+            d.set_bias(if *shape == DriveShape::Asymmetric {
+                0.5
+            } else {
+                -0.5
+            });
+            d.set_auto_level(auto_level);
+            d.settle();
+            let out = render(&mut d, &input, 512);
+            let tail = &out[RATE as usize..];
+            let mean = tail.iter().sum::<f32>() / tail.len() as f32;
+            assert!(
+                mean.abs() < 1e-3,
+                "{shape:?}, auto level {auto_level}: mean {mean}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -209,19 +223,28 @@ fn alias_ratio_db(out: &[f32]) -> f64 {
 
 #[test]
 fn four_times_oversampling_holds_hard_clip_aliases_30_db_below_none() {
-    for peak in [0.25, 0.5, 1.0] {
+    // With automatic level off too: the final clamp must stay clear of
+    // the filter's overshoot, or it would alias at the base rate.
+    for (peak, auto_level) in [
+        (0.25, true),
+        (0.5, true),
+        (1.0, true),
+        (0.5, false),
+        (1.0, false),
+    ] {
         let input = sine(5000.0, peak, RATE as usize / 2);
         let measure = |factor: Option<Factor>| {
             let mut d = DriveProcessor::new(RATE, factor, GLIDE);
             d.set_shape(DriveShape::Hard);
             d.set_drive(1.0);
+            d.set_auto_level(auto_level);
             d.settle();
             alias_ratio_db(&render(&mut d, &input, 512)[4096..])
         };
         let (none, four) = (measure(None), measure(Some(Factor::Four)));
         assert!(
             none - four >= 30.0,
-            "peak {peak}: none {none:.1} dB, 4x {four:.1} dB"
+            "peak {peak}, auto level {auto_level}: none {none:.1} dB, 4x {four:.1} dB"
         );
     }
 }

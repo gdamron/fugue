@@ -19,6 +19,10 @@ mod tests;
 
 /// How long a change of shape crossfades, in seconds.
 const SHAPE_FADE_SECONDS: f32 = 0.02;
+/// Where the curves top out without automatic level: below full scale by
+/// the overshoot the oversampler's filter adds to a clipped edge, so the
+/// output's final clamp, which would alias, stays out of the way.
+const CURVE_CEILING: f32 = 0.8;
 /// The curve shapes come first in [`DriveShape::ALL`].
 const CURVE_COUNT: usize = 4;
 
@@ -207,7 +211,9 @@ impl DriveProcessor {
         self.level.set_target(unit(level));
     }
 
-    /// Whether a −12 dBFS signal keeps its level as drive moves.
+    /// Whether a −12 dBFS signal keeps its level as drive moves. Off, the
+    /// curves top out at 0.8 (about −2 dB, a little more with bias), which
+    /// leaves room for the overshoot of the oversampler's filter.
     pub fn set_auto_level(&mut self, on: bool) {
         self.auto_level.set_target(if on { 1.0 } else { 0.0 });
     }
@@ -298,9 +304,13 @@ impl DriveProcessor {
                     continue;
                 }
                 let (gain, compensation) = self.calibration.at(*shape, frame.drive);
+                let rest = self.shapers[n].curve().apply(frame.bias);
+                // Without automatic level, the curve's whole swing (wider by
+                // the bias's offset) is fitted under the ceiling.
+                let fixed = CURVE_CEILING / (1.0 + rest.abs());
                 frame.curve_gain[n] = gain;
-                frame.curve_level[n] = 1.0 + frame.auto_level * (compensation - 1.0);
-                frame.curve_rest[n] = self.shapers[n].curve().apply(frame.bias);
+                frame.curve_level[n] = fixed + frame.auto_level * (compensation - fixed);
+                frame.curve_rest[n] = rest;
             }
             self.frames[i] = frame;
         }
