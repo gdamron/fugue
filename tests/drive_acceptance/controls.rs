@@ -57,7 +57,7 @@ fn controls_are_declared_with_documented_ranges_and_defaults() {
             "{key} reads back"
         );
     }
-    assert_eq!(meta(&rig, "auto_level").default, ControlValue::Bool(true));
+    assert_eq!(meta(&rig, "auto_level").default, ControlValue::Bool(false));
     assert!(matches!(meta(&rig, "auto_level").kind, ControlKind::Bool));
 }
 
