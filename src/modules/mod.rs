@@ -107,6 +107,7 @@ pub use code::CodeFactory;
 pub use control_scheduler::ControlSchedulerFactory;
 pub use dac::DacFactory;
 pub use divisi::{Divisi, DivisiFactory};
+pub use drum_map::{DrumMap, DrumMapFactory};
 pub use filter::FilterFactory;
 pub use lfo::LfoFactory;
 pub use melody::MelodyFactory;
