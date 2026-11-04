@@ -36,6 +36,7 @@ pub mod divisi;
 pub mod drive;
 pub mod drum_map;
 pub mod filter;
+pub mod gain;
 pub(crate) mod indexed_names;
 pub mod lfo;
 pub mod limiter;
@@ -83,6 +84,7 @@ pub use dac::{
 };
 pub use delay::{Delay, DelayFactory};
 pub use filter::{Filter, FilterType};
+pub use gain::{Gain, GainFactory};
 pub use lfo::Lfo;
 pub use limiter::{Limiter, LimiterFactory};
 pub use melody::MelodyGenerator;

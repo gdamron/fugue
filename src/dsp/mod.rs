@@ -11,6 +11,7 @@
 //! - [`PinkFilter`] - Shapes white noise into pink (−3 dB/oct)
 //! - [`OnePole`] - First-order lowpass and highpass
 //! - [`DcBlocker`] - Removes a constant offset
+//! - [`decibels_to_level`] / [`level_to_decibels`] - Fast dB conversions for per-sample use
 //! - [`LookaheadLimiter`] - A stereo-linked lookahead brickwall limiter
 //! - [`Oversampler`] - Runs a process at 2× or 4× the sample rate
 //! - [`BandLimitedOscillator`] - Saw, pulse, triangle and sine without aliasing, with hard sync
@@ -30,6 +31,7 @@ mod block_ramp;
 mod crush;
 mod damper;
 mod dc_blocker;
+mod decibels;
 mod declick;
 mod delay_line;
 mod drive;
@@ -56,6 +58,7 @@ pub use dc_blocker::{DcBlocker, DC_BLOCKER_CUTOFF_HZ};
 #[cfg(test)]
 pub(crate) use declick::DECLICK_SECONDS;
 pub(crate) use declick::{declick_gain, declick_step};
+pub use decibels::{decibels_to_level, exp2, level_to_decibels, log2, FLOOR_DECIBELS};
 pub use delay_line::DelayLine;
 pub use drive::{DriveProcessor, DriveShape, REFERENCE_PEAK};
 #[cfg(feature = "spectrogram")]
