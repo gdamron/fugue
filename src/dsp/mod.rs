@@ -14,6 +14,7 @@
 //! - [`sine`] / [`cosine`] - Sine and cosine from a table built at compile time
 //! - [`Curve`] / [`Waveshaper`] - Distortion curves, anti-aliased where
 //!   they have corners
+//! - [`DriveProcessor`] - A complete drive: tone, shape, mix and level
 //! - [`Tilt`] - Leans the spectrum dark or bright around a pivot
 //! - [`quantize`] / [`SampleHold`] - Bit and sample-rate reduction
 //! - `declick_gain` - The curved fade that ends a sound without a click
@@ -27,6 +28,7 @@ mod damper;
 mod dc_blocker;
 mod declick;
 mod delay_line;
+mod drive;
 #[cfg(feature = "spectrogram")]
 mod fft;
 mod halfband;
@@ -48,6 +50,7 @@ pub use dc_blocker::{DcBlocker, DC_BLOCKER_CUTOFF_HZ};
 pub(crate) use declick::DECLICK_SECONDS;
 pub(crate) use declick::{declick_gain, declick_step};
 pub use delay_line::DelayLine;
+pub use drive::{DriveProcessor, DriveShape, REFERENCE_PEAK};
 #[cfg(feature = "spectrogram")]
 pub(crate) use fft::RealFft;
 pub use one_pole::{OnePole, OnePoleOutput};
