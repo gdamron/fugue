@@ -40,19 +40,20 @@ use crate::control_request::{
     apply_declared, local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable,
     Refusal, RtValue,
 };
-use crate::factory::{apply_control_keys, GraphModule, ModuleBuildResult, ModuleFactory};
-use crate::invention::declared::DeclaredSurface;
-use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::Module;
 
 use self::controls::{CUTOFF, CUTOFF_MOD_DEPTH, FILTER_TYPE, RESONANCE, TABLE};
+use self::shape::{Coefficients, Stage};
 
 mod controls;
+mod factory;
 mod glide;
 mod inputs;
 mod outputs;
+mod shape;
 
+pub use self::factory::FilterFactory;
 pub use self::glide::GLIDE_MS;
 
 /// Filter type selection.
@@ -135,8 +136,7 @@ pub struct Filter {
     glide: glide::ControlGlide,
 
     // TPT SVF integrator state
-    ic1eq: f32,
-    ic2eq: f32,
+    stage: Stage,
 
     // Signal inputs
     inputs: inputs::FilterInputs,
@@ -148,11 +148,7 @@ pub struct Filter {
     // resonance changes. Sentinel -1.0 forces computation on first call.
     coeff_cutoff: f32,
     coeff_resonance: f32,
-    coeff_g: f32,
-    coeff_k: f32,
-    coeff_a1: f32,
-    coeff_a2: f32,
-    coeff_a3: f32,
+    classic: Coefficients,
 }
 
 impl Filter {
@@ -174,17 +170,12 @@ impl Filter {
             cutoff_mod_depth: 5000.0,
             cells,
             glide: glide::ControlGlide::new(sample_rate, 1000.0, 0.0),
-            ic1eq: 0.0,
-            ic2eq: 0.0,
+            stage: Stage::default(),
             inputs: inputs::FilterInputs::new(),
             outputs: outputs::FilterOutputs::new(),
             coeff_cutoff: -1.0,
             coeff_resonance: -1.0,
-            coeff_g: 0.0,
-            coeff_k: 0.0,
-            coeff_a1: 0.0,
-            coeff_a2: 0.0,
-            coeff_a3: 0.0,
+            classic: Coefficients::default(),
         };
         for index in 0..TABLE.len() {
             let index = ControlIndex(index as u16);
@@ -257,36 +248,18 @@ impl Filter {
         if effective_cutoff != self.coeff_cutoff || effective_resonance != self.coeff_resonance {
             let g = fast_tan(PI * effective_cutoff / self.sample_rate as f32);
             let k = 2.0 * (1.0 - effective_resonance);
-            self.coeff_g = g;
-            self.coeff_k = k;
-            self.coeff_a1 = 1.0 / (1.0 + g * (g + k));
-            self.coeff_a2 = g * self.coeff_a1;
-            self.coeff_a3 = g * self.coeff_a2;
+            self.classic = Coefficients::stage(g, k);
             self.coeff_cutoff = effective_cutoff;
             self.coeff_resonance = effective_resonance;
         }
 
         let input = self.inputs.audio(i);
-
-        // TPT SVF tick
-        let v3 = input - self.ic2eq;
-        let v1 = self.coeff_a1 * self.ic1eq + self.coeff_a2 * v3;
-        let v2 = self.ic2eq + self.coeff_a2 * self.ic1eq + self.coeff_a3 * v3;
-
-        self.ic1eq = 2.0 * v1 - self.ic1eq;
-        self.ic2eq = 2.0 * v2 - self.ic2eq;
-
-        match filter_type {
-            FilterType::LowPass => v2,
-            FilterType::HighPass => input - self.coeff_k * v1 - v2,
-            FilterType::BandPass => v1,
-        }
+        self.stage.classic(&self.classic, filter_type, input)
     }
 
     /// Resets the filter state.
     pub fn reset(&mut self) {
-        self.ic1eq = 0.0;
-        self.ic2eq = 0.0;
+        self.stage.reset();
     }
 }
 
@@ -396,216 +369,7 @@ impl Module for Filter {
     }
 }
 
-/// Factory for constructing Filter modules from configuration.
-pub struct FilterFactory;
-
-const TYPE_ID: &str = "filter";
-const CUTOFF_KEY: ConfigKey = ConfigKey::float("cutoff");
-const RESONANCE_KEY: ConfigKey = ConfigKey::float("resonance");
-const CUTOFF_MOD_DEPTH_KEY: ConfigKey = ConfigKey::float("cutoff_mod_depth");
-
-impl ModuleFactory for FilterFactory {
-    fn type_id(&self) -> &'static str {
-        TYPE_ID
-    }
-
-    fn config_keys(&self) -> &'static [ConfigKey] {
-        &[CUTOFF_KEY, RESONANCE_KEY, CUTOFF_MOD_DEPTH_KEY]
-    }
-
-    fn build(
-        &self,
-        sample_rate: u32,
-        config: &serde_json::Value,
-    ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let reader = ConfigReader::new(TYPE_ID, config);
-        let cutoff = reader.float(&CUTOFF_KEY)?.unwrap_or(1000.0);
-        let resonance = reader.float(&RESONANCE_KEY)?.unwrap_or(0.0);
-        let cutoff_mod_depth = reader.float(&CUTOFF_MOD_DEPTH_KEY)?.unwrap_or(5000.0);
-
-        let cells = Arc::new(ControlCells::new(controls::defaults()));
-        cells.publish(CUTOFF, RtValue::F32(cutoff));
-        cells.publish(RESONANCE, RtValue::F32(resonance));
-        cells.publish(CUTOFF_MOD_DEPTH, RtValue::F32(cutoff_mod_depth));
-        let surface = DeclaredSurface::new(TABLE.clone(), cells.clone());
-        // Only text names a filter type; anything else leaves the default,
-        // as it always has.
-        let named = config
-            .get("filter_type")
-            .is_some_and(|value| value.is_string());
-        apply_control_keys(&surface, config, |key| named && key == "filter_type")?;
-        let filter = Filter::with_cells(sample_rate, cells);
-
-        Ok(ModuleBuildResult {
-            module: GraphModule::Module(Box::new(filter)),
-            handles: Vec::new(),
-            control_surface: Some(Arc::new(surface)),
-            sink: None,
-        })
-    }
-}
-
 #[cfg(test)]
 mod glide_tests;
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_filter_controls() {
-        let mut filter = Filter::new(44100);
-
-        // Test control metadata
-        let controls = filter.controls();
-        assert_eq!(controls.len(), 4);
-        assert_eq!(controls[0].key, "cutoff");
-        assert_eq!(controls[1].key, "resonance");
-        assert_eq!(controls[2].key, "filter_type");
-
-        // Test get/set controls
-        filter.set_control("cutoff", 2000.0).unwrap();
-        assert_eq!(filter.get_control("cutoff").unwrap(), 2000.0);
-
-        filter.set_control("filter_type", 1.0).unwrap(); // HighPass
-        assert_eq!(filter.get_control("filter_type").unwrap(), 1.0);
-    }
-
-    #[test]
-    fn test_filter_lowpass_attenuates_highs() {
-        let mut filter = Filter::new(44100)
-            .with_filter_type(FilterType::LowPass)
-            .with_cutoff(100.0)
-            .with_resonance(0.0);
-
-        let mut output_sum = 0.0f32;
-        for i in 0..1000 {
-            filter
-                .set_input("audio", if i % 2 == 0 { 1.0 } else { -1.0 })
-                .unwrap();
-            filter.process(1);
-            output_sum += filter.get_output("audio").unwrap().abs();
-        }
-
-        let avg_output = output_sum / 1000.0;
-        assert!(
-            avg_output < 0.1,
-            "Low-pass should attenuate high frequencies, got avg {}",
-            avg_output
-        );
-    }
-
-    #[test]
-    fn test_filter_factory() {
-        let factory = FilterFactory;
-        assert_eq!(ModuleFactory::type_id(&factory), "filter");
-
-        let config = serde_json::json!({
-            "filter_type": "highpass",
-            "cutoff": 500.0,
-            "resonance": 0.3
-        });
-
-        let result = factory.build(44100, &config).unwrap();
-
-        let module = result.module.module();
-        assert_eq!(module.name(), "Filter");
-
-        assert!(result.control_surface.is_some());
-    }
-
-    #[test]
-    fn config_and_control_share_filter_type_and_modulation_names() {
-        let factory = FilterFactory;
-        // The control's spellings (`low_pass`) are config spellings too, so a
-        // written control value rebuilds from the config.
-        let config = serde_json::json!({
-            "filter_type": "band_pass",
-            "cutoff_mod_depth": 1234.0
-        });
-        let result = factory.build(44100, &config).unwrap();
-        let surface = result.control_surface.unwrap();
-        assert_eq!(
-            surface.get_control("filter_type").unwrap(),
-            "bandpass".into()
-        );
-        assert_eq!(
-            surface.get_control("cutoff_mod_depth").unwrap(),
-            1234.0.into()
-        );
-        assert!(surface.get_control("type").is_err());
-        assert!(surface.get_control("cv_amount").is_err());
-
-        let mut filter = Filter::new(44100);
-        assert!(filter.set_input("cutoff_mod", 1.0).is_ok());
-        assert!(filter.set_input("cutoff_cv", 1.0).is_err());
-    }
-
-    #[test]
-    fn every_filter_type_spelling_still_loads() {
-        let registry = crate::ModuleRegistry::default();
-        for (spelled, read) in [
-            ("lowpass", "lowpass"),
-            ("low_pass", "lowpass"),
-            ("LPF", "lowpass"),
-            ("low", "lowpass"),
-            ("highpass", "highpass"),
-            ("high_pass", "highpass"),
-            ("hpf", "highpass"),
-            ("High", "highpass"),
-            ("bandpass", "bandpass"),
-            ("band_pass", "bandpass"),
-            ("bpf", "bandpass"),
-            ("band", "bandpass"),
-        ] {
-            let config = serde_json::json!({ "filter_type": spelled });
-            let built = registry.build("filter", 48_000, &config).unwrap();
-            let surface = built.control_surface.unwrap();
-            assert_eq!(surface.get_control("filter_type").unwrap(), read.into());
-            surface.set_control("filter_type", spelled.into()).unwrap();
-            assert_eq!(surface.get_control("filter_type").unwrap(), read.into());
-        }
-        let config = serde_json::json!({ "filter_type": "notch" });
-        assert!(registry.build("filter", 48_000, &config).is_err());
-        // Anything but text still leaves the default.
-        for config in [
-            serde_json::json!({ "filter_type": null }),
-            serde_json::json!({ "filter_type": 2 }),
-        ] {
-            let built = registry.build("filter", 48_000, &config).unwrap();
-            let surface = built.control_surface.unwrap();
-            assert_eq!(
-                surface.get_control("filter_type").unwrap(),
-                "lowpass".into()
-            );
-        }
-    }
-
-    #[test]
-    fn there_is_no_type_alias_for_the_filter_type() {
-        // Neither a document's config nor a control write has ever taken
-        // `type` for `filter_type`; the declared table does not start to.
-        let registry = crate::ModuleRegistry::default();
-        let config = serde_json::json!({ "type": "highpass" });
-        assert!(registry.build("filter", 48_000, &config).is_err());
-        let built = registry
-            .build("filter", 48_000, &serde_json::json!({}))
-            .unwrap();
-        let surface = built.control_surface.unwrap();
-        assert!(surface.set_control("type", "highpass".into()).is_err());
-    }
-
-    #[test]
-    fn controls_clamp_as_they_always_did() {
-        let mut filter = Filter::new(44100);
-        filter.set_control("cutoff", 5.0).unwrap();
-        assert_eq!(filter.get_control("cutoff").unwrap(), 20.0);
-        filter.set_control("cutoff", 99999.0).unwrap();
-        assert_eq!(filter.get_control("cutoff").unwrap(), 20000.0);
-        filter.set_control("resonance", 3.0).unwrap();
-        assert_eq!(filter.get_control("resonance").unwrap(), 1.0);
-        filter.set_control("cutoff_mod_depth", -1.0).unwrap();
-        assert_eq!(filter.get_control("cutoff_mod_depth").unwrap(), 0.0);
-        assert!(filter.set_control("filter_type", 3.0).is_err());
-        assert!(filter.set_control("cutoff", f32::NAN).is_err());
-    }
-}
+mod tests;
