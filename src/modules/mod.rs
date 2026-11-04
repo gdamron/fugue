@@ -42,6 +42,7 @@ pub mod gain_curve;
 pub(crate) mod indexed_names;
 pub mod lfo;
 pub mod limiter;
+mod macro_oscillator;
 #[cfg(test)]
 mod lock_scan_tests;
 pub mod melody;
