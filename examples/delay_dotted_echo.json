@@ -1,0 +1,54 @@
+{
+  "version": "1.0.0",
+  "title": "Dotted Eighth Echo",
+  "description": "A plucked line through a tempo-synced delay: the clock's bpm output times a dotted-eighth echo, so the repeats land between the notes and follow the tempo.",
+  "modules": [
+    { "id": "clock", "type": "clock", "config": { "bpm": 100.0 } },
+    {
+      "id": "seq",
+      "type": "step_sequencer",
+      "config": {
+        "root_note": 60,
+        "step_count": 8,
+        "gate_length": 0.2,
+        "pattern": [
+          { "note": 0 },
+          { "note": null },
+          { "note": 7 },
+          { "note": null },
+          { "note": 3 },
+          { "note": null },
+          { "note": null },
+          { "note": 10 }
+        ]
+      }
+    },
+    { "id": "osc", "type": "oscillator", "config": { "waveform": "triangle" } },
+    {
+      "id": "adsr",
+      "type": "adsr",
+      "config": { "attack": 0.002, "decay": 0.18, "sustain": 0.0, "release": 0.1 }
+    },
+    { "id": "vca", "type": "vca" },
+    {
+      "id": "echo",
+      "type": "delay",
+      "config": { "max_time": 2.0, "division": "dotted_8th_note", "feedback": 0.45 }
+    },
+    { "id": "mix", "type": "mixer", "config": { "levels": [0.6, 0.4], "master": 0.8 } },
+    { "id": "dac", "type": "dac" }
+  ],
+  "connections": [
+    { "from": "clock", "from_port": "beat", "to": "seq", "to_port": "clock" },
+    { "from": "clock", "from_port": "bpm", "to": "echo", "to_port": "bpm" },
+    { "from": "seq", "from_port": "frequency", "to": "osc", "to_port": "frequency" },
+    { "from": "seq", "from_port": "gate", "to": "adsr", "to_port": "gate" },
+    { "from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio" },
+    { "from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "level" },
+    { "from": "vca", "from_port": "audio", "to": "mix", "to_port": "audio.0" },
+    { "from": "vca", "from_port": "audio", "to": "echo", "to_port": "audio" },
+    { "from": "echo", "from_port": "audio", "to": "mix", "to_port": "audio.1" },
+    { "from": "mix", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
+    { "from": "mix", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
+  ]
+}
