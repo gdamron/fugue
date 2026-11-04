@@ -12,12 +12,17 @@
 //! - [`Oversampler`] - Runs a process at 2× or 4× the sample rate
 //! - [`BandLimitedOscillator`] - Saw, pulse, triangle and sine without aliasing, with hard sync
 //! - [`sine`] / [`cosine`] - Sine and cosine from a table built at compile time
+//! - [`Curve`] / [`Waveshaper`] - Distortion curves, anti-aliased where
+//!   they have corners
+//! - [`Tilt`] - Leans the spectrum dark or bright around a pivot
+//! - [`quantize`] / [`SampleHold`] - Bit and sample-rate reduction
 //! - `declick_gain` - The curved fade that ends a sound without a click
 //! - `RealFft` - Radix-2 power spectrum for off-thread analysis (feature
 //!   `spectrogram`)
 
 mod allpass;
 mod band_limited;
+mod crush;
 mod damper;
 mod dc_blocker;
 mod declick;
@@ -31,9 +36,12 @@ mod pink;
 mod ramp;
 mod rng;
 mod sine_table;
+mod tilt;
+mod waveshape;
 
 pub use allpass::Allpass;
 pub use band_limited::{BandLimitedOscillator, Shape};
+pub use crush::{bit_step, quantize, SampleHold};
 pub use damper::Damper;
 pub use dc_blocker::{DcBlocker, DC_BLOCKER_CUTOFF_HZ};
 #[cfg(test)]
@@ -48,3 +56,5 @@ pub use pink::PinkFilter;
 pub use ramp::LinearRamp;
 pub use rng::Rng;
 pub use sine_table::{cosine, sine};
+pub use tilt::{Tilt, TILT_PIVOT_HZ, TILT_RANGE_DB};
+pub use waveshape::{Curve, Waveshaper};
