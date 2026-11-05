@@ -16,8 +16,8 @@ pub(super) const SYNC: ControlIndex = ControlIndex(9);
 /// The furthest `pitch` transposes, in semitones either way.
 pub(super) const MOST_PITCH: f32 = 24.0;
 
-/// The playback modes, in [`super::Mode`] order.
-pub(super) const MODES: &[&str] = &["granular"];
+/// The playback modes, in [`super::playback::Mode`] order.
+pub(super) const MODES: &[&str] = &["granular", "stretch"];
 
 /// A 0-to-1 control.
 const fn unit(key: &'static str, default: f32, description: &'static str) -> ControlDecl {
@@ -36,7 +36,7 @@ const DECLS: &[ControlDecl] = &[
         "mode",
         DeclKind::Choice(MODES),
         RtValue::U32(0),
-        "Playback mode: granular plays grains from the buffer",
+        "Playback mode: granular plays grains from the buffer; stretch holds it still in time while its pitch moves; a change crossfades",
     ),
     unit(
         "position",
@@ -46,7 +46,7 @@ const DECLS: &[ControlDecl] = &[
     unit(
         "size",
         0.5,
-        "Granular: grain length, about 32 ms at 0 to 0.5 s at 1",
+        "Granular: grain length, about 32 ms at 0 to 0.5 s at 1. Stretch: window length, 32 ms to 128 ms",
     ),
     ControlDecl::new(
         "pitch",
@@ -63,12 +63,12 @@ const DECLS: &[ControlDecl] = &[
     unit(
         "density",
         0.7,
-        "Granular: how many grains; below 0.5 at regular intervals (more towards 0), above at random times (more towards 1), none around 0.5",
+        "Granular: how many grains; below 0.5 at regular intervals (more towards 0), above at random times (more towards 1), none around 0.5. Other modes: how much the sound is smeared",
     ),
     unit(
         "texture",
         0.5,
-        "Granular: grain window, near-rectangular at 0, triangular near 0.375, a smooth bell at 0.75; above 0.75 smears the grains",
+        "Granular: grain window, near-rectangular at 0, triangular near 0.375, a smooth bell at 0.75; above 0.75 smears the grains. Other modes: tone, a low-pass below 0.5, a high-pass above",
     ),
     ControlDecl::new(
         "freeze",

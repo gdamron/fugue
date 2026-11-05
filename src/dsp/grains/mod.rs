@@ -1,5 +1,5 @@
 //! Granular building blocks: a circular stereo recording, a pool of grains
-//! that read it, a smear for the grains' output, and the edge and clock
+//! and a time-stretcher that read it, a smear for the grains' output, and the edge and clock
 //! readers that start grains in time with a patch.
 //!
 //! Ported in part from Mutable Instruments' Clouds (MIT, Copyright 2014
@@ -10,8 +10,10 @@ mod clock;
 mod cloud;
 mod diffuser;
 mod recording;
+mod stretch;
 
 pub use clock::{ClockDivider, RisingEdge};
 pub use cloud::{share_per_frame, GrainCloud, GrainShape, Onsets, MAX_GRAINS};
 pub use diffuser::Diffuser;
 pub use recording::Recording;
+pub use stretch::{StretchShape, Stretcher};

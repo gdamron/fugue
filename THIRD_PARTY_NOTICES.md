@@ -69,6 +69,8 @@ where they live in Fugue, then the full license text:
   - `clouds/dsp/grain.h`, `clouds/dsp/granular_sample_player.h` → `src/dsp/grains/cloud.rs`
   - `clouds/dsp/fx/diffuser.h` → `src/dsp/grains/diffuser.rs`
   - `clouds/dsp/granular_processor.cc` (feedback path, density and texture mapping) → `src/modules/granular/mod.rs`
+  - `clouds/dsp/wsola_sample_player.h` (approach only; rewritten) → `src/dsp/grains/stretch.rs`
+  - `clouds/dsp/granular_processor.cc` (tone filter mapping) → `src/modules/granular/playback.rs`
   - `clouds/resources/lookup_tables.py` (grain size and window formulas; computed by our own code) → `src/dsp/grains/cloud.rs`
 - License: MIT
 

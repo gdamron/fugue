@@ -1,3 +1,4 @@
+use self::controls::MODES;
 use super::*;
 use crate::ModuleRegistry;
 
@@ -256,4 +257,26 @@ fn density_reach_picks_the_clock_divisions() {
     assert_eq!(divisions(0.0), 1);
     assert_eq!(divisions(0.5), 4);
     assert_eq!(divisions(1.0), 8);
+}
+
+#[test]
+fn changing_mode_crossfades_without_a_click() {
+    let config = serde_json::json!({
+        "density": 0.9, "texture": 0.5, "position": 0.1, "seed": 4
+    });
+    let mut module = build(config);
+    let input = |n: usize| 0.5 * sine(n, 110.0);
+    let (steady, _) = render(module.as_mut(), SR as usize * 2, input, None);
+    let steady = largest_step(&steady[SR as usize..]);
+    for mode in ["stretch", "granular", "stretch"] {
+        let index = MODES.iter().position(|m| *m == mode).unwrap() as f32;
+        module.set_control("mode", index).unwrap();
+        let (after, _) = render(module.as_mut(), SR as usize / 2, input, None);
+        let step = largest_step(&after);
+        assert!(step <= 1.5 * steady, "to {mode}: {step} vs {steady}");
+        assert!(
+            after[SR as usize / 4..].iter().any(|x| x.abs() > 0.05),
+            "{mode} plays"
+        );
+    }
 }
