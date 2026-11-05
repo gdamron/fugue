@@ -55,7 +55,7 @@ impl Tables {
     /// the way to the next curve.
     #[inline]
     pub(super) fn shape(&self, input: f32, curve: usize, blend: f32) -> f32 {
-        let index = CURVE_STEPS as f32 * input;
+        let index = CURVE_STEPS as f32 * input.clamp(0.0, 1.0);
         let whole = index as usize;
         let frac = index - whole as f32;
         // Input 1 reads the start of the curve again, as the end of a
