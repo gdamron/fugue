@@ -449,8 +449,10 @@ impl Module for DevelopmentModule {
         let Some(controls) = &self.controls else {
             return Err((Refusal::Unsupported, payload));
         };
-        let modules = &mut self.graph.modules;
-        apply_reordered(&mut self.graph.group_order, payload, |payload| {
+        let graph = &mut self.graph;
+        let modules = &mut graph.modules;
+        let (order, written) = (&mut graph.group_order, &mut graph.written_within);
+        apply_reordered(order, written, payload, |payload| {
             controls.apply_payload(modules, control, payload)
         })
     }

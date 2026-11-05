@@ -1,4 +1,5 @@
 use super::*;
+use crate::invention::graph::chunks::{plan_groups, Edge};
 use crate::invention::graph::scc::{
     is_back_edge, positions, process_groups, topological_order, topological_order_from,
 };
@@ -51,6 +52,11 @@ pub(super) struct CompiledDevelopmentGraph {
     /// at a time for one acyclic module, sample by sample for a feedback
     /// group. A retargeting payload replaces it (see `retarget`).
     pub(super) group_order: Vec<usize>,
+    /// Per group, whether a member writes a member's controls: a group
+    /// planned to run in chunks then runs sample by sample (see
+    /// [`written_within`]). A retargeting payload replaces it with the
+    /// order.
+    pub(super) written_within: Box<[bool]>,
     /// Output port count per internal module (parallel to module index).
     pub(super) out_counts: Vec<usize>,
     /// Per-internal-module output block buffers, port-major with stride
@@ -220,6 +226,40 @@ impl CompiledDevelopmentGraph {
 
         let modules: Vec<GraphModule> = module_list.into_iter().map(|(_, m)| m).collect();
 
+        // Loops through a declared delay run in chunks of it, as the main
+        // graph's do (see `crate::invention::graph::chunks`). Planned from
+        // the routes alone, which no payload changes; what the modules
+        // write, which a payload can, keeps a loop sample by sample while
+        // a member writes inside it.
+        let written_within = written_within(&grouping.group_of, grouping.groups.len(), &targets);
+        let mut groups = grouping.groups;
+        let route_edges = inner.iter().enumerate().flat_map(|(to, routes)| {
+            routes.iter().map(move |route| match route.source {
+                Source::Module { module, .. } => Edge {
+                    from: module,
+                    to,
+                    port: Some(route.to_port),
+                },
+                // From outside the modules: it only tells what a cut reads.
+                Source::Input(_) => Edge {
+                    from: usize::MAX,
+                    to,
+                    port: Some(route.to_port),
+                },
+            })
+        });
+        plan_groups(
+            crate::invention::graph::feedback_chunks(),
+            &mut groups,
+            &grouping.group_of,
+            route_edges,
+            |m| {
+                modules
+                    .get(m)
+                    .and_then(|module| module.module().feedback_cut())
+            },
+        );
+
         // Per-internal-module output block buffers and carry storage.
         let out_counts: Vec<usize> = modules.iter().map(|m| m.module().outputs().len()).collect();
         let out_bufs: Vec<Vec<f32>> = out_counts
@@ -231,8 +271,9 @@ impl CompiledDevelopmentGraph {
         Ok(Self {
             modules,
             routes: inner,
-            groups: grouping.groups,
+            groups,
             group_order,
+            written_within,
             out_counts,
             out_bufs,
             out_prev,
@@ -272,6 +313,25 @@ fn targets_of<'a>(
                 .collect()
         })
         .collect()
+}
+
+/// Per group of `groups`, whether a module writes the controls of a
+/// module in its group (itself included), from each module's `targets`
+/// and `group_of`. Control thread: allocates.
+pub(super) fn written_within(
+    group_of: &[usize],
+    groups: usize,
+    targets: &[Vec<usize>],
+) -> Box<[bool]> {
+    let mut written = vec![false; groups];
+    for (from, targets) in targets.iter().enumerate() {
+        for &to in targets {
+            if let (Some(&group), Some(&other)) = (group_of.get(from), group_of.get(to)) {
+                written[group] |= group == other;
+            }
+        }
+    }
+    written.into_boxed_slice()
 }
 
 /// The order of `n` modules joined by `routes` (`(from, to)` pairs, in
