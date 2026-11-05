@@ -10,10 +10,11 @@
 //! Spec summary: delay in samples = `time` x sample rate (division `off`) or
 //! beats x 60 / bpm x sample rate; a whole number of samples is exact; the
 //! `bpm` input overrides the `bpm` control; internal feedback spaces repeats
-//! exactly the delay time, a loop patched outside adds one sample per pass;
-//! `glide` = crossfade (20 ms) or slew (about 0.2 s); feedback to 1.1 stays
-//! inside +/-1; `hold` loops one division and every pass after the first is
-//! bit-identical; `clock` gains a trailing `bpm` output.
+//! exactly the delay time, and a loop patched outside also spaces repeats
+//! exactly the delay time; `glide` = crossfade (20 ms) or slew (about 0.2 s);
+//! feedback to 1.1 stays inside +/-1; `hold` loops one division and every
+//! pass after the first is bit-identical; `clock` gains a trailing `bpm`
+//! output.
 //!
 //! Assumptions beyond the spec are marked "Assumption" on the test that makes
 //! them. Run with `cargo test --release --test delay_acceptance`.

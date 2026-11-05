@@ -48,6 +48,7 @@ use crate::MAX_BLOCK;
 use super::runtime::ModuleInstance;
 
 mod beats;
+pub(crate) mod chunks;
 mod compile;
 mod conditions;
 mod edges;
@@ -62,6 +63,7 @@ mod staging;
 pub(crate) mod taps;
 mod unwind;
 
+pub use chunks::{feedback_chunks, set_feedback_chunks, FEEDBACK_CHUNKS_ENV};
 pub(crate) use compile::{compile_topology, CompiledTopology, TopologyFacts};
 pub use master::MasterLevels;
 pub(crate) use master::MasterObservers;
@@ -137,6 +139,9 @@ pub(crate) struct ProcessGroup {
     pub(crate) members: Vec<usize>,
     /// Whether this group contains a feedback cycle (or self-loop).
     pub(crate) feedback: bool,
+    /// How a feedback group runs in chunks when every cycle passes through
+    /// a declared delay (see [`chunks`]); `None` runs it sample by sample.
+    pub(crate) chunks: Option<chunks::Chunks>,
 }
 
 /// The signal processing graph for modular routing.
@@ -199,6 +204,10 @@ pub(crate) struct SignalGraph {
     /// publisher's mirror: a recompile in place then keeps its ordering
     /// (see [`Self::recompile`]). A command applied in place forgets it.
     pub(crate) published: bool,
+    /// Whether feedback groups run in chunks where they can (see
+    /// [`chunks`]): the switch as the topology was defined, by a load or a
+    /// command applied in place, or as a publication compiled it.
+    pub(crate) chunked: bool,
     /// Configurable processing block size in frames (always `<= MAX_BLOCK`).
     pub(crate) block_size: usize,
     /// Flag indicating topology changed and derived state needs recomputation.
@@ -276,6 +285,7 @@ impl SignalGraph {
             block_capacity: 0,
             ordering: Vec::new(),
             published: false,
+            chunked: feedback_chunks(),
             block_size: crate::DEFAULT_BLOCK_SIZE,
             topo_dirty: true,
             tables_stale: true,
@@ -315,6 +325,7 @@ impl SignalGraph {
     #[cfg(test)]
     pub(crate) fn apply_command(&mut self, cmd: GraphCommand) {
         self.published = false;
+        self.chunked = feedback_chunks();
         match cmd {
             GraphCommand::AddModule { module_id, module } => {
                 let is_sink = matches!(module, GraphModule::Sink(_));

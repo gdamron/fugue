@@ -8,10 +8,11 @@
 
 use indexmap::IndexMap;
 
+use super::chunks::{plan_groups, Edge};
 use super::scc::{is_back_edge, positions, process_groups, topological_order};
 use super::{CompiledRoute, ProcessGroup, RoutingConnection, SignalGraph};
 use crate::invention::runtime::ModuleInstance;
-use crate::MAX_BLOCK;
+use crate::{FeedbackCut, MAX_BLOCK};
 
 /// What compilation needs to know about a topology's modules, by index.
 pub(crate) trait TopologyFacts {
@@ -28,6 +29,13 @@ pub(crate) trait TopologyFacts {
     /// Ids of modules whose controls `module` writes while processing (see
     /// [`crate::Module::control_targets`]).
     fn control_targets(&self, module: usize) -> Vec<String>;
+    /// The minimum delay `module` declares (see
+    /// [`crate::Module::feedback_cut`]); `None` when it declares none, or
+    /// when these facts only order modules and never run them.
+    fn feedback_cut(&self, module: usize) -> Option<FeedbackCut> {
+        let _ = module;
+        None
+    }
 }
 
 impl TopologyFacts for IndexMap<String, ModuleInstance> {
@@ -58,6 +66,10 @@ impl TopologyFacts for IndexMap<String, ModuleInstance> {
             .map(|(_, m)| m.module().control_targets())
             .unwrap_or_default()
     }
+
+    fn feedback_cut(&self, module: usize) -> Option<FeedbackCut> {
+        self.get_index(module)?.1.module().feedback_cut()
+    }
 }
 
 /// The derived, index-based form of a topology that the hot path reads.
@@ -77,6 +89,9 @@ pub(crate) struct CompiledTopology {
     /// whose controls it writes and those an order puts after it (see
     /// [`TopologyFacts::control_targets`]).
     pub(crate) ordering: Vec<Vec<String>>,
+    /// Whether feedback groups were planned in chunks (see
+    /// [`super::chunks`]), which a recompile of the same topology keeps.
+    pub(crate) chunked: bool,
 }
 
 impl CompiledTopology {
@@ -94,6 +109,7 @@ impl CompiledTopology {
         std::mem::swap(&mut self.out_counts, &mut graph.out_counts);
         std::mem::swap(&mut self.block_capacity, &mut graph.block_capacity);
         std::mem::swap(&mut self.ordering, &mut graph.ordering);
+        std::mem::swap(&mut self.chunked, &mut graph.chunked);
         // Its modules or routes changed: their tables are found again.
         graph.tables_stale = true;
     }
@@ -102,12 +118,15 @@ impl CompiledTopology {
 /// Computes topological order, SCC process groups, compiled routes, input
 /// connectivity, output buffers (sized for `block_size`), and sink indices.
 ///
-/// Edges whose endpoints or ports do not resolve are skipped.
+/// Feedback groups run in chunks where they can when `chunked` (see
+/// [`super::chunks`]). Edges whose endpoints or ports do not resolve are
+/// skipped.
 pub(crate) fn compile_topology(
     facts: &impl TopologyFacts,
     edges: &[RoutingConnection],
     sinks: &[String],
     block_size: usize,
+    chunked: bool,
 ) -> CompiledTopology {
     let n = facts.module_count();
 
@@ -144,7 +163,7 @@ pub(crate) fn compile_topology(
     // components (Tarjan) as process groups, in topological order.
     let order = topological_order(&downstream);
     let pos = positions(&order);
-    let (process_groups, group_of) = process_groups(&downstream, &pos);
+    let (mut process_groups, group_of) = process_groups(&downstream, &pos);
 
     // Per-destination compiled route lists. Resolve port names to indices
     // once here; classify back-edges for one-sample feedback delay.
@@ -173,6 +192,32 @@ pub(crate) fn compile_topology(
             delayed,
         });
     }
+
+    // Feedback groups whose every cycle passes through a declared delay
+    // run in chunks of it (see `chunks`).
+    let route_edges = compiled_routes.iter().enumerate().flat_map(|(to, routes)| {
+        routes.iter().map(move |route| Edge {
+            from: route.from_module,
+            to,
+            port: Some(route.to_port),
+        })
+    });
+    let ordering_edges = ordering.iter().enumerate().flat_map(|(from, targets)| {
+        targets.iter().filter_map(move |target| {
+            Some(Edge {
+                from,
+                to: facts.index_of(target)?,
+                port: None,
+            })
+        })
+    });
+    plan_groups(
+        chunked,
+        &mut process_groups,
+        &group_of,
+        route_edges.chain(ordering_edges),
+        |m| facts.feedback_cut(m),
+    );
 
     // Distinct connected input ports per module. Connectivity lets modules
     // arbitrate signal-vs-control default.
@@ -212,6 +257,7 @@ pub(crate) fn compile_topology(
         out_counts,
         block_capacity,
         ordering,
+        chunked,
     }
 }
 
@@ -247,6 +293,10 @@ impl TopologyFacts for Published<'_> {
     fn control_targets(&self, module: usize) -> Vec<String> {
         self.ordering.get(module).cloned().unwrap_or_default()
     }
+
+    fn feedback_cut(&self, module: usize) -> Option<FeedbackCut> {
+        self.modules.feedback_cut(module)
+    }
 }
 
 impl SignalGraph {
@@ -274,10 +324,11 @@ impl SignalGraph {
             modules,
             ordering: &self.ordering,
         };
+        let chunked = self.chunked;
         let mut topology = if self.published && self.ordering.len() == modules.len() {
-            compile_topology(&published, edges, sinks, self.block_size)
+            compile_topology(&published, edges, sinks, self.block_size, chunked)
         } else {
-            compile_topology(modules, edges, sinks, self.block_size)
+            compile_topology(modules, edges, sinks, self.block_size, chunked)
         };
         topology.swap_with(self);
         if let Some(watch) = &mut self.end_watch {

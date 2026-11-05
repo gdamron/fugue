@@ -21,6 +21,7 @@ fn mirror(module: &str, outputs: &[&str]) -> TopologyMirror {
         ports,
         is_sink: false,
         flow: Flow::Plain,
+        cut: None,
         instance: INSTANCE,
     };
     mirror.modules.insert(module.to_string(), module_mirror);

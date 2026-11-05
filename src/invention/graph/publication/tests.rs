@@ -85,7 +85,13 @@ fn publication(next: Vec<(&str, Next)>, edges: Vec<RoutingConnection>) -> Box<Pu
         survivor.push(is_survivor);
     }
     let sinks = sinks_of(&facts);
-    let topology = compile_topology(&facts, &edges, &sinks, crate::DEFAULT_BLOCK_SIZE);
+    let topology = compile_topology(
+        &facts,
+        &edges,
+        &sinks,
+        crate::DEFAULT_BLOCK_SIZE,
+        crate::invention::graph::feedback_chunks(),
+    );
     let modules = facts
         .into_iter()
         .zip(&survivor)

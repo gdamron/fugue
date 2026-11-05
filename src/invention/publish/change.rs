@@ -22,7 +22,7 @@ use crate::invention::timelines::{Context, Flow};
 use crate::modules::control_scheduler::{
     attach_from_handle_resolving, SurfaceDirectory, CONTROL_SCHEDULER_TYPE_ID,
 };
-use crate::{GraphModule, ModuleRegistry};
+use crate::{FeedbackCut, GraphModule, ModuleRegistry};
 
 /// Control-surface directory contents, keyed by module id.
 pub(crate) type SurfaceMap = IndexMap<String, ControlSurfaceInstance>;
@@ -33,6 +33,10 @@ pub(crate) struct MirrorModule {
     pub(crate) ports: ModulePorts,
     pub(crate) is_sink: bool,
     pub(crate) flow: Flow,
+    /// The minimum delay the module declares (see
+    /// [`crate::Module::feedback_cut`]): fixed for an instance, as a
+    /// change to it rebuilds the module.
+    pub(crate) cut: Option<FeedbackCut>,
     /// Numbers the module instance it mirrors: each build gets a fresh
     /// number, which a module keeps while it survives edits, so a module
     /// removed or rebuilt is told from the one now under its id (see
@@ -46,6 +50,7 @@ impl MirrorModule {
             ports: ports_of(instance),
             is_sink: matches!(instance, GraphModule::Sink(_)),
             flow: Flow::of(instance.module()),
+            cut: instance.module().feedback_cut(),
             instance: next_instance(),
         }
     }
@@ -268,6 +273,7 @@ impl GraphChange {
                 ports: ports_of(&result.module),
                 is_sink: matches!(result.module, GraphModule::Sink(_)),
                 flow: Flow::of(result.module.module()),
+                cut: result.module.module().feedback_cut(),
                 instance: next_instance(),
             },
             instance: Some(result.module),
@@ -543,6 +549,10 @@ impl TopologyFacts for MirrorFacts<'_> {
         targets.extend(watched.map(|(_, target)| target.clone()));
         targets
     }
+
+    fn feedback_cut(&self, module: usize) -> Option<FeedbackCut> {
+        self.mirror.modules.get_index(module)?.1.cut
+    }
 }
 
 /// Compiles `mirror` into a publication, taking the prepared instance for
@@ -576,6 +586,7 @@ fn build_publication(
         &mirror.edges,
         &sinks,
         block_size,
+        crate::invention::graph::feedback_chunks(),
     );
     let inherited = vec![false; survivor.len()];
     Box::new(Publication {
