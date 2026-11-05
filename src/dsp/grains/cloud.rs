@@ -24,8 +24,13 @@ const SHORTEST_GRAIN: f32 = 0.032;
 const MARGIN: f32 = 4.0;
 /// How far ahead of the write head an interpolated read reaches, in frames.
 const READ_REACH: f32 = 3.0;
-/// The longest early release of a grain the write head will overrun.
+/// The longest and shortest early release of a grain the write head will
+/// overrun.
 const RELEASE_SECONDS: f32 = 0.005;
+const SHORTEST_RELEASE_SECONDS: f32 = 0.001;
+/// Smoothed levels below this are silence: flushed, so they never decay
+/// into subnormal numbers.
+const SILENT: f32 = 1e-20;
 /// How long the grains' sum and parts are averaged over to tell how alike
 /// they are.
 const LIKENESS_SECONDS: f32 = 0.02;
@@ -108,6 +113,7 @@ pub struct GrainCloud {
     normalization: f32,
     normalization_step: f32,
     release_frames: f32,
+    shortest_release_frames: f32,
     /// The grains' summed energy, and the sum's, smoothed.
     parts_energy: f32,
     sum_energy: f32,
@@ -136,6 +142,7 @@ impl GrainCloud {
             normalization: 1.0,
             normalization_step: 1.0 - 0.99f32.powf(32_000.0 / rate),
             release_frames: (RELEASE_SECONDS * rate).max(1.0),
+            shortest_release_frames: (SHORTEST_RELEASE_SECONDS * rate).max(1.0),
             parts_energy: 0.0,
             sum_energy: 0.0,
             energy_step: 1.0 - (-1.0 / (LIKENESS_SECONDS * rate)).exp(),
@@ -201,6 +208,9 @@ impl GrainCloud {
             self.fall
         };
         self.playing += share * (playing - self.playing);
+        if self.playing < SILENT {
+            self.playing = 0.0;
+        }
         let mut target = if self.playing > 2.0 {
             (self.playing - 1.0).sqrt().recip()
         } else {
@@ -215,6 +225,10 @@ impl GrainCloud {
         let step = self.energy_step;
         self.parts_energy += step * (parts - self.parts_energy);
         self.sum_energy += step * (left * left + right * right - self.sum_energy);
+        if self.sum_energy < SILENT {
+            self.parts_energy = 0.0;
+            self.sum_energy = 0.0;
+        }
         if self.sum_energy > self.parts_energy && self.sum_energy > f32::MIN_POSITIVE {
             target *= (self.parts_energy / self.sum_energy).sqrt();
         }
@@ -238,7 +252,11 @@ impl GrainCloud {
             if ahead > closing * remaining {
                 continue;
             }
-            let frames = (ahead.max(0.0) / closing).min(self.release_frames).max(1.0);
+            // Overrun within the write fade-in, a short release is quieter
+            // than a cut.
+            let frames = (ahead.max(0.0) / closing)
+                .min(self.release_frames)
+                .max(self.shortest_release_frames);
             grain.release_step = grain.release.max(0.0) / frames;
         }
     }
