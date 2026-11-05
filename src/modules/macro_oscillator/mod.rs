@@ -31,6 +31,8 @@ use self::voice::{Block, Gate, Voice};
 mod controls;
 mod engine;
 mod engines;
+#[cfg(test)]
+mod glide_tests;
 mod lpg;
 mod oscillators;
 #[cfg(test)]
@@ -54,6 +56,18 @@ const OUTPUTS: [&str; 2] = ["audio", "aux"];
 /// envelope's response).
 const DECAY_AT_ZERO_SECONDS: f32 = 0.226;
 const DECAY_DOUBLINGS_PER_UNIT: f32 = 6.08;
+
+/// How long a `harmonics`, `timbre` or `morph` write takes to arrive, in
+/// seconds. A write that landed at once would step the sound at the next
+/// engine block; in `virtual_analog` a `harmonics` sweep would be a
+/// staircase of detunes, heard as zipper.
+const MACRO_GLIDE_SECONDS: f32 = 0.01;
+
+/// How many engine blocks a macro write glides over at `sample_rate`.
+fn macro_glide_blocks(sample_rate: u32) -> u32 {
+    let frames = sample_rate as f32 * MACRO_GLIDE_SECONDS;
+    ((frames / ENGINE_BLOCK as f32).round() as u32).max(1)
+}
 
 /// Factory for constructing macro oscillators from configuration.
 pub struct MacroOscillatorFactory;
@@ -110,7 +124,8 @@ impl ModuleFactory for MacroOscillatorFactory {
 /// # Controls
 /// - `model`: the synthesis model; a change crossfades over 20 ms
 /// - `frequency`, `frequency_mod_depth`: pitch and FM depth in Hz
-/// - `harmonics`, `timbre`, `morph`: the macro controls, 0 to 1
+/// - `harmonics`, `timbre`, `morph`: the macro controls, 0 to 1; a write
+///   glides over 10 ms
 /// - `level`: output level, 0 to 1
 /// - `decay`: how long the gate takes to fall 60 dB after a trigger, in seconds
 pub struct MacroOscillator {
@@ -120,9 +135,14 @@ pub struct MacroOscillator {
     model: usize,
     frequency: f32,
     frequency_mod_depth: f32,
-    harmonics: f32,
-    timbre: f32,
-    morph: f32,
+    /// The macro controls, gliding once per engine block. Each engine
+    /// spreads its block's values across the block's frames.
+    harmonics: LinearRamp,
+    timbre: LinearRamp,
+    morph: LinearRamp,
+    /// Whether a block has been rendered: writes before then (the config,
+    /// a development's starting values) land at once.
+    heard: bool,
     level: LinearRamp,
     /// `decay` on the gate's tuned 0-to-1 scale.
     decay: f32,
@@ -157,9 +177,10 @@ impl MacroOscillator {
             model: 0,
             frequency: 440.0,
             frequency_mod_depth: 0.0,
-            harmonics: 0.5,
-            timbre: 0.5,
-            morph: 0.5,
+            harmonics: LinearRamp::new(0.5, macro_glide_blocks(sample_rate)),
+            timbre: LinearRamp::new(0.5, macro_glide_blocks(sample_rate)),
+            morph: LinearRamp::new(0.5, macro_glide_blocks(sample_rate)),
+            heard: false,
             level: LinearRamp::new(1.0, gain_ramp_frames(sample_rate)),
             decay: 0.5,
             voice: Voice::new(sample_rate, 0),
@@ -244,14 +265,15 @@ impl MacroOscillator {
         let block = Block {
             model: self.model,
             note: self.note_for(self.frequency_sum / n),
-            harmonics: self.harmonics,
-            timbre: self.timbre,
-            morph: self.morph,
+            harmonics: self.harmonics.next_value(),
+            timbre: self.timbre.next_value(),
+            morph: self.morph.next_value(),
             gate,
             decay: self.decay,
         };
         self.voice
             .render(&block, &mut self.ready_audio, &mut self.ready_aux);
+        self.heard = true;
         self.gathered = 0;
         self.frequency_sum = 0.0;
         self.level_sum = 0.0;
@@ -348,17 +370,20 @@ impl Module for MacroOscillator {
                 self.frequency_mod_depth = depth;
                 value
             }
-            (HARMONICS, RtValue::F32(v)) => {
-                self.harmonics = macro_value(v);
-                RtValue::F32(self.harmonics)
-            }
-            (TIMBRE, RtValue::F32(v)) => {
-                self.timbre = macro_value(v);
-                RtValue::F32(self.timbre)
-            }
-            (MORPH, RtValue::F32(v)) => {
-                self.morph = macro_value(v);
-                RtValue::F32(self.morph)
+            (HARMONICS | TIMBRE | MORPH, RtValue::F32(v)) => {
+                let v = macro_value(v);
+                let heard = self.heard;
+                let ramp = match control {
+                    HARMONICS => &mut self.harmonics,
+                    TIMBRE => &mut self.timbre,
+                    _ => &mut self.morph,
+                };
+                if heard {
+                    ramp.set_target(v);
+                } else {
+                    ramp.snap(v);
+                }
+                RtValue::F32(v)
             }
             (LEVEL, RtValue::F32(v)) => {
                 let level = v.clamp(0.0, 1.0);
