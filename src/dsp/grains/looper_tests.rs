@@ -338,7 +338,7 @@ fn middle_inertia_is_the_glide_as_it_was() {
     let mut looper = Looper::new(SR);
     looper.set_inertia(0.9);
     looper.set_glide(0.5);
-    looper.set_inertia(MIDDLE_INERTIA);
+    looper.set_inertia(Looper::MIDDLE_INERTIA);
     assert_eq!(looper.speed_step.to_bits(), looper.glide_step.to_bits());
 }
 
@@ -375,7 +375,7 @@ fn a_move_at(inertia: f32) -> (usize, f64) {
 
 #[test]
 fn heavier_tape_bends_longer_and_more_gently() {
-    let moves: Vec<_> = [0.0, 0.25, MIDDLE_INERTIA, 0.75, 1.0]
+    let moves: Vec<_> = [0.0, 0.25, Looper::MIDDLE_INERTIA, 0.75, 1.0]
         .into_iter()
         .map(a_move_at)
         .collect();
@@ -388,4 +388,19 @@ fn heavier_tape_bends_longer_and_more_gently() {
     assert!(moves
         .iter()
         .all(|(_, speed)| *speed <= 1.0 - GLIDE_SLOWEST + 1e-9));
+}
+
+#[test]
+fn heavy_tape_glides_a_steady_sweep_without_jumping() {
+    // Shortening the delay by 0.4 frames a frame lags the heaviest tape's
+    // speed stage by more than the reach, but never the glide's heading.
+    let (mut looper, mut buffer, mut shape, _) = gliding(2.0, 0.6);
+    looper.set_inertia(1.0);
+    let longest = buffer.len() as f64 - 2.0 * MARGIN - looper.fade_frames as f64;
+    for block in 0..200 {
+        shape.position = 0.6 - (0.4 * 512.0 * block as f64 / longest) as f32;
+        let from = SR as usize + block * 512;
+        run(&mut looper, &mut buffer, &shape, true, from, 512, tone);
+        assert_eq!(looper.fade, 0, "block {block} glides");
+    }
 }

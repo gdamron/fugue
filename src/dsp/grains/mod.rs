@@ -18,7 +18,7 @@ mod stretch;
 pub use clock::{ClockDivider, RisingEdge};
 pub use cloud::{share_per_frame, GrainCloud, GrainShape, Onsets, MAX_GRAINS};
 pub use diffuser::Diffuser;
-pub use looper::{LoopShape, Looper, MIDDLE_INERTIA};
+pub use looper::{LoopShape, Looper};
 pub use pitch_shift::PitchShifter;
 pub use recording::Recording;
 pub use stretch::{StretchShape, Stretcher};

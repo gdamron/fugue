@@ -14,7 +14,8 @@
 //! as tape follows a moved head: the delay slides to its new length, the
 //! reader speeding up or slowing down (and the pitch bending) on the way.
 //! Only a leap too far to slide in reasonable time still crossfades, as do
-//! tapped and clocked delays and everything while frozen.
+//! tapped and clocked delays, everything while frozen and the thaw after.
+//! The tape's inertia sets how slowly the read speed itself changes.
 
 use super::Recording;
 use crate::dsp::cosine;
@@ -36,12 +37,12 @@ const GLIDE_FASTEST: f64 = 2.0;
 const GLIDE_SHARE: f64 = 0.25;
 const GLIDE_SECONDS: f64 = 1.0;
 /// Each of the glide's two smoothing stages takes this share of the glide
-/// time as its time constant, so a move is about nine-tenths done by then.
+/// time as its time constant (at middle inertia), so a move is about
+/// nine-tenths done by then.
 const GLIDE_STAGE: f64 = 0.25;
-/// The tape's inertia at its middle, where both stages are alike; each
-/// unit either way scales the second stage's time constant this many
-/// octaves, a quarter as long at 0 and four times at 1.
-pub const MIDDLE_INERTIA: f32 = 0.5;
+/// Each unit of inertia either side of the middle scales the second
+/// stage's time constant this many octaves: a quarter as long at 0, four
+/// times at 1.
 const INERTIA_OCTAVES: f32 = 4.0;
 
 /// What the reader follows.
@@ -96,6 +97,9 @@ pub struct Looper {
 }
 
 impl Looper {
+    /// The tape's inertia at its middle, where both glide stages are alike.
+    pub const MIDDLE_INERTIA: f32 = 0.5;
+
     pub fn new(sample_rate: u32) -> Self {
         let rate = sample_rate.max(1) as f32;
         Self {
@@ -114,7 +118,7 @@ impl Looper {
             glide_step: 0.0,
             speed_step: 0.0,
             glide_seconds: 0.0,
-            inertia: MIDDLE_INERTIA,
+            inertia: Self::MIDDLE_INERTIA,
             glided: None,
             glide_reach: 0.0,
             thawing: false,
@@ -130,7 +134,8 @@ impl Looper {
     }
 
     /// The tape's mass, 0 to 1: heavier, the read speed is slower to
-    /// change, so a move bends longer and more gently.
+    /// change, so a move bends longer and more gently. Changed mid-glide,
+    /// the read speed steps to the new mass's pace.
     pub fn set_inertia(&mut self, inertia: f32) {
         self.inertia = inertia.clamp(0.0, 1.0);
         self.update_glide();
@@ -147,7 +152,7 @@ impl Looper {
                 0.0
             }
         };
-        let heavier = ((self.inertia - MIDDLE_INERTIA) * INERTIA_OCTAVES).exp2();
+        let heavier = ((self.inertia - Self::MIDDLE_INERTIA) * INERTIA_OCTAVES).exp2();
         self.glide_step = step(frames);
         self.speed_step = step(frames * f64::from(heavier));
     }
@@ -206,7 +211,8 @@ impl Looper {
             .clamp(MARGIN, longest);
 
         if recording {
-            if self.glide_step > 0.0 && self.cycle.is_some() {
+            // Frozen last frame (the loop placed or not yet): thawing.
+            if self.glide_step > 0.0 && (self.anchor.is_some() || self.cycle.is_some()) {
                 self.thawing = true;
             }
             self.cycle = None;
@@ -276,7 +282,10 @@ impl Looper {
                 return;
             }
         };
-        if (delay - slow).abs() > reach {
+        // Judged from where the glide is heading, not the read speed's
+        // stage, whose lag grows with inertia: a steady sweep within reach
+        // glides however heavy the tape.
+        if (delay - fast).abs() > reach {
             // Too far to glide: crossfade there, once any crossfade is
             // done, holding the delay where it is until then.
             if self.fade == 0 {

@@ -104,14 +104,14 @@ const DECLS: &[ControlDecl] = &[
             max: LONGEST_GLIDE,
         },
         RtValue::F32(0.0),
-        "Looping delay, while recording: how long a moved position takes to slide to its new delay, bending pitch on the way as tape does; 0 jumps there with a short crossfade. A leap beyond a quarter of the buffer (or a second) still crossfades",
+        "Looping delay, while recording: how long a moved position takes to slide to its new delay (at middle inertia; heavier tape takes longer), bending pitch on the way as tape does; 0 jumps there with a short crossfade. A leap beyond a quarter of the buffer, a second or half the glide time still crossfades, as do tapped and clocked delays",
     )
     .unit("s")
     .precision(3)
     .clamped(0.0, LONGEST_GLIDE),
     unit(
         "inertia",
-        crate::dsp::MIDDLE_INERTIA,
+        crate::dsp::Looper::MIDDLE_INERTIA,
         "Looping delay, while gliding: the tape's mass. Heavier, the read speed is slower to rise and fall, so a move bends longer and more gently; lighter, it lurches to speed and settles fast",
     ),
 ];
