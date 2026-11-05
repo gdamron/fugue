@@ -197,22 +197,30 @@ fn unfreezing_below_unity_pitch_does_not_click() {
 }
 
 #[test]
-fn grains_reading_one_delay_are_not_scaled_as_if_unrelated() {
-    // Unpitched grains at one position all read the same audio.
+fn grains_reading_one_delay_are_scaled_by_power_alone() {
+    // As in the original, overlapping grains are scaled by one over the
+    // root of how many play, which assumes they add up in power. Unpitched
+    // grains at one position all read the same audio and add up in
+    // amplitude, so a dense cloud comes out louder than its input: that grit
+    // is kept, not corrected away. The input is quiet enough that the output
+    // stays below the soft clip, so the gain is the cloud's own.
     let config = serde_json::json!({ "density": 1.0, "texture": 0.6, "position": 0.1 });
     let mut module = build(config);
+    let level = 0.05;
     let (left, _) = render(
         module.as_mut(),
         SR as usize * 3,
-        |n| 0.5 * sine(n, 220.0),
+        |n| level * sine(n, 220.0),
         None,
     );
-    let peak = left[SR as usize * 2..]
-        .iter()
-        .fold(0.0f32, |m, x| m.max(x.abs()));
-    // Added in amplitude but scaled as if in energy, these grains clipped.
-    let gain = peak / 0.5;
-    assert!((0.5..1.6).contains(&gain), "a gain of {gain}");
+    let tail = &left[SR as usize * 2..];
+    let rms = (tail.iter().map(|x| x * x).sum::<f32>() / tail.len() as f32).sqrt();
+    let gain = rms / (level / 2f32.sqrt());
+    // Corrected for likeness the gain would be about one; scaled by power
+    // alone it is several times that.
+    assert!((3.0..8.0).contains(&gain), "a gain of {gain}");
+    let peak = tail.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+    assert!(peak < 0.75, "below the soft clip, at {peak}");
 }
 
 #[test]
