@@ -15,6 +15,7 @@ use super::modal::{ModalSettings, ModalVoice, MAX_MODES};
 use super::plucker::Plucker;
 use super::string::{KarplusString, StringSettings};
 use super::sympathetic::{string_notes, MAX_STRINGS};
+use super::tuning::SYMPATHETIC_DAMPING;
 use super::ENGINE_BLOCK;
 
 /// The most voices the resonator plays at once.
@@ -85,6 +86,9 @@ pub(super) struct Voices {
     string: [KarplusString; VOICES],
     sympathetic: Box<[[KarplusString; MAX_STRINGS]; VOICES]>,
     sympathetic_count: [usize; VOICES],
+    /// How many of a voice's sympathetic strings are ringing: at least the
+    /// count, and more while strings a smaller count dropped ring out.
+    sympathetic_ringing: [usize; VOICES],
     lfo_phase: [[f32; MAX_STRINGS]; VOICES],
     wake: [[Wake; 3]; VOICES],
     /// 0 sends a voice's odd and even partials to `odd` and `even`; 1
@@ -117,6 +121,7 @@ impl Voices {
                 std::array::from_fn(|s| KarplusString::new(sample_rate, false, seed(v, s)))
             })),
             sympathetic_count: [MAX_STRINGS; VOICES],
+            sympathetic_ringing: [0; VOICES],
             lfo_phase: [[0.0; MAX_STRINGS]; VOICES],
             wake: [[Wake::default(); 3]; VOICES],
             split: std::array::from_fn(|_| LinearRamp::new(0.0, split_blocks)),
@@ -202,9 +207,12 @@ impl Voices {
                         match model {
                             MODAL => self.modal[v].reset(),
                             STRING => self.string[v].reset(),
-                            _ => self.sympathetic[v]
-                                .iter_mut()
-                                .for_each(KarplusString::reset),
+                            _ => {
+                                self.sympathetic[v]
+                                    .iter_mut()
+                                    .for_each(KarplusString::reset);
+                                self.sympathetic_ringing[v] = 0;
+                            }
                         }
                     }
                 } else {
@@ -323,12 +331,16 @@ impl Voices {
     /// others (when the internal exciter plays) answer it.
     fn ring_sympathetic(&mut self, v: usize, feeding: bool, internal: bool, patch: &Patch) -> f32 {
         let count = self.sympathetic_count[v];
+        let ringing = self.sympathetic_ringing[v].max(count);
+        self.sympathetic_ringing[v] = ringing;
         let note = 69.0 + 12.0 * log2(self.frequency[v] * self.sample_rate / 440.0);
         let mut notes = [0.0f32; MAX_STRINGS];
         string_notes(note, patch.structure, count, &mut notes);
         let lfo_step = ENGINE_BLOCK as f32 / self.sample_rate;
         let mut level = 0.0f32;
-        for s in 0..count {
+        for s in 0..ringing {
+            // A string beyond the count keeps its pitch and rings out unfed.
+            let tuned = s < count;
             let phase = &mut self.lfo_phase[v][s];
             *phase += LFO_HZ[s] * lfo_step;
             *phase -= phase.floor();
@@ -337,7 +349,7 @@ impl Voices {
             let mut damping = patch.damping;
             let mut position = patch.position;
             let mut glide = 1.0;
-            let answering = s > 0 && internal;
+            let answering = tuned && s > 0 && internal;
             if answering {
                 brightness *= 2.0 - brightness;
                 brightness *= 2.0 - brightness;
@@ -348,19 +360,21 @@ impl Voices {
                 position = patch.position + lfo * amount;
                 glide = exp2((brightness - 1.0) * 3.0);
             }
-            let index = s as f32 / count as f32;
+            let index = (s as f32 / count as f32).min(1.0);
             let settings = StringSettings {
                 dispersion: 0.0,
                 brightness,
-                damping: damping + index * (0.95 - damping),
+                damping: damping + index * (SYMPATHETIC_DAMPING - damping),
                 position,
             };
-            let hz = 440.0 * exp2((notes[s] - 69.0) / 12.0);
             let string = &mut self.sympathetic[v][s];
-            string.glide_to(hz / self.sample_rate, glide);
+            if tuned {
+                let hz = 440.0 * exp2((notes[s] - 69.0) / 12.0);
+                string.glide_to(hz / self.sample_rate, glide);
+            }
             let input = if answering {
                 &self.sympathetic_input
-            } else if feeding {
+            } else if feeding && tuned {
                 &self.excitation
             } else {
                 &SILENCE

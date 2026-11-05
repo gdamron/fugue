@@ -19,7 +19,7 @@ pub(super) struct Plucker {
     remaining: usize,
     period: f32,
     gain: f32,
-    /// How long since the burst ended, to know when the comb has emptied.
+    /// How long the comb has been all but silent since the burst ended.
     quiet: usize,
 }
 
@@ -58,7 +58,7 @@ impl Plucker {
 
     /// Whether the plucker has anything left to play.
     pub(super) fn is_sounding(&self) -> bool {
-        self.remaining > 0 || self.quiet < 8 * self.comb.len()
+        self.remaining > 0 || self.quiet < self.comb.len()
     }
 
     /// Adds the next `out.len()` frames of the pluck into `out`.
@@ -71,12 +71,24 @@ impl Plucker {
                 self.remaining -= 1;
                 self.rng.bipolar()
             } else {
-                self.quiet = self.quiet.saturating_add(1);
                 0.0
             };
             let combed = noise + self.gain * self.comb.read_fractional(self.period);
             self.comb.write_and_advance(combed);
             *sample += self.filter.process(combed).lowpass;
+            // Stopped only once a whole comb's length has stayed below
+            // -180 dB, so no tail is cut short.
+            if self.remaining == 0 && combed.abs() < 1.0e-9 {
+                self.quiet += 1;
+            } else {
+                self.quiet = 0;
+            }
+        }
+        if !self.is_sounding() {
+            // Emptied, so the next pluck starts clean.
+            for _ in 0..self.comb.len() {
+                self.comb.write_and_advance(0.0);
+            }
         }
     }
 }

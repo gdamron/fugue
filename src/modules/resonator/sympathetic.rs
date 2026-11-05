@@ -1,6 +1,7 @@
 //! Ported from Mutable Instruments' `rings/dsp/part.cc`
-//! (`ComputeSympatheticStringsNotes`, MIT, Copyright 2015 Emilie Gillet).
-//! See THIRD_PARTY_NOTICES.md.
+//! (`ComputeSympatheticStringsNotes`, MIT, Copyright 2015 Emilie Gillet),
+//! with `Squash` from `stmlib/dsp/dsp.h` (MIT, Copyright 2012 Emilie
+//! Gillet). See THIRD_PARTY_NOTICES.md.
 //!
 //! Where a voice's sympathetic strings are tuned: `structure` slides the
 //! second and later strings through a ladder of intervals around the

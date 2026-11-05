@@ -100,6 +100,7 @@ THE SOFTWARE.
   - `dsp/limiter.h` → `src/modules/macro_oscillator/engines/speech.rs`
   - `dsp/filter.h` (`Svf` band-pass) → `src/modules/resonator/modal.rs`
   - `dsp/dsp.h` (`SoftLimit`) → `src/modules/resonator/limiter.rs`
+  - `dsp/dsp.h` (`Squash`) → `src/modules/resonator/sympathetic.rs`
 - License: MIT
 
 ```

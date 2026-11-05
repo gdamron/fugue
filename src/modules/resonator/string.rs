@@ -16,9 +16,10 @@ use crate::dsp::{exp2, tan_quarter_turn, DcBlocker, DelayLine, Rng, Svf};
 
 use super::tuning::t60_seconds;
 
-/// The reference's delay line, 2048 samples at 48 kHz: the lowest string
-/// is about 23.5 Hz.
-const LINE_SECONDS: f32 = 2048.0 / 48_000.0;
+/// The delay line: long enough for a string at the `frequency` control's
+/// lowest 20 Hz, where the reference's 2048 samples at 48 kHz stop at
+/// about 23.5 Hz.
+const LINE_SECONDS: f32 = 0.0525;
 /// The shortest delay a read or the allpass may use.
 const MIN_DELAY: f32 = 4.0;
 
@@ -239,7 +240,12 @@ impl KarplusString {
         // holds the string's recent past when dispersion fades in. Below
         // that it fades its gain out instead of switching off.
         let raw = *delay * stretch_point;
-        let ap_delay = raw.max(MIN_DELAY).min((self.stretch.len() - 1) as f32);
+        // Whole samples, so the main read takes up the fraction and the
+        // loop keeps its full length.
+        let ap_delay = raw
+            .max(MIN_DELAY)
+            .min((self.stretch.len() - 1) as f32)
+            .floor();
         let ap_gain = ap_gain * (raw / MIN_DELAY).min(1.0);
         let main = (*delay - ap_delay).max(1.0);
         let s = self.line.read_fractional(main);
