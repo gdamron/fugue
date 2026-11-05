@@ -52,6 +52,7 @@ pub mod melody;
 pub mod mixer;
 pub mod noise;
 pub mod oscillator;
+pub mod resonator;
 pub mod reverb;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod rtmp_sink;
