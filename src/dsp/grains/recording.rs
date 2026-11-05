@@ -61,6 +61,12 @@ impl Recording {
         self.left.is_empty()
     }
 
+    /// Frames the head runs on after a freeze, fading its writes out.
+    #[inline]
+    pub fn fade_frames(&self) -> usize {
+        self.fade_frames as usize
+    }
+
     /// Where the next frame will be written; the newest frame is one before.
     #[inline]
     pub fn head(&self) -> usize {

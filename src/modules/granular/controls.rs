@@ -17,7 +17,7 @@ pub(super) const SYNC: ControlIndex = ControlIndex(9);
 pub(super) const MOST_PITCH: f32 = 24.0;
 
 /// The playback modes, in [`super::playback::Mode`] order.
-pub(super) const MODES: &[&str] = &["granular", "stretch"];
+pub(super) const MODES: &[&str] = &["granular", "stretch", "looping_delay"];
 
 /// A 0-to-1 control.
 const fn unit(key: &'static str, default: f32, description: &'static str) -> ControlDecl {
@@ -36,17 +36,17 @@ const DECLS: &[ControlDecl] = &[
         "mode",
         DeclKind::Choice(MODES),
         RtValue::U32(0),
-        "Playback mode: granular plays grains from the buffer; stretch holds it still in time while its pitch moves; a change crossfades",
+        "Playback mode: granular plays grains from the buffer; stretch holds it still in time while its pitch moves; looping_delay delays the input, and loops the buffer while frozen; a change crossfades",
     ),
     unit(
         "position",
         0.5,
-        "Where playback reads in the buffer: 0 the newest audio, 1 the oldest",
+        "Where playback reads in the buffer: 0 the newest audio, 1 the oldest. Looping delay: the delay, until tapped",
     ),
     unit(
         "size",
         0.5,
-        "Granular: grain length, about 32 ms at 0 to 0.5 s at 1. Stretch: window length, 32 ms to 128 ms",
+        "Granular: grain length, about 32 ms at 0 to 0.5 s at 1. Stretch: window length, 32 ms to 128 ms. Looping delay, while frozen: loop length, 20 ms up to the buffer",
     ),
     ControlDecl::new(
         "pitch",
@@ -90,7 +90,7 @@ const DECLS: &[ControlDecl] = &[
         "sync",
         DeclKind::Bool,
         RtValue::Bool(false),
-        "Granular: while the clock input is patched, grains start only on clock divisions (1 to 8 per pulse, set by density)",
+        "While the clock input is patched: granular grains start only on clock divisions (1 to 8 per pulse, set by density); the looping delay's delay and loop follow the clock's period",
     ),
 ];
 
