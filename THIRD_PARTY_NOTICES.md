@@ -38,10 +38,12 @@ where they live in Fugue, then the full license text:
   - `plaits/dsp/engine/virtual_analog_engine.cc` → `src/modules/macro_oscillator/engines/virtual_analog.rs`
   - `plaits/dsp/oscillator/variable_shape_oscillator.h` → `src/modules/macro_oscillator/oscillators/variable_shape.rs`
   - `plaits/dsp/oscillator/variable_saw_oscillator.h` → `src/modules/macro_oscillator/oscillators/variable_saw.rs`
+  - `plaits/dsp/envelope.h`, `plaits/dsp/fx/low_pass_gate.h` → `src/modules/macro_oscillator/lpg.rs`
+  - `plaits/dsp/voice.cc` (trigger and low-pass gate settings) → `src/modules/macro_oscillator/voice.rs`
 - License: MIT
 
 ```
-Copyright 2016 Emilie Gillet.
+Copyright 2014-2016 Emilie Gillet.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
