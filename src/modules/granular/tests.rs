@@ -56,12 +56,26 @@ fn largest_step(x: &[f32]) -> f32 {
 
 #[test]
 fn full_feedback_on_a_full_scale_input_stays_within_unity() {
-    let mut module = build(serde_json::json!({ "feedback": 1.0, "density": 0.95, "texture": 0.9 }));
-    let (left, right) = render(module.as_mut(), SR as usize * 10, |n| sine(n, 220.0), None);
+    let mut module = Granular::with_cells(
+        SR,
+        DEFAULT_BUFFER_LENGTH,
+        0,
+        Arc::new(ControlCells::new(controls::defaults())),
+    );
+    for (key, value) in [("feedback", 1.0), ("density", 0.95), ("texture", 0.9)] {
+        module.set_control(key, value).unwrap();
+    }
+    let (left, right) = render(&mut module, SR as usize * 10, |n| sine(n, 220.0), None);
     for x in left.iter().chain(&right) {
         assert!(x.is_finite() && x.abs() <= 1.0);
     }
     assert!(left.iter().any(|x| x.abs() > 0.1), "the grains are heard");
+    // The output is clamped, so look inside the loop: what it records
+    // stays within the soft limit's reach.
+    let recorded = (0..module.recording.len()).map(|i| module.recording.read(i, 0.0));
+    for (l, r) in recorded {
+        assert!(l.abs() <= 1.0 && r.abs() <= 1.0, "recorded {l}, {r}");
+    }
 }
 
 #[test]
@@ -157,6 +171,47 @@ fn freezing_and_unfreezing_do_not_click() {
     let (thawed, _) = render(module.as_mut(), SR as usize, input, None);
     assert!(largest_step(&frozen) <= 1.5 * steady);
     assert!(largest_step(&thawed) <= 1.5 * steady);
+}
+
+#[test]
+fn unfreezing_below_unity_pitch_does_not_click() {
+    // Grains read an octave down cross the still write head while frozen;
+    // once it moves again it must not overrun them.
+    let config = serde_json::json!({
+        "buffer_length": 1.0, "density": 0.8, "texture": 0.75, "position": 0.0,
+        "pitch": -12.0, "size": 1.0, "seed": 2
+    });
+    let mut module = build(config);
+    let input = |n: usize| 0.5 * sine(n, 110.0);
+    let (steady, _) = render(module.as_mut(), SR as usize * 3, input, None);
+    let steady = largest_step(&steady[SR as usize..]);
+    module.set_control("freeze", 1.0).unwrap();
+    let (frozen, _) = render(module.as_mut(), SR as usize, input, None);
+    module.set_control("freeze", 0.0).unwrap();
+    let (thawed, _) = render(module.as_mut(), SR as usize, input, None);
+    for (label, part) in [("frozen", frozen), ("thawed", thawed)] {
+        let step = largest_step(&part);
+        assert!(step <= 1.5 * steady, "{label}: {step} vs {steady}");
+    }
+}
+
+#[test]
+fn grains_reading_one_delay_are_not_scaled_as_if_unrelated() {
+    // Unpitched grains at one position all read the same audio.
+    let config = serde_json::json!({ "density": 1.0, "texture": 0.6, "position": 0.1 });
+    let mut module = build(config);
+    let (left, _) = render(
+        module.as_mut(),
+        SR as usize * 3,
+        |n| 0.5 * sine(n, 220.0),
+        None,
+    );
+    let peak = left[SR as usize * 2..]
+        .iter()
+        .fold(0.0f32, |m, x| m.max(x.abs()));
+    // Added in amplitude but scaled as if in energy, these grains clipped.
+    let gain = peak / 0.5;
+    assert!((0.5..1.6).contains(&gain), "a gain of {gain}");
 }
 
 #[test]

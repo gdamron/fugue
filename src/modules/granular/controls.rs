@@ -36,7 +36,7 @@ const DECLS: &[ControlDecl] = &[
         "mode",
         DeclKind::Choice(MODES),
         RtValue::U32(0),
-        "Playback mode: granular plays grains from the buffer; a change crossfades",
+        "Playback mode: granular plays grains from the buffer",
     ),
     unit(
         "position",

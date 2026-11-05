@@ -62,6 +62,8 @@ const SEED_KEY: ConfigKey = ConfigKey::seed("seed");
 /// The buffer's length when config doesn't say, and its longest, in seconds.
 const DEFAULT_BUFFER_LENGTH: f32 = 4.0;
 const LONGEST_BUFFER: f32 = 60.0;
+/// Enough frames for a grain to read clear of the write head.
+const SHORTEST_BUFFER_FRAMES: usize = 64;
 
 const INPUTS: [&str; 4] = ["audio_left", "audio_right", "trigger", "clock"];
 const RIGHT_IN: usize = 1;
@@ -138,7 +140,7 @@ impl ModuleFactory for GranularFactory {
 ///   grains (each grain keeps the values it started with, so changes
 ///   never step the sound)
 /// - `freeze`: stop recording and keep playing the buffer; the writes
-///   fade out and back in over 5 ms, so neither edge clicks
+///   fade out and back in over 20 ms, so neither edge clicks
 /// - `feedback`: output fed back into the recording, through a high-pass
 ///   and a soft limit; it fades out while frozen
 /// - `sync`: grains start on `clock` divisions instead of by `density`
@@ -159,6 +161,8 @@ pub struct Granular {
     density: f32,
     texture: f32,
     freeze: bool,
+    /// Whether the last block was frozen, to catch recording restarting.
+    was_frozen: bool,
     sync: bool,
 
     feedback: LinearRamp,
@@ -183,7 +187,10 @@ impl Granular {
         let glide = gain_ramp_frames(sample_rate);
         let mut module = Self {
             cells,
-            recording: Recording::new(sample_rate, (length * rate).round() as usize),
+            recording: Recording::new(
+                sample_rate,
+                ((length * rate).round() as usize).max(SHORTEST_BUFFER_FRAMES),
+            ),
             grains: GrainCloud::new(sample_rate, seed),
             diffuser: Diffuser::new(sample_rate),
             shape: GrainShape {
@@ -194,6 +201,7 @@ impl Granular {
             density: 0.7,
             texture: 0.5,
             freeze: false,
+            was_frozen: false,
             sync: false,
             feedback: LinearRamp::new(0.0, glide),
             diffusion: LinearRamp::new(0.0, glide),
@@ -220,6 +228,7 @@ impl Granular {
         module.feedback.settle();
         module.diffusion.settle();
         module.frozen = if module.freeze { 1.0 } else { 0.0 };
+        module.was_frozen = module.freeze;
         module
     }
 
@@ -255,6 +264,10 @@ impl Granular {
         let divisions = divisions(reach);
         let synced = self.sync && self.connected[CLOCK_IN];
         let recording = !self.freeze;
+        if recording && self.was_frozen {
+            self.grains.thaw(&self.recording);
+        }
+        self.was_frozen = self.freeze;
         for i in 0..frames {
             let left = finite(self.inputs[0][i]);
             let right = if self.connected[RIGHT_IN] {
