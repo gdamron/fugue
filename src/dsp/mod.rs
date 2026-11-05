@@ -52,6 +52,7 @@ mod waveshape;
 
 pub use allpass::Allpass;
 pub use band_limited::{BandLimitedOscillator, Shape};
+pub(crate) use band_limited::{corner_residual, step_residual};
 pub use block_ramp::{BlockRamp, BlockSteps};
 pub use crush::{bit_step, quantize, SampleHold};
 pub use damper::Damper;

@@ -91,7 +91,7 @@ impl Corrections {
 /// The cubic B-spline kernel's smoothed unit step, less the hard one, `x`
 /// samples after the step (zero beyond two samples either side).
 #[inline]
-fn step_residual(x: f32) -> f32 {
+pub(crate) fn step_residual(x: f32) -> f32 {
     // The smoothed step's rise before the jump; after it, the residual is
     // the mirror image, negated.
     let rise = |x: f32| {
@@ -114,7 +114,7 @@ fn step_residual(x: f32) -> f32 {
 /// The integral of [`step_residual`]: the smoothed unit corner less the
 /// hard one, `x` samples after the corner. It is even in `x`.
 #[inline]
-fn corner_residual(x: f32) -> f32 {
+pub(crate) fn corner_residual(x: f32) -> f32 {
     let x = -x.abs();
     if x <= -2.0 {
         0.0
