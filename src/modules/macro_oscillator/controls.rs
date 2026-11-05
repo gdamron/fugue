@@ -2,6 +2,7 @@
 
 use super::engines::MODELS;
 use crate::control_request::{ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue};
+use crate::music::scales::{KEY_NAMES, KEY_SPELLINGS, SCALE_NAMES};
 
 pub(super) const MODEL: ControlIndex = ControlIndex(0);
 pub(super) const FREQUENCY: ControlIndex = ControlIndex(1);
@@ -11,6 +12,8 @@ pub(super) const TIMBRE: ControlIndex = ControlIndex(4);
 pub(super) const MORPH: ControlIndex = ControlIndex(5);
 pub(super) const LEVEL: ControlIndex = ControlIndex(6);
 pub(super) const DECAY: ControlIndex = ControlIndex(7);
+pub(super) const KEY: ControlIndex = ControlIndex(8);
+pub(super) const SCALE: ControlIndex = ControlIndex(9);
 
 /// The shortest and longest low-pass gate decay, in seconds to fall 60 dB.
 pub(super) const MIN_DECAY: f32 = 0.1;
@@ -60,15 +63,15 @@ const DECLS: &[ControlDecl] = &[
     .unit("Hz"),
     macro_control(
         "harmonics",
-        "Harmonic content; virtual analog: second oscillator detune; waveshaping: shaper curve (0.5 linear); fm: modulator ratio (0.5 an octave); grain_formant: second formant ratio, bare window below 0.5; additive: spectral bumps",
+        "Harmonic content; virtual analog: second oscillator detune; waveshaping: shaper curve (0.5 linear); fm: modulator ratio (0.5 an octave); grain_formant: second formant ratio, bare window below 0.5; additive: spectral bumps; chords: chord (octave, fifth, sus2, sus4, triad, sixth, seventh, ninth, eleventh, six-nine)",
     ),
     macro_control(
         "timbre",
-        "Brightness; virtual analog: pulse width and sync; waveshaping: fold amount; fm: modulation index; grain_formant: formant frequency; additive: spectral peak position",
+        "Brightness; virtual analog: pulse width and sync; waveshaping: fold amount; fm: modulation index; grain_formant: formant frequency; additive: spectral peak position; chords: inversion (two octaves down to two up, root position at 0.5)",
     ),
     macro_control(
         "morph",
-        "Waveform morph; virtual analog: saw to triangle; waveshaping: triangle to saw; fm: feedback (below 0.5 rough, above noisy); grain_formant: grain window; additive: narrows the spectral peak",
+        "Waveform morph; virtual analog: saw to triangle; waveshaping: triangle to saw; fm: feedback (below 0.5 rough, above noisy); grain_formant: grain window; additive: narrows the spectral peak; chords: organ registration, bright to hollow",
     ),
     ControlDecl::new(
         "level",
@@ -89,6 +92,19 @@ const DECLS: &[ControlDecl] = &[
     .unit("s")
     .log()
     .clamped(MIN_DECAY, MAX_DECAY),
+    ControlDecl::new(
+        "key",
+        DeclKind::Choice(KEY_NAMES),
+        RtValue::U32(0),
+        "Chords: the key chords are built in",
+    )
+    .spellings(KEY_SPELLINGS),
+    ControlDecl::new(
+        "scale",
+        DeclKind::Choice(SCALE_NAMES),
+        RtValue::U32(0),
+        "Chords: the scale chord notes are taken from",
+    ),
 ];
 
 pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);

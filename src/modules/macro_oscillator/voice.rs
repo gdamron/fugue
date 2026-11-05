@@ -43,11 +43,16 @@ pub(super) struct Block {
     /// The pitch, in semitones (69 is A 440).
     pub note: f32,
     pub harmonics: f32,
+    /// `harmonics` as last written, without the glide.
+    pub harmonics_target: f32,
     pub timbre: f32,
     pub morph: f32,
     pub gate: Gate,
     /// The gate's `decay` mapped to the 0-to-1 scale the gate was tuned on.
     pub decay: f32,
+    /// The key and scale chords are built in.
+    pub key: u8,
+    pub scale: u8,
 }
 
 pub(super) struct Voice {
@@ -152,9 +157,12 @@ impl Voice {
             note: block.note,
             sample_period: self.sample_period,
             harmonics: block.harmonics,
+            harmonics_target: block.harmonics_target,
             timbre: block.timbre,
             morph: block.morph,
             accent,
+            key: block.key,
+            scale: block.scale,
         };
         self.mix_engines(block.model, &p, audio, aux);
         self.apply_gate(gate, block.decay, &p, audio, aux);
@@ -305,10 +313,13 @@ mod tests {
             model,
             note: 57.0,
             harmonics: 0.5,
+            harmonics_target: 0.5,
             timbre: 0.5,
             morph: 0.5,
             gate,
             decay: 0.5,
+            key: 0,
+            scale: 0,
         }
     }
 
