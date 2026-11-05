@@ -140,6 +140,8 @@ pub struct MacroOscillator {
     /// The macro controls, gliding once per engine block. Each engine
     /// spreads its block's values across the block's frames.
     harmonics: LinearRamp,
+    /// Where `harmonics` is gliding to.
+    harmonics_target: f32,
     timbre: LinearRamp,
     morph: LinearRamp,
     /// Whether a block has been rendered: writes before then (the config,
@@ -182,6 +184,7 @@ impl MacroOscillator {
             frequency: 440.0,
             frequency_mod_depth: 0.0,
             harmonics: LinearRamp::new(0.5, macro_glide_blocks(sample_rate)),
+            harmonics_target: 0.5,
             timbre: LinearRamp::new(0.5, macro_glide_blocks(sample_rate)),
             morph: LinearRamp::new(0.5, macro_glide_blocks(sample_rate)),
             heard: false,
@@ -272,6 +275,7 @@ impl MacroOscillator {
             model: self.model,
             note: self.note_for(self.frequency_sum / n),
             harmonics: self.harmonics.next_value(),
+            harmonics_target: self.harmonics_target,
             timbre: self.timbre.next_value(),
             morph: self.morph.next_value(),
             gate,
@@ -380,6 +384,9 @@ impl Module for MacroOscillator {
             }
             (HARMONICS | TIMBRE | MORPH, RtValue::F32(v)) => {
                 let v = macro_value(v);
+                if control == HARMONICS {
+                    self.harmonics_target = v;
+                }
                 let heard = self.heard;
                 let ramp = match control {
                     HARMONICS => &mut self.harmonics,

@@ -19,6 +19,10 @@ pub(super) struct EngineParameters {
     /// 1 / sample rate, so engines can turn a pitch into a phase step.
     pub sample_period: f32,
     pub harmonics: f32,
+    /// `harmonics` as last written, without the glide: for an engine that
+    /// picks from a set by it, so a write makes one choice rather than
+    /// passing through every one between.
+    pub harmonics_target: f32,
     pub timbre: f32,
     pub morph: f32,
     /// How hard the note was played, 0 to 1.
@@ -84,6 +88,7 @@ mod tests {
             note: 69.0,
             sample_period: 1.0 / 48_000.0,
             harmonics: 0.5,
+            harmonics_target: 0.5,
             timbre: 0.5,
             morph: 0.5,
             accent: 0.8,

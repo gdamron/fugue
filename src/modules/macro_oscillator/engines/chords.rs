@@ -62,7 +62,9 @@ impl ChordsEngine {
         self.morph += (p.morph - self.morph) * smoothing;
         self.timbre += (p.timbre - self.timbre) * smoothing;
 
-        self.bank.select(p.harmonics);
+        // The chord changes once on a write, rather than passing through
+        // every chord on the way.
+        self.bank.select(p.harmonics_target);
         self.bank.build(p.note, p.key, p.scale);
         let voicing = self.bank.voice(self.timbre);
         let registration = registration(self.morph);
@@ -106,4 +108,39 @@ fn registration(morph: f32) -> [f32; STOPS] {
         *stop = a[i] + (b[i] - a[i]) * fractional;
     }
     stops
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::macro_oscillator::engine::ENGINE_BLOCK;
+
+    #[test]
+    fn a_harmonics_write_changes_the_chord_once() {
+        let mut engine = ChordsEngine::new();
+        let mut p = EngineParameters {
+            note: 48.0,
+            sample_period: 1.0 / 48_000.0,
+            harmonics: 0.1,
+            harmonics_target: 0.1,
+            timbre: 0.5,
+            morph: 0.5,
+            accent: 0.8,
+            key: 0,
+            scale: 0,
+        };
+        let (mut out, mut aux) = ([0.0; ENGINE_BLOCK], [0.0; ENGINE_BLOCK]);
+        engine.render(&p, &mut out, &mut aux);
+        let mut shapes = vec![engine.bank.shape()];
+        // The module glides `harmonics` toward the write over 40 blocks.
+        p.harmonics_target = 0.9;
+        for block in 1..=40 {
+            p.harmonics = 0.1 + 0.8 * block as f32 / 40.0;
+            engine.render(&p, &mut out, &mut aux);
+            if shapes.last() != Some(&engine.bank.shape()) {
+                shapes.push(engine.bank.shape());
+            }
+        }
+        assert_eq!(shapes.len(), 2, "the chord went {shapes:?}");
+    }
 }

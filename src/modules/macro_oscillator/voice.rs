@@ -43,6 +43,8 @@ pub(super) struct Block {
     /// The pitch, in semitones (69 is A 440).
     pub note: f32,
     pub harmonics: f32,
+    /// `harmonics` as last written, without the glide.
+    pub harmonics_target: f32,
     pub timbre: f32,
     pub morph: f32,
     pub gate: Gate,
@@ -155,6 +157,7 @@ impl Voice {
             note: block.note,
             sample_period: self.sample_period,
             harmonics: block.harmonics,
+            harmonics_target: block.harmonics_target,
             timbre: block.timbre,
             morph: block.morph,
             accent,
@@ -310,6 +313,7 @@ mod tests {
             model,
             note: 57.0,
             harmonics: 0.5,
+            harmonics_target: 0.5,
             timbre: 0.5,
             morph: 0.5,
             gate,

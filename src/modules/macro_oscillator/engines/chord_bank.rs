@@ -84,6 +84,12 @@ impl ChordBank {
         }
     }
 
+    /// The chord shape last picked.
+    #[cfg(test)]
+    pub fn shape(&self) -> usize {
+        self.shape
+    }
+
     /// Picks the chord for `harmonics`, with hysteresis so a knob resting
     /// on a boundary doesn't flicker.
     pub fn select(&mut self, harmonics: f32) {
