@@ -99,6 +99,13 @@ impl Recording {
         }) as usize
     }
 
+    /// Both channels summed at a whole `index`, uninterpolated: cheap
+    /// enough to compare many stretches of audio.
+    #[inline]
+    pub fn mono(&self, index: usize) -> f32 {
+        self.left[index] + self.right[index]
+    }
+
     /// Both channels at `index + fraction`, by 4-point Hermite
     /// interpolation, reading across the buffer's end seamlessly.
     #[inline]

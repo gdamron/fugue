@@ -131,10 +131,10 @@ impl Playback {
         }
     }
 
-    /// Recording restarts after a freeze: release the grains it would
-    /// overrun.
+    /// Recording restarts after a freeze: let go of what it would overrun.
     pub(super) fn thaw(&mut self, recording: &Recording) {
         self.grains.thaw(recording);
+        self.stretcher.thaw(recording);
     }
 
     pub(super) fn tick(&mut self, frame: &Frame) -> (f32, f32) {
