@@ -20,11 +20,12 @@ fn internal_feedback_spaces_repeats_exactly_the_delay_time() {
 }
 
 /// Criterion 3: a loop patched outside the atom (delay.audio -> vca -> back
-/// to delay.audio) spaces repeats time + 1 sample. A short clock gate, scaled
-/// to 0.5, feeds the delay; the dry gate's rising edge and each echo's are compared
-/// (the first echo is 12,000 after the dry edge, then 12,001 apart).
+/// to delay.audio) also spaces repeats exactly the delay time. A short clock
+/// gate, scaled to 0.5, feeds the delay; the dry gate's rising edge and each
+/// echo's are compared (the first echo is 12,000 after the dry edge, then
+/// 12,000 apart).
 #[test]
-fn outside_feedback_loop_spaces_repeats_time_plus_one_sample() {
+fn outside_feedback_loop_spaces_repeats_exactly_time() {
     let doc = json!({
         "version": "1.0.0",
         "modules": [
@@ -47,7 +48,7 @@ fn outside_feedback_loop_spaces_repeats_time_plus_one_sample() {
     let start = rising_edges(&dry, 0.02)[0];
     let echoes = rising_edges(&wet, 0.02);
     assert!(echoes.len() >= 5, "five echoes heard, edges at {echoes:?}");
-    let want: Vec<usize> = (0..5).map(|k| start + 12_000 * (k + 1) + k).collect();
+    let want: Vec<usize> = (0..5).map(|k| start + 12_000 * (k + 1)).collect();
     assert_eq!(echoes[..5], want[..], "edge of the dry gate at {start}");
 }
 
