@@ -38,6 +38,11 @@ const GLIDE_SECONDS: f64 = 1.0;
 /// Each of the glide's two smoothing stages takes this share of the glide
 /// time as its time constant, so a move is about nine-tenths done by then.
 const GLIDE_STAGE: f64 = 0.25;
+/// The tape's inertia at its middle, where both stages are alike; each
+/// unit either way scales the second stage's time constant this many
+/// octaves, a quarter as long at 0 and four times at 1.
+pub const MIDDLE_INERTIA: f32 = 0.5;
+const INERTIA_OCTAVES: f32 = 4.0;
 
 /// What the reader follows.
 #[derive(Clone, Copy, Default)]
@@ -75,6 +80,11 @@ pub struct Looper {
     /// Each smoothing stage's step toward its target per frame; 0 with
     /// glide off, when every move jumps.
     glide_step: f64,
+    /// The second stage's step, the one the read speed follows: as the
+    /// first's at middle inertia, smaller (heavier) above it.
+    speed_step: f64,
+    glide_seconds: f32,
+    inertia: f32,
     /// While gliding, the delay each smoothing stage has reached: the
     /// second is the one read at.
     glided: Option<(f64, f64)>,
@@ -102,6 +112,9 @@ impl Looper {
             shortest_loop: f64::from(SHORTEST_LOOP * rate),
             rate: f64::from(rate),
             glide_step: 0.0,
+            speed_step: 0.0,
+            glide_seconds: 0.0,
+            inertia: MIDDLE_INERTIA,
             glided: None,
             glide_reach: 0.0,
             thawing: false,
@@ -112,14 +125,31 @@ impl Looper {
     /// mid-glide, the next frame crossfades to where the delay is due;
     /// changed mid-glide, the read speed steps to the new time's pace.
     pub fn set_glide(&mut self, seconds: f32) {
-        let time = f64::from(seconds.max(0.0)) * self.rate;
+        self.glide_seconds = seconds.max(0.0);
+        self.update_glide();
+    }
+
+    /// The tape's mass, 0 to 1: heavier, the read speed is slower to
+    /// change, so a move bends longer and more gently.
+    pub fn set_inertia(&mut self, inertia: f32) {
+        self.inertia = inertia.clamp(0.0, 1.0);
+        self.update_glide();
+    }
+
+    fn update_glide(&mut self) {
+        let time = f64::from(self.glide_seconds) * self.rate;
         self.glide_reach = (1.0 - GLIDE_SLOWEST) * time;
         let frames = time * GLIDE_STAGE;
-        self.glide_step = if frames > 0.0 {
-            1.0 - (-1.0 / frames.max(1.0)).exp()
-        } else {
-            0.0
+        let step = |frames: f64| {
+            if frames > 0.0 {
+                1.0 - (-1.0 / frames.max(1.0)).exp()
+            } else {
+                0.0
+            }
         };
+        let heavier = ((self.inertia - MIDDLE_INERTIA) * INERTIA_OCTAVES).exp2();
+        self.glide_step = step(frames);
+        self.speed_step = step(frames * f64::from(heavier));
     }
 
     /// Stops reading, so the next frame starts afresh.
@@ -260,7 +290,7 @@ impl Looper {
         let fast = fast + self.glide_step * (delay - fast);
         // The read speed is 1 less the delay's change per frame.
         let change =
-            (self.glide_step * (fast - slow)).clamp(1.0 - GLIDE_FASTEST, 1.0 - GLIDE_SLOWEST);
+            (self.speed_step * (fast - slow)).clamp(1.0 - GLIDE_FASTEST, 1.0 - GLIDE_SLOWEST);
         let slow = slow + change;
         self.glided = Some((fast, slow));
         self.at = place(head - 1.0 - slow, length);

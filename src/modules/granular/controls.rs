@@ -13,6 +13,7 @@ pub(super) const SPREAD: ControlIndex = ControlIndex(7);
 pub(super) const FEEDBACK: ControlIndex = ControlIndex(8);
 pub(super) const SYNC: ControlIndex = ControlIndex(9);
 pub(super) const GLIDE: ControlIndex = ControlIndex(10);
+pub(super) const INERTIA: ControlIndex = ControlIndex(11);
 
 /// The longest `glide`, in seconds.
 pub(super) const LONGEST_GLIDE: f32 = 2.0;
@@ -108,6 +109,11 @@ const DECLS: &[ControlDecl] = &[
     .unit("s")
     .precision(3)
     .clamped(0.0, LONGEST_GLIDE),
+    unit(
+        "inertia",
+        crate::dsp::MIDDLE_INERTIA,
+        "Looping delay, while gliding: the tape's mass. Heavier, the read speed is slower to rise and fall, so a move bends longer and more gently; lighter, it lurches to speed and settles fast",
+    ),
 ];
 
 pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);

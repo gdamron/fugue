@@ -124,6 +124,11 @@ impl Playback {
         self.looper.set_glide(seconds);
     }
 
+    /// The looping delay's tape inertia, 0 to 1.
+    pub(super) fn set_inertia(&mut self, inertia: f32) {
+        self.looper.set_inertia(inertia);
+    }
+
     pub(super) fn set_texture(&mut self, texture: f32) {
         self.tone.set_target(texture);
     }

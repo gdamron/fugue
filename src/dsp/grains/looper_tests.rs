@@ -332,3 +332,60 @@ fn thawing_mid_crossfade_of_the_loop_glides_on_without_a_click() {
     let longest = buffer.len() as f64 - 2.0 * MARGIN - looper.fade_frames as f64;
     assert!((behind(&looper, &buffer) - (0.1 * longest).round()).abs() < 1e-6);
 }
+
+#[test]
+fn middle_inertia_is_the_glide_as_it_was() {
+    let mut looper = Looper::new(SR);
+    looper.set_inertia(0.9);
+    looper.set_glide(0.5);
+    looper.set_inertia(MIDDLE_INERTIA);
+    assert_eq!(looper.speed_step.to_bits(), looper.glide_step.to_bits());
+}
+
+/// Frames until a move from 0.1 to 0.11 is nine-tenths done, and the
+/// read speed's furthest from 1, at `inertia`.
+fn a_move_at(inertia: f32) -> (usize, f64) {
+    let (mut looper, mut buffer, mut shape, _) = gliding(0.5, 0.1);
+    looper.set_inertia(inertia);
+    let start = behind(&looper, &buffer);
+    shape.position = 0.11;
+    let longest = buffer.len() as f64 - 2.0 * MARGIN - looper.fade_frames as f64;
+    let due = (0.11 * longest).round();
+    let (mut done, mut furthest) = (None, 0.0f64);
+    for frame in 0..4 * SR as usize {
+        let before = behind(&looper, &buffer);
+        run(
+            &mut looper,
+            &mut buffer,
+            &shape,
+            true,
+            SR as usize + frame,
+            1,
+            tone,
+        );
+        let now = behind(&looper, &buffer);
+        assert_eq!(looper.fade, 0, "it glides");
+        furthest = furthest.max((now - before).abs());
+        if done.is_none() && now - start >= 0.9 * (due - start) {
+            done = Some(frame);
+        }
+    }
+    (done.expect("it arrives"), furthest)
+}
+
+#[test]
+fn heavier_tape_bends_longer_and_more_gently() {
+    let moves: Vec<_> = [0.0, 0.25, MIDDLE_INERTIA, 0.75, 1.0]
+        .into_iter()
+        .map(a_move_at)
+        .collect();
+    for pair in moves.windows(2) {
+        let ((light, light_speed), (heavy, heavy_speed)) = (pair[0], pair[1]);
+        assert!(heavy > light, "{moves:?}");
+        assert!(heavy_speed < light_speed, "{moves:?}");
+    }
+    // The read speed stays within an octave either way.
+    assert!(moves
+        .iter()
+        .all(|(_, speed)| *speed <= 1.0 - GLIDE_SLOWEST + 1e-9));
+}

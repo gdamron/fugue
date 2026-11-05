@@ -72,7 +72,7 @@ pub use drive::{DriveProcessor, DriveShape, REFERENCE_PEAK};
 pub(crate) use fft::RealFft;
 pub use grains::{
     share_per_frame, ClockDivider, Diffuser, GrainCloud, GrainShape, LoopShape, Looper, Onsets,
-    PitchShifter, Recording, RisingEdge, StretchShape, Stretcher, MAX_GRAINS,
+    PitchShifter, Recording, RisingEdge, StretchShape, Stretcher, MAX_GRAINS, MIDDLE_INERTIA,
 };
 pub use limiter::LookaheadLimiter;
 pub use one_pole::{OnePole, OnePoleOutput};
