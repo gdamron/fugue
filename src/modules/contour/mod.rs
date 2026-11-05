@@ -4,6 +4,8 @@
 // The pieces land before the module that plays them.
 #![allow(dead_code)]
 
+mod ramp;
+mod ratios;
 mod shaper;
 mod tables;
 
@@ -25,4 +27,18 @@ pub(crate) enum Range {
     Control,
     /// Oscillators: band-limited, with symmetric curves.
     Audio,
+}
+
+/// What the four outputs carry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OutputMode {
+    /// The shaped ramp, the raw ramp, and end-of-attack and end-of-cycle
+    /// gates.
+    Envelope,
+    /// One ramp panned across the outputs.
+    Amplitude,
+    /// Copies offset in phase (or, for envelopes, in slope).
+    Phase,
+    /// Copies at related frequencies.
+    Ratio,
 }
