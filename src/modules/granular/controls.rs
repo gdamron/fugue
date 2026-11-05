@@ -12,6 +12,11 @@ pub(super) const FREEZE: ControlIndex = ControlIndex(6);
 pub(super) const SPREAD: ControlIndex = ControlIndex(7);
 pub(super) const FEEDBACK: ControlIndex = ControlIndex(8);
 pub(super) const SYNC: ControlIndex = ControlIndex(9);
+pub(super) const GLIDE: ControlIndex = ControlIndex(10);
+pub(super) const INERTIA: ControlIndex = ControlIndex(11);
+
+/// The longest `glide`, in seconds.
+pub(super) const LONGEST_GLIDE: f32 = 2.0;
 
 /// The furthest `pitch` transposes, in semitones either way.
 pub(super) const MOST_PITCH: f32 = 24.0;
@@ -91,6 +96,23 @@ const DECLS: &[ControlDecl] = &[
         DeclKind::Bool,
         RtValue::Bool(false),
         "While the clock input is patched: granular grains start only on clock divisions (1 to 8 per pulse, set by density); the looping delay's delay and loop follow the clock's period",
+    ),
+    ControlDecl::new(
+        "glide",
+        DeclKind::Number {
+            min: 0.0,
+            max: LONGEST_GLIDE,
+        },
+        RtValue::F32(0.0),
+        "Looping delay, while recording: how long a moved position takes to slide to its new delay (at middle inertia; heavier tape takes longer), bending pitch on the way as tape does; 0 jumps there with a short crossfade. A leap beyond a quarter of the buffer, a second or half the glide time still crossfades, as do tapped and clocked delays",
+    )
+    .unit("s")
+    .precision(3)
+    .clamped(0.0, LONGEST_GLIDE),
+    unit(
+        "inertia",
+        crate::dsp::Looper::MIDDLE_INERTIA,
+        "Looping delay, while gliding: the tape's mass. Heavier, the read speed is slower to rise and fall, so a move bends longer and more gently; lighter, it lurches to speed and settles fast",
     ),
 ];
 

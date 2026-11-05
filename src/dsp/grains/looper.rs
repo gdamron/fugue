@@ -9,6 +9,13 @@
 //! the loop coming round, a freeze or unfreeze) is a short crossfade from
 //! where it was reading, so nothing steps, and the loop is kept wholly
 //! behind the still head. See THIRD_PARTY_NOTICES.md.
+//!
+//! With a glide time set, a `position` moved while recording is followed
+//! as tape follows a moved head: the delay slides to its new length, the
+//! reader speeding up or slowing down (and the pitch bending) on the way.
+//! Only a leap too far to slide in reasonable time still crossfades, as do
+//! tapped and clocked delays, everything while frozen and the thaw after.
+//! The tape's inertia sets how slowly the read speed itself changes.
 
 use super::Recording;
 use crate::dsp::cosine;
@@ -20,6 +27,23 @@ const MARGIN: f64 = 8.0;
 const JUMP_SECONDS: f32 = 0.01;
 /// The shortest loop, in seconds (`size` 0).
 const SHORTEST_LOOP: f32 = 0.02;
+/// How fast a gliding delay may change, in frames per frame: the reader
+/// runs between half speed and double, an octave either way.
+const GLIDE_SLOWEST: f64 = 0.5;
+const GLIDE_FASTEST: f64 = 2.0;
+/// The furthest a glide goes, as a share of the longest delay, in seconds,
+/// or as far as the slowest reader falls behind in the glide time,
+/// whichever is least; a longer move crossfades instead.
+const GLIDE_SHARE: f64 = 0.25;
+const GLIDE_SECONDS: f64 = 1.0;
+/// Each of the glide's two smoothing stages takes this share of the glide
+/// time as its time constant (at middle inertia), so a move is about
+/// nine-tenths done by then.
+const GLIDE_STAGE: f64 = 0.25;
+/// Each unit of inertia either side of the middle scales the second
+/// stage's time constant this many octaves: a quarter as long at 0, four
+/// times at 1.
+const INERTIA_OCTAVES: f32 = 4.0;
 
 /// What the reader follows.
 #[derive(Clone, Copy, Default)]
@@ -53,9 +77,29 @@ pub struct Looper {
     tapped: Option<u32>,
     longest_tap: u32,
     shortest_loop: f64,
+    rate: f64,
+    /// Each smoothing stage's step toward its target per frame; 0 with
+    /// glide off, when every move jumps.
+    glide_step: f64,
+    /// The second stage's step, the one the read speed follows: as the
+    /// first's at middle inertia, smaller (heavier) above it.
+    speed_step: f64,
+    glide_seconds: f32,
+    inertia: f32,
+    /// While gliding, the delay each smoothing stage has reached: the
+    /// second is the one read at.
+    glided: Option<(f64, f64)>,
+    /// The furthest a glide goes from the glide time alone, in frames.
+    glide_reach: f64,
+    /// Recording restarted after a freeze, and the reader has yet to
+    /// crossfade from the loop to the delay.
+    thawing: bool,
 }
 
 impl Looper {
+    /// The tape's inertia at its middle, where both glide stages are alike.
+    pub const MIDDLE_INERTIA: f32 = 0.5;
+
     pub fn new(sample_rate: u32) -> Self {
         let rate = sample_rate.max(1) as f32;
         Self {
@@ -70,7 +114,47 @@ impl Looper {
             tapped: None,
             longest_tap: u32::MAX,
             shortest_loop: f64::from(SHORTEST_LOOP * rate),
+            rate: f64::from(rate),
+            glide_step: 0.0,
+            speed_step: 0.0,
+            glide_seconds: 0.0,
+            inertia: Self::MIDDLE_INERTIA,
+            glided: None,
+            glide_reach: 0.0,
+            thawing: false,
         }
+    }
+
+    /// How long a moved delay takes to glide, in seconds; 0 jumps. Off
+    /// mid-glide, the next frame crossfades to where the delay is due;
+    /// changed mid-glide, the read speed steps to the new time's pace.
+    pub fn set_glide(&mut self, seconds: f32) {
+        self.glide_seconds = seconds.max(0.0);
+        self.update_glide();
+    }
+
+    /// The tape's mass, 0 to 1: heavier, the read speed is slower to
+    /// change, so a move bends longer and more gently. Changed mid-glide,
+    /// the read speed steps to the new mass's pace.
+    pub fn set_inertia(&mut self, inertia: f32) {
+        self.inertia = inertia.clamp(0.0, 1.0);
+        self.update_glide();
+    }
+
+    fn update_glide(&mut self) {
+        let time = f64::from(self.glide_seconds) * self.rate;
+        self.glide_reach = (1.0 - GLIDE_SLOWEST) * time;
+        let frames = time * GLIDE_STAGE;
+        let step = |frames: f64| {
+            if frames > 0.0 {
+                1.0 - (-1.0 / frames.max(1.0)).exp()
+            } else {
+                0.0
+            }
+        };
+        let heavier = ((self.inertia - Self::MIDDLE_INERTIA) * INERTIA_OCTAVES).exp2();
+        self.glide_step = step(frames);
+        self.speed_step = step(frames * f64::from(heavier));
     }
 
     /// Stops reading, so the next frame starts afresh.
@@ -80,6 +164,8 @@ impl Looper {
         self.anchor = None;
         self.fade = 0;
         self.since_tap = None;
+        self.glided = None;
+        self.thawing = false;
     }
 
     /// Whether it is reading (else the next frame starts afresh).
@@ -125,11 +211,25 @@ impl Looper {
             .clamp(MARGIN, longest);
 
         if recording {
+            // Frozen last frame (the loop placed or not yet): thawing.
+            if self.glide_step > 0.0 && (self.anchor.is_some() || self.cycle.is_some()) {
+                self.thawing = true;
+            }
             self.cycle = None;
             self.anchor = None;
             let delay = (delay - f64::from(shape.latency)).max(MARGIN);
-            self.follow(place(head - 1.0 - delay, length), length);
+            if self.glide_step > 0.0 && set.is_none() {
+                let reach = (GLIDE_SHARE * longest)
+                    .min(GLIDE_SECONDS * self.rate)
+                    .min(self.glide_reach);
+                self.glide(head, delay, length, reach);
+            } else {
+                self.glided = None;
+                self.thawing = false;
+                self.follow(place(head - 1.0 - delay, length), length);
+            }
         } else {
+            self.glided = None;
             // The head runs on through its write fade after a freeze: the
             // loop is placed from where it stood, and kept clear of what
             // the fade writes over (just past it, the oldest audio).
@@ -158,6 +258,51 @@ impl Looper {
             }
         }
         self.read(buffer, length)
+    }
+
+    /// Slides the delay toward `delay` through two smoothing stages, so
+    /// the reader's speed changes smoothly; starts from the delay being
+    /// read, and crossfades instead past `reach` or out of a freeze.
+    fn glide(&mut self, head: f64, delay: f64, length: f64, reach: f64) {
+        let (fast, slow) = match self.glided {
+            Some(state) => state,
+            // Already following the head: glide on from where it reads.
+            None if self.active && !self.thawing => {
+                let now = place(head - 1.0 - self.at, length);
+                (now, now)
+            }
+            // Starting, or out of a freeze: crossfade to the delay first,
+            // once any crossfade of the loop is done.
+            None => {
+                if !self.active || self.fade == 0 {
+                    self.follow(place(head - 1.0 - delay, length), length);
+                    self.glided = Some((delay, delay));
+                    self.thawing = false;
+                }
+                return;
+            }
+        };
+        // Judged from where the glide is heading, not the read speed's
+        // stage, whose lag grows with inertia: a steady sweep within reach
+        // glides however heavy the tape.
+        if (delay - fast).abs() > reach {
+            // Too far to glide: crossfade there, once any crossfade is
+            // done, holding the delay where it is until then.
+            if self.fade == 0 {
+                self.glided = Some((delay, delay));
+                self.jump(place(head - 1.0 - delay, length));
+            } else {
+                self.at = place(head - 1.0 - slow, length);
+            }
+            return;
+        }
+        let fast = fast + self.glide_step * (delay - fast);
+        // The read speed is 1 less the delay's change per frame.
+        let change =
+            (self.speed_step * (fast - slow)).clamp(1.0 - GLIDE_FASTEST, 1.0 - GLIDE_SLOWEST);
+        let slow = slow + change;
+        self.glided = Some((fast, slow));
+        self.at = place(head - 1.0 - slow, length);
     }
 
     /// Reads at `to` from now: at once, if already there; else crossfading.
