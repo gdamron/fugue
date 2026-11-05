@@ -16,10 +16,12 @@ use crate::payload::{Payload, Retired};
 mod control_hints;
 mod control_meta;
 mod control_validation;
+mod feedback_cut;
 pub(crate) mod exact_number;
 
 pub use control_hints::{ControlScale, NumberHints};
 pub use control_validation::ControlSurfaceMap;
+pub use feedback_cut::FeedbackCut;
 pub(crate) use control_validation::{check_finite, check_listed_control, read_only};
 
 /// Maximum number of frames the engine processes in a single block.
@@ -452,6 +454,28 @@ pub trait Module: Send {
     ///
     /// Returns `true` if the module is still active, `false` if it should be removed.
     fn process(&mut self, frames: usize) -> bool;
+
+    /// The minimum delay this module guarantees, which lets a feedback loop
+    /// through it run in chunks (see [`FeedbackCut`]). `None`, the default,
+    /// guarantees none. Read when a topology compiles, never per block.
+    fn feedback_cut(&self) -> Option<FeedbackCut> {
+        None
+    }
+
+    /// Writes the next `frames` output frames (at most the cut's frames)
+    /// from the module's history and its inputs other than the cut's
+    /// absorbed ones. Called only on a module declaring a cut, in place of
+    /// [`Module::process`], and always followed by [`Module::absorb`] over
+    /// the same frames.
+    fn emit(&mut self, frames: usize) {
+        let _ = frames;
+    }
+
+    /// Takes in the cut's absorbed inputs for the `frames` frames the last
+    /// [`Module::emit`] wrote.
+    fn absorb(&mut self, frames: usize) {
+        let _ = frames;
+    }
 
     /// Returns the names of all input ports this module accepts.
     ///

@@ -232,6 +232,17 @@ fn exercise_in(mut rig: Rig, type_id: &str, config: &serde_json::Value) -> Resul
             .connect(edge(SUBJECT, output, "dac", "audio"))
             .map_err(|error| format!("did not connect: {error}"))?;
         subject.clean_install("wiring to the dac")?;
+        // A module declaring a delay runs a loop through it in chunks.
+        let absorbed = module_cut(&subject).and_then(|cut| cut.absorbed.first().copied());
+        if let Some(port) = absorbed.and_then(|port| inputs.get(port)) {
+            subject
+                .rig
+                .live
+                .connect(edge(SUBJECT, output, SUBJECT, port))
+                .map_err(|error| format!("did not loop: {error}"))?;
+            subject.clean_install("looping through itself")?;
+            subject.clean_blocks("in a chunked loop", 2)?;
+        }
     }
 
     let surface = subject
@@ -286,6 +297,11 @@ fn exercise_in(mut rig: Rig, type_id: &str, config: &serde_json::Value) -> Resul
     Ok(reached)
 }
 
+/// The delay the subject declares, if any (see [`crate::FeedbackCut`]).
+fn module_cut(subject: &Subject) -> Option<crate::FeedbackCut> {
+    subject.rig.graph.modules[SUBJECT].module().feedback_cut()
+}
+
 /// The configs each registered type is exercised with.
 fn configs(registry: &ModuleRegistry) -> Vec<(String, serde_json::Value)> {
     let mut configs = Vec::new();
@@ -315,6 +331,13 @@ fn configs(registry: &ModuleRegistry) -> Vec<(String, serde_json::Value)> {
             }),
             _ => base_config(type_id),
         };
+        if type_id == "delay" {
+            // Chunks longer than a sample.
+            configs.push((
+                type_id.to_string(),
+                serde_json::json!({ "min_time": 0.001 }),
+            ));
+        }
         if type_id == "sample_slicer" {
             // Its controls exist only in elastic mode.
             let mut elastic = config.clone();
