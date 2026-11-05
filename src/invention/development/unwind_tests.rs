@@ -31,9 +31,14 @@ fn panics(_: Payload) -> Result<Retired, (crate::control_request::Refusal, Paylo
 
 #[test]
 fn a_panic_applying_a_reordered_payload_frees_nothing() {
-    let payload = reordered(Payload::new(1u32), vec![1, 0].into_boxed_slice());
-    let mut order = [0, 1];
-    let (frees, caught) = panicking_render(|| apply_reordered(&mut order, payload, panics));
+    let retarget = (
+        vec![1, 0].into_boxed_slice(),
+        vec![false; 2].into_boxed_slice(),
+    );
+    let payload = reordered(Payload::new(1u32), retarget);
+    let (mut order, mut written) = ([0, 1], [false; 2]);
+    let (frees, caught) =
+        panicking_render(|| apply_reordered(&mut order, &mut written, payload, panics));
     assert_eq!(frees, 0, "freed on the rendering thread");
     // The inner payload, then the box it came in.
     assert_eq!(caught, 2, "set aside for the graph");

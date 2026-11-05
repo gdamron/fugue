@@ -206,3 +206,60 @@ fn a_live_retarget_beside_a_loop_costs_the_audio_thread_nothing() {
         assert_eq!((allocs, frees), (0, 0), "block {block}");
     }
 }
+
+/// A development whose scheduler is part of a loop through a delay: the
+/// delayed clock steps it and its step feeds the delay back through `v`,
+/// silent until written. It writes `schedule`'s target, inside the loop
+/// (`v`) or outside it (`o`).
+fn delayed_pattern(schedule: &str) -> String {
+    format!(
+        r#"{{
+        "version": "1.0.0",
+        "developments": [{{ "name": "pattern", "definition": {{
+            "version": "1.0.0",
+            "modules": [
+                {{ "id": "d", "type": "delay", "config": {{ "time": 0.01, "min_time": 0.005, "feedback": 0.0 }} }},
+                {{ "id": "sched", "type": "control_scheduler", "config": {{ "schedule": {schedule} }} }},
+                {{ "id": "v", "type": "vca", "config": {{ "level": 0.0 }} }},
+                {{ "id": "o", "type": "oscillator", "config": {{ "frequency": 440.0 }} }},
+                {{ "id": "out", "type": "vca", "config": {{ "level": 0.5 }} }}
+            ],
+            "connections": [
+                {{ "from": "d", "from_port": "audio", "to": "sched", "to_port": "clock" }},
+                {{ "from": "sched", "from_port": "step", "to": "v", "to_port": "audio" }},
+                {{ "from": "v", "from_port": "audio", "to": "d", "to_port": "audio" }},
+                {{ "from": "d", "from_port": "audio", "to": "out", "to_port": "audio" }},
+                {{ "from": "o", "from_port": "audio", "to": "out", "to_port": "audio" }}
+            ],
+            "inputs": [{{ "name": "clock", "to": "d", "to_port": "audio" }}],
+            "outputs": [{{ "name": "audio", "from": "out", "from_port": "audio" }}],
+            "controls": [{{ "name": "schedule", "module": "sched", "control": "schedule" }}]
+        }} }}],
+        "modules": [
+            {{ "id": "clock", "type": "clock", "config": {{ "bpm": 120.0 }} }},
+            {{ "id": "p", "type": "pattern" }},
+            {{ "id": "dac", "type": "dac", "config": {{ "soft_clip": false }} }}
+        ],
+        "connections": [
+            {{ "from": "clock", "from_port": "beat", "to": "p", "to_port": "clock" }},
+            {{ "from": "p", "from_port": "audio", "to": "dac", "to_port": "audio" }}
+        ]
+    }}"#
+    )
+}
+
+const OUTSIDE: &str = r#"[{"at_step":4,"module":"o","control":"frequency","value":330.0}]"#;
+const INSIDE: &str = r#"[{"at_step":4,"module":"v","control":"level","value":0.9},{"at_step":6,"module":"v","control":"level","value":0.2}]"#;
+
+#[test]
+fn a_retarget_into_a_delayed_loop_runs_it_as_loaded() {
+    // Loaded writing inside its loop, a development runs the loop sample
+    // by sample; retargeted there from outside it, where the loop ran in
+    // chunks, it must too. (Until the write the loop carries nothing, so
+    // the two agree whichever way it runs.)
+    let loaded = render_writing(&delayed_pattern(INSIDE), None);
+    let written = render_writing(&delayed_pattern(OUTSIDE), Some(INSIDE));
+    let unwritten = render_writing(&delayed_pattern(OUTSIDE), None);
+    assert!(first_difference(&loaded, &unwritten).is_some(), "unheard");
+    assert_eq!(first_difference(&loaded, &written), None);
+}

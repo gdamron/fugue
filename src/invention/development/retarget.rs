@@ -14,7 +14,7 @@
 //! in the old order, nor the old one in the new. Copying in place
 //! allocates nothing: the order always lists every inner group once.
 
-use super::compiled_graph::{group_sequence, process_order};
+use super::compiled_graph::{group_sequence, process_order, written_within};
 use super::*;
 use crate::control_request::Refusal;
 use crate::payload::{Payload, RetireOnUnwind, Retired};
@@ -33,12 +33,13 @@ pub(super) struct InnerOrder {
 
 impl InnerOrder {
     /// The order of the groups for what each inner module writes now, as `surfaces`
-    /// report it (see [`ControlSurface::control_targets`]). Control thread:
-    /// allocates.
+    /// report it (see [`ControlSurface::control_targets`]), and per group
+    /// whether a member writes inside it (see [`written_within`]). Control
+    /// thread: allocates.
     pub(super) fn compute(
         &self,
         surfaces: &IndexMap<String, ControlSurfaceInstance>,
-    ) -> Box<[usize]> {
+    ) -> (Box<[usize]>, Box<[bool]>) {
         let indexes: HashMap<&str, usize> = self
             .ids
             .iter()
@@ -60,7 +61,9 @@ impl InnerOrder {
             })
             .collect();
         let order = process_order(self.ids.len(), &self.routes, &targets);
-        group_sequence(&order, &self.group_of, self.groups).into_boxed_slice()
+        let sequence = group_sequence(&order, &self.group_of, self.groups);
+        let written = written_within(&self.group_of, self.groups, &targets);
+        (sequence.into_boxed_slice(), written)
     }
 }
 
@@ -68,25 +71,30 @@ impl InnerOrder {
 struct Reordered {
     inner: Option<Payload>,
     order: Box<[usize]>,
+    /// Per group, whether a member writes inside it after the payload.
+    written: Box<[bool]>,
     /// What the inner payload replaced, retired with this.
     replaced: Option<Retired>,
 }
 
-/// Wraps `inner` with `order`. Control thread: allocates.
-pub(super) fn reordered(inner: Payload, order: Box<[usize]>) -> Payload {
+/// Wraps `inner` with `order` and `written`. Control thread: allocates.
+pub(super) fn reordered(inner: Payload, (order, written): (Box<[usize]>, Box<[bool]>)) -> Payload {
     Payload::owned(Box::new(Reordered {
         inner: Some(inner),
         order,
+        written,
         replaced: None,
     }))
 }
 
 /// Applies `payload` with `apply`, and the order it carries, if any, over
-/// `current` once `apply` takes the inner payload. Returns what it
+/// `current` (and what it says is written inside each group over
+/// `written`) once `apply` takes the inner payload. Returns what it
 /// replaced, or the payload back, refused, as it came. Allocation- and
 /// free-free: the audio thread applies payloads.
 pub(super) fn apply_reordered(
     current: &mut [usize],
+    written: &mut [bool],
     payload: Payload,
     apply: impl FnOnce(Payload) -> Result<Retired, (Refusal, Payload)>,
 ) -> Result<Retired, (Refusal, Payload)> {
@@ -107,6 +115,9 @@ pub(super) fn apply_reordered(
         Ok(replaced) => {
             if reordered.order.len() == current.len() {
                 current.copy_from_slice(&reordered.order);
+            }
+            if reordered.written.len() == written.len() {
+                written.copy_from_slice(&reordered.written);
             }
             reordered.replaced = Some(replaced);
             Ok(Retired::from(reordered))
