@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 26] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 27] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -105,6 +105,11 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 26] = [
         file_name: "macro_oscillator_vowel_chant.json",
         title: "Macro Oscillator Vowel Chant",
         summary: "A low vowel chant from the macro oscillator's formant speech model.",
+    },
+    ExampleDefinition {
+        file_name: "contour_rolling_filters.json",
+        title: "Contour Rolling Filters",
+        summary: "One contour's four phase-offset outputs open the filters of a chord in turn.",
     },
     ExampleDefinition {
         file_name: "step_sequencer.json",
@@ -286,6 +291,7 @@ mod tests {
                 "macro_oscillator_additive_organ.json",
                 "macro_oscillator_chords_in_key.json",
                 "macro_oscillator_vowel_chant.json",
+                "contour_rolling_filters.json",
                 "step_sequencer.json",
                 "chance_groove.json",
                 "drum_map.json",
