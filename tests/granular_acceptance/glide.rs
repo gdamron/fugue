@@ -110,7 +110,7 @@ fn gliding_a_sweep_or_a_moderate_move_does_not_click() {
             )
         })
         .collect();
-    let out = smooth_run(&base(Some(0.5), None), &sweep, 10.0);
+    let out = smooth_run(&base(Some(0.5), None), &sweep, 11.0);
     let w = (EVENT - s(1.0), EVENT + s(4.5));
     assert_no_click(
         "slow sweep",
