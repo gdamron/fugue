@@ -2,6 +2,9 @@
 //!
 //! Low-level building blocks for audio processing modules:
 //! - [`DelayLine`] - Pre-allocated circular delay buffer
+//! - [`Recording`] / [`GrainCloud`] / [`Diffuser`] - A recording read as a
+//!   cloud of grains, and a smear for them
+//! - [`ClockDivider`] / [`RisingEdge`] - Onsets read from gate inputs
 //! - [`Damper`] - One-pole lowpass filter
 //! - [`Allpass`] - Schroeder allpass diffuser
 //! - [`LinearRamp`] - A value that glides to each new target
@@ -37,6 +40,7 @@ mod delay_line;
 mod drive;
 #[cfg(feature = "spectrogram")]
 mod fft;
+mod grains;
 mod halfband;
 mod limiter;
 mod one_pole;
@@ -57,14 +61,18 @@ pub use block_ramp::{BlockRamp, BlockSteps};
 pub use crush::{bit_step, quantize, SampleHold};
 pub use damper::Damper;
 pub use dc_blocker::{DcBlocker, DC_BLOCKER_CUTOFF_HZ};
+pub use decibels::{decibels_to_level, exp2, level_to_decibels, log2, FLOOR_DECIBELS};
 #[cfg(test)]
 pub(crate) use declick::DECLICK_SECONDS;
 pub(crate) use declick::{declick_gain, declick_step};
-pub use decibels::{decibels_to_level, exp2, level_to_decibels, log2, FLOOR_DECIBELS};
 pub use delay_line::DelayLine;
 pub use drive::{DriveProcessor, DriveShape, REFERENCE_PEAK};
 #[cfg(feature = "spectrogram")]
 pub(crate) use fft::RealFft;
+pub use grains::{
+    share_per_frame, ClockDivider, Diffuser, GrainCloud, GrainShape, Onsets, Recording, RisingEdge,
+    MAX_GRAINS,
+};
 pub use limiter::LookaheadLimiter;
 pub use one_pole::{OnePole, OnePoleOutput};
 pub use oversampler::{Factor, Oversampler};
