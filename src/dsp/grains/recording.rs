@@ -11,13 +11,13 @@
 //! Freezing stops the write head. A head that stopped dead would leave the
 //! newest audio butted against what the buffer held a full length earlier,
 //! and anything reading across that seam clicks. Instead the written level
-//! fades out over 5 ms before the head stops (and back in
+//! fades out over 20 ms before the head stops (and back in
 //! when it starts again): each write blends the input into what the buffer
 //! already holds, so the seam is a short crossfade.
 
 /// How long the written level takes to fade out on freeze, and back in on
 /// unfreeze.
-const WRITE_FADE_SECONDS: f32 = 0.005;
+const WRITE_FADE_SECONDS: f32 = 0.02;
 
 fn fade_frames(sample_rate: u32) -> u32 {
     ((sample_rate as f32 * WRITE_FADE_SECONDS).round() as u32).max(1)

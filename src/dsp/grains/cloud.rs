@@ -22,6 +22,13 @@ pub const MAX_GRAINS: usize = 32;
 const SHORTEST_GRAIN: f32 = 0.032;
 /// Frames kept between a grain's reads and the write head.
 const MARGIN: f32 = 4.0;
+/// How far ahead of the write head an interpolated read reaches, in frames.
+const READ_REACH: f32 = 3.0;
+/// The longest early release of a grain the write head will overrun.
+const RELEASE_SECONDS: f32 = 0.005;
+/// How long the grains' sum and parts are averaged over to tell how alike
+/// they are.
+const LIKENESS_SECONDS: f32 = 0.02;
 
 /// What the next grains are made of.
 #[derive(Clone, Copy, Default)]
@@ -62,6 +69,9 @@ struct Grain {
     slope: f32,
     gain_left: f32,
     gain_right: f32,
+    /// 1 while the grain plays out, falling to 0 if it must end early.
+    release: f32,
+    release_step: f32,
 }
 
 impl Grain {
@@ -97,6 +107,11 @@ pub struct GrainCloud {
     fall: f32,
     normalization: f32,
     normalization_step: f32,
+    release_frames: f32,
+    /// The grains' summed energy, and the sum's, smoothed.
+    parts_energy: f32,
+    sum_energy: f32,
+    energy_step: f32,
 }
 
 /// The share a one-pole moved per 32-frame block at 32 kHz becomes per
@@ -120,6 +135,10 @@ impl GrainCloud {
             fall: share_per_frame(0.2, rate),
             normalization: 1.0,
             normalization_step: 1.0 - 0.99f32.powf(32_000.0 / rate),
+            release_frames: (RELEASE_SECONDS * rate).max(1.0),
+            parts_energy: 0.0,
+            sum_energy: 0.0,
+            energy_step: 1.0 - (-1.0 / (LIKENESS_SECONDS * rate)).exp(),
         }
     }
 
@@ -154,17 +173,22 @@ impl GrainCloud {
 
         let (mut left, mut right) = (0.0, 0.0);
         let mut playing = 0usize;
+        let mut parts = 0.0;
         for grain in self.grains.iter_mut().filter(|grain| grain.active) {
-            let envelope = grain.envelope();
+            let envelope = grain.envelope() * grain.release;
             let (l, r) = recording.read(grain.index, grain.fraction);
-            left += (l * grain.gain_left + r * (1.0 - grain.gain_right)) * envelope;
-            right += (r * grain.gain_right + l * (1.0 - grain.gain_left)) * envelope;
+            let part_left = (l * grain.gain_left + r * (1.0 - grain.gain_right)) * envelope;
+            let part_right = (r * grain.gain_right + l * (1.0 - grain.gain_left)) * envelope;
+            left += part_left;
+            right += part_right;
+            parts += part_left * part_left + part_right * part_right;
             grain.fraction += grain.ratio;
             let whole = grain.fraction.floor();
             grain.fraction -= whole;
             grain.index = recording.wrap((grain.index + whole as usize) as isize);
             grain.phase += grain.phase_step;
-            grain.active = grain.phase < 2.0;
+            grain.release -= grain.release_step;
+            grain.active = grain.phase < 2.0 && grain.release > 0.0;
             playing += 1;
         }
 
@@ -184,8 +208,39 @@ impl GrainCloud {
         };
         let window_gain = (1.0 + 2.0 * shape.window).clamp(1.0, 2.0);
         target *= 1.0 + (window_gain - 1.0) * overlap;
+        // Grains reading different audio add up in energy, as that assumes.
+        // Grains reading the same audio (one position, unpitched) add up in
+        // amplitude, louder by the root of how many play: take that back,
+        // as far as the sum is louder than its parts.
+        let step = self.energy_step;
+        self.parts_energy += step * (parts - self.parts_energy);
+        self.sum_energy += step * (left * left + right * right - self.sum_energy);
+        if self.sum_energy > self.parts_energy && self.sum_energy > f32::MIN_POSITIVE {
+            target *= (self.parts_energy / self.sum_energy).sqrt();
+        }
         self.normalization += self.normalization_step * (target - self.normalization);
         (left * self.normalization, right * self.normalization)
+    }
+
+    /// Recording starts again after a freeze. A grain read slower than the
+    /// recording runs, which crossed the still write head while frozen, now
+    /// sits just ahead of it: if the head would overrun it before it ends,
+    /// release it before the head gets there.
+    pub fn thaw(&mut self, recording: &Recording) {
+        let (head, length) = (recording.head(), recording.len());
+        for grain in self.grains.iter_mut().filter(|grain| grain.active) {
+            let closing = 1.0 - grain.ratio;
+            if closing <= 0.0 {
+                continue;
+            }
+            let ahead = ((grain.index + length - head) % length) as f32 - READ_REACH;
+            let remaining = (2.0 - grain.phase) / grain.phase_step;
+            if ahead > closing * remaining {
+                continue;
+            }
+            let frames = (ahead.max(0.0) / closing).min(self.release_frames).max(1.0);
+            grain.release_step = grain.release.max(0.0) / frames;
+        }
     }
 
     fn start(&mut self, slot: usize, recording: &Recording, shape: &GrainShape) {
@@ -210,8 +265,12 @@ impl GrainCloud {
         } else {
             nearest
         };
-        let start = recording.head() as f32 - back;
-        let start = if start < 0.0 { start + length } else { start };
+        let start = recording.head() as f64 - f64::from(back);
+        let start = if start < 0.0 {
+            start + f64::from(length)
+        } else {
+            start
+        };
         let width = (size as usize & !1).max(2);
 
         let pan = 0.5 + shape.spread * (self.rng.unit() - 0.5);
@@ -230,7 +289,7 @@ impl GrainCloud {
         self.grains[slot] = Grain {
             active: true,
             index: (whole as usize).min(recording.len() - 1),
-            fraction: start - whole,
+            fraction: (start - whole) as f32,
             ratio,
             phase: 0.0,
             phase_step: 2.0 / width as f32,
@@ -238,6 +297,8 @@ impl GrainCloud {
             slope,
             gain_left,
             gain_right,
+            release: 1.0,
+            release_step: 0.0,
         };
         self.size_hint += 0.1 * (size - self.size_hint);
     }
