@@ -65,16 +65,17 @@ fn full_feedback_on_a_full_scale_input_stays_within_unity() {
     for (key, value) in [("feedback", 1.0), ("density", 0.95), ("texture", 0.9)] {
         module.set_control(key, value).unwrap();
     }
-    let (left, right) = render(&mut module, SR as usize * 10, |n| sine(n, 220.0), None);
+    let (left, right) = render(&mut module, SR as usize * 60, |n| sine(n, 220.0), None);
     for x in left.iter().chain(&right) {
         assert!(x.is_finite() && x.abs() <= 1.0);
     }
     assert!(left.iter().any(|x| x.abs() > 0.1), "the grains are heard");
     // The output is clamped, so look inside the loop: what it records
-    // stays within the soft limit's reach.
+    // stays within the soft limit's reach (1, give or take a rounding).
+    let reach = 1.0 + 4.0 * f32::EPSILON;
     let recorded = (0..module.recording.len()).map(|i| module.recording.read(i, 0.0));
     for (l, r) in recorded {
-        assert!(l.abs() <= 1.0 && r.abs() <= 1.0, "recorded {l}, {r}");
+        assert!(l.abs() <= reach && r.abs() <= reach, "recorded {l}, {r}");
     }
 }
 
