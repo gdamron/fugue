@@ -31,9 +31,6 @@ const SHORTEST_RELEASE_SECONDS: f32 = 0.001;
 /// Smoothed levels below this are silence: flushed, so they never decay
 /// into subnormal numbers.
 const SILENT: f32 = 1e-20;
-/// How long the grains' sum and parts are averaged over to tell how alike
-/// they are.
-const LIKENESS_SECONDS: f32 = 0.02;
 
 /// What the next grains are made of.
 #[derive(Clone, Copy, Default)]
@@ -114,10 +111,6 @@ pub struct GrainCloud {
     normalization_step: f32,
     release_frames: f32,
     shortest_release_frames: f32,
-    /// The grains' summed energy, and the sum's, smoothed.
-    parts_energy: f32,
-    sum_energy: f32,
-    energy_step: f32,
 }
 
 /// The share a one-pole moved per 32-frame block at 32 kHz becomes per
@@ -143,9 +136,6 @@ impl GrainCloud {
             normalization_step: 1.0 - 0.99f32.powf(32_000.0 / rate),
             release_frames: (RELEASE_SECONDS * rate).max(1.0),
             shortest_release_frames: (SHORTEST_RELEASE_SECONDS * rate).max(1.0),
-            parts_energy: 0.0,
-            sum_energy: 0.0,
-            energy_step: 1.0 - (-1.0 / (LIKENESS_SECONDS * rate)).exp(),
         }
     }
 
@@ -180,7 +170,6 @@ impl GrainCloud {
 
         let (mut left, mut right) = (0.0, 0.0);
         let mut playing = 0usize;
-        let mut parts = 0.0;
         for grain in self.grains.iter_mut().filter(|grain| grain.active) {
             let envelope = grain.envelope() * grain.release;
             let (l, r) = recording.read(grain.index, grain.fraction);
@@ -188,7 +177,6 @@ impl GrainCloud {
             let part_right = (r * grain.gain_right + l * (1.0 - grain.gain_left)) * envelope;
             left += part_left;
             right += part_right;
-            parts += part_left * part_left + part_right * part_right;
             grain.fraction += grain.ratio;
             let whole = grain.fraction.floor();
             grain.fraction -= whole;
@@ -200,7 +188,11 @@ impl GrainCloud {
         }
 
         // Many overlapping grains add up: scale by about one over the root
-        // of how many play, and lift a bell window's lower average level.
+        // of how many play, as the original does, and lift a bell window's
+        // lower average level. That assumes the grains add up in power.
+        // Grains reading the same audio add up in amplitude instead, so a
+        // dense unpitched cloud comes out louder and leans into the output's
+        // soft limit: the grit is kept on purpose.
         let playing = playing as f32;
         let share = if playing > self.playing {
             self.rise
@@ -218,20 +210,6 @@ impl GrainCloud {
         };
         let window_gain = (1.0 + 2.0 * shape.window).clamp(1.0, 2.0);
         target *= 1.0 + (window_gain - 1.0) * overlap;
-        // Grains reading different audio add up in energy, as that assumes.
-        // Grains reading the same audio (one position, unpitched) add up in
-        // amplitude, louder by the root of how many play: take that back,
-        // as far as the sum is louder than its parts.
-        let step = self.energy_step;
-        self.parts_energy += step * (parts - self.parts_energy);
-        self.sum_energy += step * (left * left + right * right - self.sum_energy);
-        if self.sum_energy < SILENT {
-            self.parts_energy = 0.0;
-            self.sum_energy = 0.0;
-        }
-        if self.sum_energy > self.parts_energy && self.sum_energy > f32::MIN_POSITIVE {
-            target *= (self.parts_energy / self.sum_energy).sqrt();
-        }
         self.normalization += self.normalization_step * (target - self.normalization);
         (left * self.normalization, right * self.normalization)
     }
