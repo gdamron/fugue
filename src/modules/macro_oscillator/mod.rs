@@ -280,6 +280,7 @@ impl MacroOscillator {
             morph: self.morph.next_value(),
             gate,
             decay: self.decay,
+            trigger: self.rising,
             key: self.key,
             scale: self.scale,
         };

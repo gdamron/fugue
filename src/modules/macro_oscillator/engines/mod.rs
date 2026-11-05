@@ -5,6 +5,7 @@ mod chord_bank;
 mod chords;
 mod fm;
 mod grain_formant;
+mod speech;
 mod tables;
 mod virtual_analog;
 mod waveshaping;
@@ -13,6 +14,7 @@ use self::additive::AdditiveEngine;
 use self::chords::ChordsEngine;
 use self::fm::FmEngine;
 use self::grain_formant::GrainFormantEngine;
+use self::speech::SpeechEngine;
 use self::virtual_analog::VirtualAnalogEngine;
 use self::waveshaping::WaveshapingEngine;
 use super::engine::EngineParameters;
@@ -26,13 +28,14 @@ pub(super) const MODELS: &[&str] = &[
     "grain_formant",
     "additive",
     "chords",
+    "speech",
 ];
 
 /// How many engines there are.
 pub(super) const MODEL_COUNT: usize = MODELS.len();
 
 /// Each engine's output levels (`audio`, `aux`), so the models sit at
-/// about the same loudness.
+/// about the same loudness. Speech limits its own `audio`.
 const LEVELS: [(f32, f32); MODEL_COUNT] = [
     (0.8, 0.8),
     (0.7, 0.6),
@@ -40,6 +43,7 @@ const LEVELS: [(f32, f32); MODEL_COUNT] = [
     (0.7, 0.6),
     (0.8, 0.8),
     (0.8, 0.8),
+    (1.0, 0.8),
 ];
 
 /// Every engine, built up front so switching allocates nothing.
@@ -50,6 +54,7 @@ pub(super) struct Engines {
     grain_formant: GrainFormantEngine,
     additive: AdditiveEngine,
     chords: ChordsEngine,
+    speech: SpeechEngine,
 }
 
 impl Engines {
@@ -63,6 +68,7 @@ impl Engines {
             grain_formant: GrainFormantEngine::new(sample_rate),
             additive: AdditiveEngine::new(),
             chords: ChordsEngine::new(),
+            speech: SpeechEngine::new(sample_rate),
         }
     }
 
@@ -75,7 +81,8 @@ impl Engines {
             2 => self.fm.render(p, out, aux),
             3 => self.grain_formant.render(p, out, aux),
             4 => self.additive.render(p, out, aux),
-            _ => self.chords.render(p, out, aux),
+            5 => self.chords.render(p, out, aux),
+            _ => self.speech.render(p, out, aux),
         }
         let (out_level, aux_level) = LEVELS[model];
         out.iter_mut().for_each(|s| *s *= out_level);

@@ -52,6 +52,9 @@ where they live in Fugue, then the full license text:
   - `plaits/dsp/engine/chord_engine.cc` (registrations and voice mixing) → `src/modules/macro_oscillator/engines/chords.rs`
   - `plaits/dsp/chords/chord_bank.cc` (inversion voicing) → `src/modules/macro_oscillator/engines/chord_bank.rs`
   - `plaits/dsp/oscillator/string_synth_oscillator.h` → `src/modules/macro_oscillator/oscillators/string_synth.rs`
+  - `plaits/dsp/speech/naive_speech_synth.cc` (formant table and synth) → `src/modules/macro_oscillator/engines/speech.rs`
+  - `plaits/dsp/engine/speech_engine.cc` (naive synth only) → `src/modules/macro_oscillator/engines/speech.rs`
+  - `plaits/dsp/oscillator/oscillator.h` (impulse train shape) → `src/modules/macro_oscillator/oscillators/impulse_train.rs`
 - License: MIT
 
 ```
@@ -84,6 +87,7 @@ THE SOFTWARE.
   - `dsp/polyblep.h` → `src/modules/macro_oscillator/engine.rs`
   - `dsp/dsp.h` (`InterpolateHermite`) → `src/modules/macro_oscillator/engines/tables.rs`
   - `dsp/hysteresis_quantizer.h` (`HysteresisQuantizer2`) → `src/modules/macro_oscillator/engines/chord_bank.rs`
+  - `dsp/limiter.h` → `src/modules/macro_oscillator/engines/speech.rs`
 - License: MIT
 
 ```

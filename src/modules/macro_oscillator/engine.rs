@@ -28,6 +28,8 @@ pub(super) struct EngineParameters {
     /// How hard the note was played, 0 to 1.
     #[allow(dead_code)]
     pub accent: f32,
+    /// Whether a trigger rose during the block.
+    pub trigger: bool,
     /// The key (0 is C) and the position in `music::scales::SCALE_NAMES`
     /// that chords are built in.
     pub key: u8,
@@ -92,6 +94,7 @@ mod tests {
             timbre: 0.5,
             morph: 0.5,
             accent: 0.8,
+            trigger: false,
             key: 0,
             scale: 0,
         };
