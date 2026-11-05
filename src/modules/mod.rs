@@ -29,6 +29,7 @@ pub mod audio_file_sink;
 pub mod cell_sequencer;
 pub mod chance;
 pub mod clock;
+pub mod contour;
 pub mod code;
 pub mod control_scheduler;
 pub mod dac;
