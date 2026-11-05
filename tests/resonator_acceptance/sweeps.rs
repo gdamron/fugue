@@ -15,7 +15,7 @@ const RATIO: f32 = 1.5;
 /// Absolute slack: -120 dBFS.
 const SLACK: f32 = 1e-6;
 
-/// Rings a voice at 220 Hz with `key` at `from`, then moves `key` to `to`
+/// Strikes a voice at 220 Hz with `key` at `from`, then moves `key` to `to`
 /// within 50 ms: as ten per-block writes along a ramp, or (`jump`) as one
 /// write of the end value. Captures `BLOCKS` blocks of all three outputs
 /// from a block edge, and checks that every block-edge step is at most

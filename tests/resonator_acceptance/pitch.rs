@@ -63,7 +63,7 @@ fn connected_frequency_input_overrides_the_control() {
 /// Assumption: with `audio` connected and no strum, the impulse excites the
 /// active voice (voice 0 at the start), as INTERFACE.md says.
 #[test]
-fn external_impulse_rings_at_the_played_pitch() {
+fn external_impulse_sounds_at_the_played_pitch() {
     let names = reso(json!({})).models;
     for (position, model) in names.iter().enumerate() {
         let mut r = ready(position, 440.0, 0.5);

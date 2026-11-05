@@ -147,7 +147,7 @@ fn stated_ring_time_is_sane() {
             assert!(t > 0.0 && t.is_finite(), "{model} d={damping}: {t}");
             assert!(
                 t <= longest,
-                "{model}: damping {damping} rings {t} > {longest}"
+                "{model}: damping {damping} lasts {t} > {longest}"
             );
         }
     }
