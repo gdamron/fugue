@@ -126,6 +126,7 @@ mod tests {
             timbre: 0.5,
             morph: 0.5,
             accent: 0.8,
+            trigger: false,
             key: 0,
             scale: 0,
         };

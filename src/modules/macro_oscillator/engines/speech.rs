@@ -231,6 +231,7 @@ mod tests {
             note: 45.0,
             sample_period: 1.0 / 48_000.0,
             harmonics: 0.5,
+            harmonics_target: 0.5,
             timbre: 0.3,
             morph,
             accent: 0.8,
