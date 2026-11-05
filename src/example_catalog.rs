@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 19] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 20] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -70,6 +70,11 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 19] = [
         file_name: "limiter_hot_mix.json",
         title: "Limiter: Hot Generative Mix",
         summary: "Generative voices pushed past full scale, held under -1 dBFS by a limiter.",
+    },
+    ExampleDefinition {
+        file_name: "macro_oscillator_pluck.json",
+        title: "Macro Oscillator Pluck",
+        summary: "A sequenced macro oscillator plucked by its own low-pass gate.",
     },
     ExampleDefinition {
         file_name: "step_sequencer.json",
@@ -244,6 +249,7 @@ mod tests {
                 "delay_dotted_echo.json",
                 "drive_bass_and_crushed_bells.json",
                 "limiter_hot_mix.json",
+                "macro_oscillator_pluck.json",
                 "step_sequencer.json",
                 "chance_groove.json",
                 "drum_map.json",

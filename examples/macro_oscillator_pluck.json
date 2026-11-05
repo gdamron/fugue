@@ -1,0 +1,46 @@
+{
+  "version": "1.0.0",
+  "title": "Macro Oscillator Pluck",
+  "description": "A step sequencer plays a macro oscillator through its built-in low-pass gate: each step pings the gate, so the detuned virtual-analog voice sounds like a plucked, slightly woody string.",
+  "modules": [
+    { "id": "clock", "type": "clock", "config": { "bpm": 110.0 } },
+    {
+      "id": "seq",
+      "type": "step_sequencer",
+      "config": {
+        "root_note": 45,
+        "step_count": 8,
+        "gate_length": 0.4,
+        "pattern": [
+          { "note": 0 },
+          { "note": 12 },
+          { "note": 7 },
+          { "note": 3 },
+          { "note": 0 },
+          { "note": 15 },
+          { "note": 10 },
+          { "note": 7 }
+        ]
+      }
+    },
+    {
+      "id": "voice",
+      "type": "macro_oscillator",
+      "config": {
+        "model": "virtual_analog",
+        "harmonics": 0.3,
+        "timbre": 0.4,
+        "morph": 0.2,
+        "decay": 0.8,
+        "level": 0.8
+      }
+    },
+    { "id": "dac", "type": "dac" }
+  ],
+  "connections": [
+    { "from": "clock", "from_port": "beat_x2", "to": "seq", "to_port": "clock" },
+    { "from": "seq", "from_port": "frequency", "to": "voice", "to_port": "frequency" },
+    { "from": "seq", "from_port": "gate", "to": "voice", "to_port": "trigger" },
+    { "from": "voice", "from_port": "audio", "to": "dac", "to_port": "audio" }
+  ]
+}
