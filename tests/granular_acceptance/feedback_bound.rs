@@ -31,6 +31,11 @@ fn run(mode: f32) {
     let sine = sine(FRAMES, 997.0, 1.0);
     let sq = square(FRAMES, 960, 1.0);
     let inverted: Vec<f32> = sq.iter().map(|v| -v).collect();
+    // Outside granular mode `texture` is a tone filter that high-passes above
+    // 0.5, which would remove the DC this case pushes through the loop; keep
+    // those modes at or below neutral so DC passes. Granular mode keeps 0.9 so
+    // the case still covers diffusion.
+    let dc_texture = if mode == GRANULAR { 0.9 } else { 0.5 };
     let cases: [(&str, Feed, Vec<(&str, f32)>); 4] = [
         ("sine", Feed::mono(sine), vec![]),
         (
@@ -46,7 +51,7 @@ fn run(mode: f32) {
         (
             "dc",
             Feed::mono(vec![1.0; FRAMES]),
-            vec![("pitch", -12.0), ("texture", 0.9), ("density", 0.2)],
+            vec![("pitch", -12.0), ("texture", dc_texture), ("density", 0.2)],
         ),
         (
             "stereo squares",
