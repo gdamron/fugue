@@ -168,3 +168,24 @@ fn a_ratio_of_two_plays_an_octave_up() {
     // Half a second of 400 Hz.
     assert!((195..=205).contains(&rises), "{rises} cycles");
 }
+
+#[test]
+fn cuts_in_a_tiny_buffer_never_run_out_of_windows() {
+    // A short buffer caps the hop below the cut's own length.
+    let mut buffer = Recording::new(SR, 1_500);
+    let mut stretcher = Stretcher::new(SR);
+    let shape = StretchShape {
+        position: 0.5,
+        size: 1.0,
+        ratio: 1.0,
+    };
+    for n in 0..20_000 {
+        if n % 97 == 0 {
+            stretcher.restart();
+        }
+        buffer.write(tone(n, 220.0), 0.0, true);
+        stretcher.tick(&buffer, &shape, true);
+        let sum = gain_sum(&stretcher);
+        assert!((sum - 1.0).abs() < 1e-4, "a sum of {sum} at {n}");
+    }
+}

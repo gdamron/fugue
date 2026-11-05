@@ -169,9 +169,11 @@ impl Stretcher {
             } else {
                 (length - ahead, voice.ratio - 1.0)
             };
-            let frames = (gap - MARGIN).max(0.0) / closing;
-            if closing > 0.0 && frames <= remaining {
-                soonest = soonest.min(frames);
+            if gap <= MARGIN {
+                // On the head already (a window started on the seam).
+                soonest = 0.0;
+            } else if closing > 0.0 && (gap - MARGIN) / closing <= remaining {
+                soonest = soonest.min((gap - MARGIN) / closing);
             }
         }
         if soonest.is_finite() {
@@ -195,8 +197,9 @@ impl Stretcher {
             // One cut at a time.
             Some(frames) if self.cutting == 0 => {
                 self.cut = None;
-                self.cutting = frames;
                 self.begin(buffer, None, frames, recording);
+                // A cut longer than the hop would outlast the next switch.
+                self.cutting = frames.min(self.hop as u32).max(1);
             }
             _ if self.until_next == 0 => self.switch(buffer, recording),
             _ => {}
@@ -268,22 +271,34 @@ impl Stretcher {
         let hop = self.window(buffer, self.shape.size) / 2;
         // A window plays over its own hop and the next one's.
         let reach = (hop + self.longest_hop(buffer)) as f64;
+        let fade = fade.min(hop as u32).max(1);
+        let (mut nearest, farthest) = self.bounds(length, reach, ratio);
+        if recording {
+            // What the search will compare against this window, a hop on,
+            // must already be recorded.
+            let points = (hop / 2 / COMPARE_STRIDE).clamp(1, self.from.len()) as f64;
+            let compared = hop as f64 * ratio + points * COMPARE_STRIDE as f64 * ratio;
+            nearest = nearest.max(MARGIN + compared + 2.0);
+        }
+        let clamp = |behind: f64| {
+            behind
+                .clamp(nearest, farthest.max(nearest))
+                .min(length - 1.0)
+        };
         let start = match start {
-            Some(start) if recording => {
-                // Pitch or size may have moved since the start was picked:
-                // keep the window clear of the head all the same.
-                let behind = (head - start).rem_euclid(length);
-                let (nearest, farthest) = self.bounds(length, reach, ratio);
-                head - behind.clamp(nearest, farthest.max(nearest))
-            }
+            // Pitch or size may have moved since the start was picked:
+            // keep the window clear of the head all the same.
+            Some(start) if recording => head - clamp((head - start).rem_euclid(length)),
+            // Frozen, reading across the still head is seamless.
             Some(start) => start,
-            None => head - self.delay(length, hop, reach, ratio, self.shape.position),
+            None => head - clamp(self.delay(length, hop, reach, ratio, self.shape.position)),
         };
         let mut start = start.rem_euclid(length);
         if start >= length {
             start -= length;
         }
 
+        let alone = !self.voices.iter().any(|voice| voice.active);
         for voice in self.voices.iter_mut().filter(|voice| voice.active) {
             voice.fade(0.0, fade);
         }
@@ -297,6 +312,10 @@ impl Stretcher {
             ..Voice::default()
         };
         voice.fade(1.0, fade);
+        if alone {
+            // Nothing to fade from: a mode change fades the whole mode in.
+            voice.from = 1.0;
+        }
         self.hop = hop;
         self.until_next = hop;
         self.prepare(buffer, start, recording);
