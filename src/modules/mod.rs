@@ -13,6 +13,7 @@
 //! - [`Contour`] - One shaped ramp: envelope, LFO or oscillator, with four related outputs
 //! - [`Vca`] - Voltage controlled amplifier
 //! - [`MacroOscillator`] - One voice with a choice of synthesis models
+//! - [`Resonator`] - Tuned bodies and strings that ring when struck
 //! - [`Noise`] - White and pink noise source
 //! - [`Drive`] - Saturation, distortion and bit/rate reduction
 //! - [`DacModule`] - Audio output sink module
@@ -104,6 +105,7 @@ pub use drive::{Drive, DriveFactory};
 pub use mixer::Mixer;
 pub use noise::{Noise, NoiseFactory};
 pub use oscillator::{Oscillator, OscillatorType};
+pub use resonator::{Resonator, ResonatorFactory};
 pub use reverb::Reverb;
 #[cfg(not(target_arch = "wasm32"))]
 pub use rtmp_sink::{RtmpSink, RtmpSinkConfig, RtmpSinkHandle, RtmpSinkStats};

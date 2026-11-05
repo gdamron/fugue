@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 27] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 28] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -110,6 +110,11 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 27] = [
         file_name: "contour_rolling_filters.json",
         title: "Contour Rolling Filters",
         summary: "One contour's four phase-offset outputs open the filters of a chord in turn.",
+    },
+    ExampleDefinition {
+        file_name: "resonator_modal_bells.json",
+        title: "Resonator Modal Bells",
+        summary: "Struck bell-like modal bodies, four voices ringing on under each other.",
     },
     ExampleDefinition {
         file_name: "step_sequencer.json",
@@ -292,6 +297,7 @@ mod tests {
                 "macro_oscillator_chords_in_key.json",
                 "macro_oscillator_vowel_chant.json",
                 "contour_rolling_filters.json",
+                "resonator_modal_bells.json",
                 "step_sequencer.json",
                 "chance_groove.json",
                 "drum_map.json",
