@@ -60,15 +60,15 @@ const DECLS: &[ControlDecl] = &[
     .unit("Hz"),
     macro_control(
         "harmonics",
-        "Harmonic content; virtual analog: second oscillator detune; waveshaping: shaper curve (0.5 linear); fm: modulator ratio (0.5 an octave)",
+        "Harmonic content; virtual analog: second oscillator detune; waveshaping: shaper curve (0.5 linear); fm: modulator ratio (0.5 an octave); grain_formant: second formant ratio, bare window below 0.5; additive: spectral bumps",
     ),
     macro_control(
         "timbre",
-        "Brightness; virtual analog: pulse width and sync; waveshaping: fold amount; fm: modulation index",
+        "Brightness; virtual analog: pulse width and sync; waveshaping: fold amount; fm: modulation index; grain_formant: formant frequency; additive: spectral peak position",
     ),
     macro_control(
         "morph",
-        "Waveform morph; virtual analog: saw to triangle; waveshaping: triangle to saw; fm: feedback (below 0.5 rough, above noisy)",
+        "Waveform morph; virtual analog: saw to triangle; waveshaping: triangle to saw; fm: feedback (below 0.5 rough, above noisy); grain_formant: grain window; additive: narrows the spectral peak",
     ),
     ControlDecl::new(
         "level",

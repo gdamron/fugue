@@ -1,31 +1,44 @@
 //! The synthesis engines the `model` control chooses between.
 
+mod additive;
 mod fm;
+mod grain_formant;
 mod tables;
 mod virtual_analog;
 mod waveshaping;
 
+use self::additive::AdditiveEngine;
 use self::fm::FmEngine;
+use self::grain_formant::GrainFormantEngine;
 use self::virtual_analog::VirtualAnalogEngine;
 use self::waveshaping::WaveshapingEngine;
 use super::engine::EngineParameters;
 
 /// The models' names, in `model` position order. New engines are only
 /// ever appended, so a saved position keeps meaning the same engine.
-pub(super) const MODELS: &[&str] = &["virtual_analog", "waveshaping", "fm"];
+pub(super) const MODELS: &[&str] = &[
+    "virtual_analog",
+    "waveshaping",
+    "fm",
+    "grain_formant",
+    "additive",
+];
 
 /// How many engines there are.
 pub(super) const MODEL_COUNT: usize = MODELS.len();
 
 /// Each engine's output levels (`audio`, `aux`), so the models sit at
 /// about the same loudness.
-const LEVELS: [(f32, f32); MODEL_COUNT] = [(0.8, 0.8), (0.7, 0.6), (0.6, 0.6)];
+const LEVELS: [(f32, f32); MODEL_COUNT] =
+    [(0.8, 0.8), (0.7, 0.6), (0.6, 0.6), (0.7, 0.6), (0.8, 0.8)];
 
 /// Every engine, built up front so switching allocates nothing.
 pub(super) struct Engines {
     virtual_analog: VirtualAnalogEngine,
     waveshaping: WaveshapingEngine,
     fm: FmEngine,
+    grain_formant: GrainFormantEngine,
+    additive: AdditiveEngine,
 }
 
 impl Engines {
@@ -36,6 +49,8 @@ impl Engines {
             virtual_analog: VirtualAnalogEngine::new(),
             waveshaping: WaveshapingEngine::new(),
             fm: FmEngine::new(sample_rate),
+            grain_formant: GrainFormantEngine::new(sample_rate),
+            additive: AdditiveEngine::new(),
         }
     }
 
@@ -45,7 +60,9 @@ impl Engines {
         match model {
             0 => self.virtual_analog.render(p, out, aux),
             1 => self.waveshaping.render(p, out, aux),
-            _ => self.fm.render(p, out, aux),
+            2 => self.fm.render(p, out, aux),
+            3 => self.grain_formant.render(p, out, aux),
+            _ => self.additive.render(p, out, aux),
         }
         let (out_level, aux_level) = LEVELS[model];
         out.iter_mut().for_each(|s| *s *= out_level);
