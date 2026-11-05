@@ -272,7 +272,7 @@ fn a_leap_still_crossfades_and_lands_on_the_new_delay() {
 fn a_gliding_reader_keeps_clear_of_the_write_head() {
     for glide in [0.001, 0.05, 2.0] {
         let (mut looper, mut buffer, mut shape, _) = gliding(glide, 0.0);
-        let length = buffer.len() as f64;
+        let longest = buffer.len() as f64 - 2.0 * MARGIN - looper.fade_frames as f64;
         // Back and forth across the whole range, within each glide's reach.
         for step in 0..2_000 {
             let phase = (step % 400) as f32 / 400.0;
@@ -283,7 +283,7 @@ fn a_gliding_reader_keeps_clear_of_the_write_head() {
                 looper.tick(&buffer, &shape, true);
                 let behind = behind(&looper, &buffer);
                 assert!(
-                    behind >= MARGIN && behind <= length - MARGIN,
+                    behind >= MARGIN && behind <= longest + 1.0,
                     "{glide}: {behind}"
                 );
             }
@@ -305,4 +305,30 @@ fn turning_glide_on_and_off_mid_move_does_not_click() {
     }
     let step = largest_step(&out);
     assert!(step <= 1.5 * steady, "{step} vs {steady}");
+}
+
+#[test]
+fn thawing_mid_crossfade_of_the_loop_glides_on_without_a_click() {
+    // The shortest loop crossfades each time it comes round: thaw in one.
+    let (mut looper, mut buffer, mut shape, steady) = gliding(0.5, 0.1);
+    shape.size = 0.0;
+    let mut from = SR as usize;
+    let mut out = Vec::new();
+    while out.len() < 4_000 || looper.fade == 0 {
+        out.extend(run(&mut looper, &mut buffer, &shape, false, from, 1, tone));
+        from += 1;
+    }
+    out.extend(run(
+        &mut looper,
+        &mut buffer,
+        &shape,
+        true,
+        from,
+        SR as usize / 2,
+        tone,
+    ));
+    let step = largest_step(&out[3_000..]);
+    assert!(step <= 1.5 * steady, "{step} vs {steady}");
+    let longest = buffer.len() as f64 - 2.0 * MARGIN - looper.fade_frames as f64;
+    assert!((behind(&looper, &buffer) - (0.1 * longest).round()).abs() < 1e-6);
 }

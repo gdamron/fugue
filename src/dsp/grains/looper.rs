@@ -30,8 +30,9 @@ const SHORTEST_LOOP: f32 = 0.02;
 /// runs between half speed and double, an octave either way.
 const GLIDE_SLOWEST: f64 = 0.5;
 const GLIDE_FASTEST: f64 = 2.0;
-/// The furthest a glide goes, as a share of the longest delay and in
-/// seconds, whichever is less; a longer move crossfades instead.
+/// The furthest a glide goes, as a share of the longest delay, in seconds,
+/// or as far as the slowest reader falls behind in the glide time,
+/// whichever is least; a longer move crossfades instead.
 const GLIDE_SHARE: f64 = 0.25;
 const GLIDE_SECONDS: f64 = 1.0;
 /// Each of the glide's two smoothing stages takes this share of the glide
@@ -77,6 +78,11 @@ pub struct Looper {
     /// While gliding, the delay each smoothing stage has reached: the
     /// second is the one read at.
     glided: Option<(f64, f64)>,
+    /// The furthest a glide goes from the glide time alone, in frames.
+    glide_reach: f64,
+    /// Recording restarted after a freeze, and the reader has yet to
+    /// crossfade from the loop to the delay.
+    thawing: bool,
 }
 
 impl Looper {
@@ -97,13 +103,18 @@ impl Looper {
             rate: f64::from(rate),
             glide_step: 0.0,
             glided: None,
+            glide_reach: 0.0,
+            thawing: false,
         }
     }
 
     /// How long a moved delay takes to glide, in seconds; 0 jumps. Off
-    /// mid-glide, the next frame crossfades to where the delay is due.
+    /// mid-glide, the next frame crossfades to where the delay is due;
+    /// changed mid-glide, the read speed steps to the new time's pace.
     pub fn set_glide(&mut self, seconds: f32) {
-        let frames = f64::from(seconds.max(0.0)) * GLIDE_STAGE * self.rate;
+        let time = f64::from(seconds.max(0.0)) * self.rate;
+        self.glide_reach = (1.0 - GLIDE_SLOWEST) * time;
+        let frames = time * GLIDE_STAGE;
         self.glide_step = if frames > 0.0 {
             1.0 - (-1.0 / frames.max(1.0)).exp()
         } else {
@@ -119,6 +130,7 @@ impl Looper {
         self.fade = 0;
         self.since_tap = None;
         self.glided = None;
+        self.thawing = false;
     }
 
     /// Whether it is reading (else the next frame starts afresh).
@@ -164,15 +176,20 @@ impl Looper {
             .clamp(MARGIN, longest);
 
         if recording {
-            let thawing = self.cycle.is_some();
+            if self.glide_step > 0.0 && self.cycle.is_some() {
+                self.thawing = true;
+            }
             self.cycle = None;
             self.anchor = None;
             let delay = (delay - f64::from(shape.latency)).max(MARGIN);
             if self.glide_step > 0.0 && set.is_none() {
-                let reach = (GLIDE_SHARE * longest).min(GLIDE_SECONDS * self.rate);
-                self.glide(head, delay, length, reach, thawing);
+                let reach = (GLIDE_SHARE * longest)
+                    .min(GLIDE_SECONDS * self.rate)
+                    .min(self.glide_reach);
+                self.glide(head, delay, length, reach);
             } else {
                 self.glided = None;
+                self.thawing = false;
                 self.follow(place(head - 1.0 - delay, length), length);
             }
         } else {
@@ -210,23 +227,34 @@ impl Looper {
     /// Slides the delay toward `delay` through two smoothing stages, so
     /// the reader's speed changes smoothly; starts from the delay being
     /// read, and crossfades instead past `reach` or out of a freeze.
-    fn glide(&mut self, head: f64, delay: f64, length: f64, reach: f64, thawing: bool) {
+    fn glide(&mut self, head: f64, delay: f64, length: f64, reach: f64) {
         let (fast, slow) = match self.glided {
             Some(state) => state,
             // Already following the head: glide on from where it reads.
-            None if self.active && !thawing => {
+            None if self.active && !self.thawing => {
                 let now = place(head - 1.0 - self.at, length);
                 (now, now)
             }
+            // Starting, or out of a freeze: crossfade to the delay first,
+            // once any crossfade of the loop is done.
             None => {
-                self.follow(place(head - 1.0 - delay, length), length);
-                self.glided = Some((delay, delay));
+                if !self.active || self.fade == 0 {
+                    self.follow(place(head - 1.0 - delay, length), length);
+                    self.glided = Some((delay, delay));
+                    self.thawing = false;
+                }
                 return;
             }
         };
-        if self.fade == 0 && (delay - slow).abs() > reach {
-            self.glided = Some((delay, delay));
-            self.jump(place(head - 1.0 - delay, length));
+        if (delay - slow).abs() > reach {
+            // Too far to glide: crossfade there, once any crossfade is
+            // done, holding the delay where it is until then.
+            if self.fade == 0 {
+                self.glided = Some((delay, delay));
+                self.jump(place(head - 1.0 - delay, length));
+            } else {
+                self.at = place(head - 1.0 - slow, length);
+            }
             return;
         }
         let fast = fast + self.glide_step * (delay - fast);

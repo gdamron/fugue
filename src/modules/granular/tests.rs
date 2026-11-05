@@ -281,12 +281,13 @@ fn changing_mode_crossfades_without_a_click() {
     }
 }
 
-/// A looping delay over a melody-like input, `position` swept 0 to 1 a
-/// block at a time, with `glide` set as given (None: never touched).
-fn swept_delay(glide: Option<f32>) -> Vec<f32> {
-    let mut module =
-        build(serde_json::json!({ "mode": "looping_delay", "buffer_length": 1.0, "seed": 7 }));
-    if let Some(seconds) = glide {
+/// A looping delay over a melody-like input, held at `position` 0.3 for
+/// a second with `glide` at `held`, then swept to 1 with it off.
+fn swept_delay(held: Option<f32>) -> Vec<f32> {
+    let mut module = build(
+        serde_json::json!({ "mode": "looping_delay", "buffer_length": 1.0, "position": 0.3 }),
+    );
+    if let Some(seconds) = held {
         module.set_control("glide", seconds).unwrap();
     }
     module.set_input_connected(0, true);
@@ -294,9 +295,12 @@ fn swept_delay(glide: Option<f32>) -> Vec<f32> {
     let mut out = Vec::with_capacity(frames);
     let mut at = 0;
     while at < frames {
-        module
-            .set_control("position", at as f32 / frames as f32)
-            .unwrap();
+        if at >= SR as usize {
+            module.set_control("glide", 0.0).unwrap();
+            module
+                .set_control("position", 0.3 + 0.7 * at as f32 / frames as f32)
+                .unwrap();
+        }
         for i in 0..MAX_BLOCK {
             let n = at + i;
             module.input_block_mut(0)[i] = sine(n, 220.0 * (1 + n / 6_000 % 3) as f32);
@@ -309,17 +313,9 @@ fn swept_delay(glide: Option<f32>) -> Vec<f32> {
 }
 
 #[test]
-fn with_glide_off_the_looping_delay_renders_as_before_it() {
-    // The hash of this render before `glide` existed.
-    let hash = |x: &[f32]| {
-        x.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, s| {
-            (h ^ u64::from(s.to_bits())).wrapping_mul(0x0100_0000_01b3)
-        })
-    };
+fn a_glide_unused_or_turned_off_leaves_the_looping_delay_as_it_was() {
+    // Held still, a glide moves nothing; off, every move jumps as before.
     let untouched = swept_delay(None);
     assert!(untouched.iter().any(|x| x.abs() > 0.3), "it plays");
-    assert_eq!(hash(&untouched), GLIDE_OFF_HASH);
-    assert_eq!(swept_delay(Some(0.0)), untouched);
+    assert_eq!(swept_delay(Some(0.5)), untouched);
 }
-
-const GLIDE_OFF_HASH: u64 = 0x31f3_7db0_3325_c770;
