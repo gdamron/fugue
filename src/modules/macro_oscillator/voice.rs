@@ -92,7 +92,7 @@ impl Voice {
             sample_period: 1.0 / rate,
             fade_step: 1.0 / (CROSSFADE_SECONDS * rate),
             rate_scale: TUNED_RATE / rate,
-            engines: Engines::new(),
+            engines: Engines::new(sample_rate),
             shares,
             envelope: LpgEnvelope::new(),
             gate_audio: LowPassGate::new(sample_rate),
@@ -109,6 +109,13 @@ impl Voice {
             dry: [0.0; ENGINE_BLOCK],
             dry_aux: [0.0; ENGINE_BLOCK],
         }
+    }
+
+    /// Starts the voice on `model` (below [`MODEL_COUNT`]) with no
+    /// crossfade, as a freshly built voice would.
+    pub fn start_on(&mut self, model: usize) {
+        self.shares = [0.0; MODEL_COUNT];
+        self.shares[model] = 1.0;
     }
 
     /// Whether `value` is a trigger's rising edge, with hysteresis so a

@@ -171,3 +171,58 @@ fn a_trigger_pings_the_gate() {
         peak(&late)
     );
 }
+
+#[test]
+fn every_model_stays_bounded_at_every_macro_corner() {
+    for model in engines::MODELS {
+        for hz in [30.0, 440.0, 6000.0] {
+            for corner in 0..27 {
+                let [h, t, m] = [corner % 3, corner / 3 % 3, corner / 9].map(|v| v as f32 * 0.5);
+                let mut module = build(json!({
+                    "model": model, "frequency": hz, "harmonics": h, "timbre": t, "morph": m,
+                }));
+                let x = render(module.as_mut(), SR as usize / 10, 256);
+                let peak = x.iter().fold(0.0f32, |p, v| p.max(v.abs()));
+                assert!(
+                    peak.is_finite() && peak < 1.5,
+                    "{model} {hz} Hz {h}/{t}/{m}: {peak}"
+                );
+            }
+        }
+    }
+}
+
+/// The levels of the first eight harmonics of `hz` in `x` (Hann
+/// windowed), summing to one: the waveform's shape, whatever its phase.
+fn harmonic_profile(x: &[f32], hz: f32) -> [f32; 8] {
+    let n = x.len() as f32;
+    let mut levels = [0.0f32; 8];
+    for (k, level) in levels.iter_mut().enumerate() {
+        let w = std::f32::consts::TAU * hz * (k + 1) as f32 / SR as f32;
+        let (mut re, mut im) = (0.0f32, 0.0f32);
+        for (i, &v) in x.iter().enumerate() {
+            let hann = 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / n).cos();
+            re += v * hann * (w * i as f32).cos();
+            im += v * hann * (w * i as f32).sin();
+        }
+        *level = re.hypot(im);
+    }
+    let total: f32 = levels.iter().sum::<f32>().max(1e-9);
+    levels.map(|l| l / total)
+}
+
+#[test]
+fn each_macro_changes_the_new_models_sound() {
+    let play = |model: &str, key: &str, value: f32| {
+        let mut module = build(json!({ "model": model, "frequency": 220.0, key: value }));
+        let x = render(module.as_mut(), SR as usize / 10, 64);
+        harmonic_profile(&x[SR as usize / 50..], 220.0)
+    };
+    for model in ["waveshaping", "fm"] {
+        for key in ["harmonics", "timbre", "morph"] {
+            let (low, high) = (play(model, key, 0.1), play(model, key, 0.9));
+            let change: f32 = low.iter().zip(&high).map(|(a, b)| (a - b).abs()).sum();
+            assert!(change > 0.05, "{model}: {key} does nothing ({change})");
+        }
+    }
+}

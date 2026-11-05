@@ -205,7 +205,7 @@ impl MacroOscillator {
         }
         // The configured model and level are where the voice starts, not
         // a fade.
-        module.voice = Voice::new(sample_rate, module.model);
+        module.voice.start_on(module.model);
         module.level.settle();
         module
     }

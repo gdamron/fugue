@@ -1,0 +1,46 @@
+{
+  "version": "1.0.0",
+  "title": "Macro Oscillator FM Bells",
+  "description": "A slow pentatonic figure on a macro oscillator's FM model: the modulator at pi times the carrier gives inharmonic, bell-like partials, and a long low-pass gate decay lets each strike ring out.",
+  "modules": [
+    { "id": "clock", "type": "clock", "config": { "bpm": 72.0 } },
+    {
+      "id": "seq",
+      "type": "step_sequencer",
+      "config": {
+        "root_note": 72,
+        "step_count": 8,
+        "gate_length": 0.2,
+        "pattern": [
+          { "note": 0 },
+          { "note": 7 },
+          { "note": 4 },
+          { "note": 9 },
+          { "note": 12 },
+          { "note": 7 },
+          { "note": 2 },
+          { "note": -5 }
+        ]
+      }
+    },
+    {
+      "id": "voice",
+      "type": "macro_oscillator",
+      "config": {
+        "model": "fm",
+        "harmonics": 0.672,
+        "timbre": 0.45,
+        "morph": 0.5,
+        "decay": 3.0,
+        "level": 0.7
+      }
+    },
+    { "id": "dac", "type": "dac" }
+  ],
+  "connections": [
+    { "from": "clock", "from_port": "beat", "to": "seq", "to_port": "clock" },
+    { "from": "seq", "from_port": "frequency", "to": "voice", "to_port": "frequency" },
+    { "from": "seq", "from_port": "gate", "to": "voice", "to_port": "trigger" },
+    { "from": "voice", "from_port": "audio", "to": "dac", "to_port": "audio" }
+  ]
+}

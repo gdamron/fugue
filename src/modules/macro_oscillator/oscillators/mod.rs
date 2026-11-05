@@ -1,8 +1,10 @@
 //! The oscillators the engines are built from.
 
+mod slope;
 mod variable_saw;
 mod variable_shape;
 
+pub(super) use slope::SlopeOscillator;
 pub(super) use variable_saw::VariableSawOscillator;
 pub(super) use variable_shape::VariableShapeOscillator;
 
