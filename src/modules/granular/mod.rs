@@ -36,8 +36,8 @@ use crate::control_request::{
     Refusal, RtValue,
 };
 use crate::dsp::{
-    share_per_frame, ClockDivider, Diffuser, GrainCloud, GrainShape, LinearRamp, OnePole, Onsets,
-    Recording, RisingEdge,
+    share_per_frame, ClockDivider, Diffuser, GrainShape, LinearRamp, OnePole, Onsets, Recording,
+    RisingEdge,
 };
 use crate::factory::{apply_control_keys, GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::invention::declared::DeclaredSurface;
@@ -48,11 +48,13 @@ use crate::traits::ControlMeta;
 use crate::{Module, MAX_BLOCK};
 
 use self::controls::{
-    divisions, DENSITY, FEEDBACK, FREEZE, MODE, MODES, MOST_PITCH, PITCH, POSITION, SIZE, SPREAD,
-    SYNC, TABLE, TEXTURE,
+    divisions, DENSITY, FEEDBACK, FREEZE, MODE, MOST_PITCH, PITCH, POSITION, SIZE, SPREAD, SYNC,
+    TABLE, TEXTURE,
 };
+use self::playback::{Frame, Mode, Playback};
 
 mod controls;
+mod playback;
 #[cfg(test)]
 mod tests;
 
@@ -135,7 +137,7 @@ impl ModuleFactory for GranularFactory {
 /// - `audio_left`, `audio_right`: the grains alone, within ±1
 ///
 /// # Controls
-/// - `mode`: `granular`
+/// - `mode`: `granular` or `stretch` (a change crossfades over 20 ms)
 /// - `position`, `size`, `pitch`, `density`, `texture`, `spread`: the
 ///   grains (each grain keeps the values it started with, so changes
 ///   never step the sound)
@@ -153,7 +155,7 @@ impl ModuleFactory for GranularFactory {
 pub struct Granular {
     cells: Arc<ControlCells>,
     recording: Recording,
-    grains: GrainCloud,
+    playback: Playback,
     diffuser: Diffuser,
 
     shape: GrainShape,
@@ -191,7 +193,7 @@ impl Granular {
                 sample_rate,
                 ((length * rate).round() as usize).max(SHORTEST_BUFFER_FRAMES),
             ),
-            grains: GrainCloud::new(sample_rate, seed),
+            playback: Playback::new(sample_rate, seed, glide),
             diffuser: Diffuser::new(sample_rate),
             shape: GrainShape {
                 ratio: 1.0,
@@ -225,6 +227,8 @@ impl Granular {
             }
         }
         // Built, the processor starts where its controls are.
+        module.playback.settle();
+        module.update_diffusion();
         module.feedback.settle();
         module.diffusion.settle();
         module.frozen = if module.freeze { 1.0 } else { 0.0 };
@@ -232,12 +236,21 @@ impl Granular {
         module
     }
 
-    /// The texture's window shape and smear, from `texture`.
+    /// The grains' window and the other modes' tone, from `texture`.
     fn set_texture(&mut self, texture: f32) {
         self.texture = texture;
         self.shape.window = (texture / 0.75).min(1.0);
-        self.diffusion
-            .set_target(((texture - 0.75) * 4.0).clamp(0.0, 1.0));
+        self.playback.set_texture(texture);
+        self.update_diffusion();
+    }
+
+    /// The smear: from `texture` above 0.75 for grains, else `density`.
+    fn update_diffusion(&mut self) {
+        let amount = match self.playback.mode() {
+            Mode::Granular => ((self.texture - 0.75) * 4.0).clamp(0.0, 1.0),
+            Mode::Stretch => self.density,
+        };
+        self.diffusion.set_target(amount);
     }
 
     /// How far `density` is past its silent middle, 0 to 1 (0 within it).
@@ -265,8 +278,9 @@ impl Granular {
         let synced = self.sync && self.connected[CLOCK_IN];
         let recording = !self.freeze;
         if recording && self.was_frozen {
-            self.grains.thaw(&self.recording);
+            self.playback.thaw(&self.recording);
         }
+        self.playback.begin_block();
         self.was_frozen = self.freeze;
         for i in 0..frames {
             let left = finite(self.inputs[0][i]);
@@ -290,14 +304,15 @@ impl Granular {
             } else {
                 Onsets::Density
             };
-            let (left, right) = self.grains.tick(
-                &self.recording,
-                &self.shape,
+            let (left, right) = self.playback.tick(&Frame {
+                recording: &self.recording,
+                shape: &self.shape,
                 overlap,
                 regular,
                 onsets,
                 trigger,
-            );
+                recording_on: recording,
+            });
             let (left, right) = self.diffuser.tick(left, right, self.diffusion.next_value());
             self.last = (left, right);
             self.out[0][i] = soft_clip(left).clamp(-1.0, 1.0);
@@ -375,7 +390,12 @@ impl Module for Granular {
     fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
         let unit = |x: f32| x.clamp(0.0, 1.0);
         let applied = match (control, value) {
-            (MODE, RtValue::U32(position)) if (position as usize) < MODES.len() => value,
+            (MODE, RtValue::U32(index)) => {
+                let mode = Mode::from_index(index).ok_or(Refusal::Unsupported)?;
+                self.playback.request(mode);
+                self.update_diffusion();
+                value
+            }
             (POSITION, RtValue::F32(x)) => {
                 self.shape.position = unit(x);
                 RtValue::F32(self.shape.position)
@@ -391,6 +411,7 @@ impl Module for Granular {
             }
             (DENSITY, RtValue::F32(x)) => {
                 self.density = unit(x);
+                self.update_diffusion();
                 RtValue::F32(self.density)
             }
             (TEXTURE, RtValue::F32(x)) => {

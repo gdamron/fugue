@@ -2,8 +2,8 @@
 //!
 //! Low-level building blocks for audio processing modules:
 //! - [`DelayLine`] - Pre-allocated circular delay buffer
-//! - [`Recording`] / [`GrainCloud`] / [`Diffuser`] - A recording read as a
-//!   cloud of grains, and a smear for them
+//! - [`Recording`] / [`GrainCloud`] / [`Stretcher`] / [`Diffuser`] - A
+//!   recording read as a cloud of grains or stretched in time, and a smear
 //! - [`ClockDivider`] / [`RisingEdge`] - Onsets read from gate inputs
 //! - [`Damper`] - One-pole lowpass filter
 //! - [`Allpass`] - Schroeder allpass diffuser
@@ -71,7 +71,7 @@ pub use drive::{DriveProcessor, DriveShape, REFERENCE_PEAK};
 pub(crate) use fft::RealFft;
 pub use grains::{
     share_per_frame, ClockDivider, Diffuser, GrainCloud, GrainShape, Onsets, Recording, RisingEdge,
-    MAX_GRAINS,
+    StretchShape, Stretcher, MAX_GRAINS,
 };
 pub use limiter::LookaheadLimiter;
 pub use one_pole::{OnePole, OnePoleOutput};

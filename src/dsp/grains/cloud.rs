@@ -214,6 +214,14 @@ impl GrainCloud {
         (left * self.normalization, right * self.normalization)
     }
 
+    /// Stops every grain, so the cloud starts afresh when next played.
+    pub fn clear(&mut self) {
+        for grain in &mut self.grains {
+            grain.active = false;
+        }
+        self.since_grain = 0.0;
+    }
+
     /// Recording starts again after a freeze. A grain read slower than the
     /// recording runs, which crossed the still write head while frozen, now
     /// sits just ahead of it: if the head would overrun it before it ends,
