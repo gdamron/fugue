@@ -4,11 +4,13 @@
 // The pieces land before the module that plays them.
 #![allow(dead_code)]
 
-mod ramp;
+mod controls;
 mod generator;
+mod ramp;
 mod ratios;
 mod shaper;
 mod tables;
+mod voice;
 
 /// How the ramp runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

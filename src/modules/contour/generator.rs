@@ -60,6 +60,15 @@ impl Generator {
         }
     }
 
+    /// A copy of this generator that carries on in `modes`, from where
+    /// this one is, for a crossfade from one to the other.
+    pub(super) fn retuned(&self, modes: Modes) -> Self {
+        let mut next = *self;
+        next.modes = modes;
+        next.ramp.align();
+        next
+    }
+
     /// The four outputs for the next sample.
     #[inline]
     pub(super) fn render(
