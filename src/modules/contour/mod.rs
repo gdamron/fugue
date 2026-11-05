@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 mod ramp;
+mod generator;
 mod ratios;
 mod shaper;
 mod tables;
