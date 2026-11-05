@@ -29,7 +29,7 @@ const DECLS: &[ControlDecl] = &[
         "model",
         DeclKind::Choice(MODELS),
         RtValue::U32(0),
-        "What rings: modal (a struck body: bowl, bar, bell). A change lets the old body ring out",
+        "What rings: modal (a struck body: bowl, bar, bell), sympathetic_strings (a string with a halo of strings tuned around it), string (a plucked string that structure makes stiff or buzzing). A change lets the old body ring out",
     ),
     ControlDecl::new(
         "frequency",
@@ -47,7 +47,7 @@ const DECLS: &[ControlDecl] = &[
     shape(
         "structure",
         0.25,
-        "modal: partials from crowded (0) through harmonic (0.25-0.3) to bell and metal (1)",
+        "modal: partials from crowded (0) through harmonic (0.25-0.3) to bell and metal (1); sympathetic_strings: the intervals the halo is tuned to; string: buzzing bridge below 0.24, plain at 0.25, stiff piano-like above 0.26",
     ),
     shape(
         "brightness",

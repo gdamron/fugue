@@ -6,21 +6,30 @@
 //!
 //! The resonator has up to four voices. Each strum moves to the next
 //! voice, which takes the current pitch; the others keep theirs and ring
-//! on. A voice's mode count and stereo placement are set
+//! on. A voice's mode count, string count and stereo placement are set
 //! when it is struck.
 
-use crate::dsp::{exp2, LinearRamp, Svf};
+use crate::dsp::{cosine, exp2, log2, DcBlocker, LinearRamp, Svf};
 
 use super::modal::{ModalSettings, ModalVoice, MAX_MODES};
+use super::plucker::Plucker;
+use super::string::{KarplusString, StringSettings};
+use super::sympathetic::{string_notes, MAX_STRINGS};
 use super::ENGINE_BLOCK;
 
 /// The most voices the resonator plays at once.
 pub(super) const VOICES: usize = 4;
 
 /// The models, in `model` control order.
-pub(super) const MODELS: &[&str] = &["modal"];
+pub(super) const MODELS: &[&str] = &["modal", "sympathetic_strings", "string"];
+const MODAL: usize = 0;
+const SYMPATHETIC: usize = 1;
+const STRING: usize = 2;
 /// Each model's output gain, from the reference.
-const MODEL_GAINS: [f32; 1] = [1.4];
+const MODEL_GAINS: [f32; 3] = [1.4, 1.0, 1.4];
+
+/// The sympathetic strings' slow pickup wobble, per string, in hertz.
+const LFO_HZ: [f32; MAX_STRINGS] = [0.5, 0.4, 0.35, 0.23, 0.211, 0.2, 0.171, 0.15];
 
 /// Excitation below this does not wake a sleeping voice.
 const WAKE: f32 = 1.0e-7;
@@ -70,13 +79,20 @@ pub(super) struct Voices {
     active: usize,
     frequency: [f32; VOICES],
     excitation_filter: [Svf; VOICES],
+    plucker: [Plucker; VOICES],
+    input_blocker: [DcBlocker; VOICES],
     modal: [ModalVoice; VOICES],
-    wake: [[Wake; MODEL_GAINS.len()]; VOICES],
+    string: [KarplusString; VOICES],
+    sympathetic: Box<[[KarplusString; MAX_STRINGS]; VOICES]>,
+    sympathetic_count: [usize; VOICES],
+    lfo_phase: [[f32; MAX_STRINGS]; VOICES],
+    wake: [[Wake; 3]; VOICES],
     /// 0 sends a voice's odd and even partials to `odd` and `even`; 1
     /// sends the whole voice to one side.
     split: [LinearRamp; VOICES],
     sleep_frames: usize,
     excitation: Block,
+    sympathetic_input: Block,
     out: Block,
     aux: Block,
 }
@@ -87,16 +103,26 @@ impl Voices {
         let split_blocks = (SPLIT_SECONDS * rate / ENGINE_BLOCK as f32)
             .round()
             .max(1.0) as u32;
+        let seed = |v: usize, s: usize| 0x5eed_0000 + (v * 16 + s) as u64;
         let mut voices = Self {
             sample_rate: rate,
             active: 0,
             frequency: [220.0 / rate; VOICES],
             excitation_filter: [Svf::new(sample_rate, 10.0, 0.8); VOICES],
+            plucker: std::array::from_fn(|v| Plucker::new(sample_rate, seed(v, 15))),
+            input_blocker: [DcBlocker::with_cutoff(sample_rate, 10.0); VOICES],
             modal: std::array::from_fn(|_| ModalVoice::new(sample_rate)),
-            wake: [[Wake::default(); MODEL_GAINS.len()]; VOICES],
+            string: std::array::from_fn(|v| KarplusString::new(sample_rate, true, seed(v, 14))),
+            sympathetic: Box::new(std::array::from_fn(|v| {
+                std::array::from_fn(|s| KarplusString::new(sample_rate, false, seed(v, s)))
+            })),
+            sympathetic_count: [MAX_STRINGS; VOICES],
+            lfo_phase: [[0.0; MAX_STRINGS]; VOICES],
+            wake: [[Wake::default(); 3]; VOICES],
             split: std::array::from_fn(|_| LinearRamp::new(0.0, split_blocks)),
             sleep_frames: (SLEEP_SECONDS * rate) as usize,
             excitation: [0.0; ENGINE_BLOCK],
+            sympathetic_input: [0.0; ENGINE_BLOCK],
             out: [0.0; ENGINE_BLOCK],
             aux: [0.0; ENGINE_BLOCK],
         };
@@ -113,11 +139,12 @@ impl Voices {
         self.frequency[v]
     }
 
-    /// Sets voice `v` up for `polyphony`: how many modes it rings, and
-    /// where in the stereo field it sits.
+    /// Sets voice `v` up for `polyphony`: how many modes and strings it
+    /// rings, and where in the stereo field it sits.
     fn configure(&mut self, v: usize, polyphony: usize) {
         let polyphony = polyphony.clamp(1, VOICES);
         self.modal[v].set_resolution(MAX_MODES / polyphony - 4);
+        self.sympathetic_count[v] = (2 * VOICES / polyphony).max(2);
         // Above one voice, voices alternate between the outputs; the third
         // of three keeps its partials split across both, so neither side
         // carries two voices to the other's one.
@@ -165,14 +192,20 @@ impl Voices {
                 }
                 self.out.fill(0.0);
                 self.aux.fill(0.0);
-                let level = self.ring(v, feeding, patch);
+                let level = self.ring(v, model, feeding, performance.internal, patch);
                 self.mix(v, gain, odd, even);
                 let wake = &mut self.wake[v][model];
                 if !feeding && level < QUIET {
                     wake.quiet += ENGINE_BLOCK;
                     if wake.quiet >= self.sleep_frames {
                         *wake = Wake::default();
-                        self.modal[v].reset();
+                        match model {
+                            MODAL => self.modal[v].reset(),
+                            STRING => self.string[v].reset(),
+                            _ => self.sympathetic[v]
+                                .iter_mut()
+                                .for_each(KarplusString::reset),
+                        }
                     }
                 } else {
                     wake.quiet = 0;
@@ -207,7 +240,17 @@ impl Voices {
         } else {
             self.excitation.fill(0.0);
         }
-        if strike {
+        let strings = performance.model != MODAL;
+        if strings && active {
+            let count = if performance.model == SYMPATHETIC {
+                self.sympathetic_count[v]
+            } else {
+                1
+            };
+            let gain = 1.0 / (2.0 * count as f32).sqrt();
+            self.excitation.iter_mut().for_each(|x| *x *= gain);
+        }
+        if !strings && strike {
             // The modal exciter is a pulse, scaled up as the filter narrows.
             self.excitation[0] += 0.25 * exp2(2.0 * filter_cutoff * filter_cutoff) / filter_cutoff;
         }
@@ -216,20 +259,121 @@ impl Voices {
         for x in self.excitation.iter_mut() {
             *x = filter.process(*x).lowpass;
         }
+        if strings {
+            if performance.internal {
+                if strike {
+                    self.plucker[v].trigger(frequency, filter_cutoff * 8.0, patch.position);
+                }
+                self.plucker[v].process(&mut self.excitation);
+            }
+            let blocker = &mut self.input_blocker[v];
+            for x in self.excitation.iter_mut() {
+                *x = blocker.process(*x);
+            }
+        }
     }
 
-    /// Rings voice `v` into `self.out` and `self.aux`, fed the excitation
-    /// when `feeding`. Returns how loud it is.
-    fn ring(&mut self, v: usize, feeding: bool, patch: &Patch) -> f32 {
+    /// Rings voice `v` of `model` into `self.out` and `self.aux`, fed the
+    /// excitation when `feeding`. Returns how loud its loop is.
+    fn ring(
+        &mut self,
+        v: usize,
+        model: usize,
+        feeding: bool,
+        internal: bool,
+        patch: &Patch,
+    ) -> f32 {
         let input = if feeding { &self.excitation } else { &SILENCE };
-        let settings = ModalSettings {
-            frequency: self.frequency[v],
-            structure: patch.structure,
-            brightness: patch.brightness * patch.brightness,
-            damping: patch.damping,
-            position: patch.position,
-        };
-        self.modal[v].process(&settings, input, &mut self.out, &mut self.aux)
+        let frequency = self.frequency[v];
+        match model {
+            MODAL => {
+                let settings = ModalSettings {
+                    frequency,
+                    structure: patch.structure,
+                    brightness: patch.brightness * patch.brightness,
+                    damping: patch.damping,
+                    position: patch.position,
+                };
+                self.modal[v].process(&settings, input, &mut self.out, &mut self.aux)
+            }
+            STRING => {
+                let s = patch.structure;
+                let dispersion = if s < 0.24 {
+                    (s - 0.24) * 4.166
+                } else if s > 0.26 {
+                    (s - 0.26) * 1.351_35
+                } else {
+                    0.0
+                };
+                let settings = StringSettings {
+                    dispersion,
+                    brightness: patch.brightness,
+                    damping: patch.damping,
+                    position: patch.position,
+                };
+                let string = &mut self.string[v];
+                string.glide_to(frequency, 1.0);
+                string.process(&settings, input, &mut self.out, &mut self.aux)
+            }
+            _ => self.ring_sympathetic(v, feeding, internal, patch),
+        }
+    }
+
+    /// Rings voice `v`'s sympathetic strings: the first is struck, the
+    /// others (when the internal exciter plays) answer it.
+    fn ring_sympathetic(&mut self, v: usize, feeding: bool, internal: bool, patch: &Patch) -> f32 {
+        let count = self.sympathetic_count[v];
+        let note = 69.0 + 12.0 * log2(self.frequency[v] * self.sample_rate / 440.0);
+        let mut notes = [0.0f32; MAX_STRINGS];
+        string_notes(note, patch.structure, count, &mut notes);
+        let lfo_step = ENGINE_BLOCK as f32 / self.sample_rate;
+        let mut level = 0.0f32;
+        for s in 0..count {
+            let phase = &mut self.lfo_phase[v][s];
+            *phase += LFO_HZ[s] * lfo_step;
+            *phase -= phase.floor();
+            let lfo = 0.5 + 0.5 * cosine(*phase);
+            let mut brightness = patch.brightness;
+            let mut damping = patch.damping;
+            let mut position = patch.position;
+            let mut glide = 1.0;
+            let answering = s > 0 && internal;
+            if answering {
+                brightness *= 2.0 - brightness;
+                brightness *= 2.0 - brightness;
+                damping = 0.7 + patch.damping * 0.27;
+                // A third of the reference's wobble: the full depth swings the
+                // halo's comb enough that a long tail swells again.
+                let amount = (0.5 - (0.5 - patch.position).abs()) * 0.3;
+                position = patch.position + lfo * amount;
+                glide = exp2((brightness - 1.0) * 3.0);
+            }
+            let index = s as f32 / count as f32;
+            let settings = StringSettings {
+                dispersion: 0.0,
+                brightness,
+                damping: damping + index * (0.95 - damping),
+                position,
+            };
+            let hz = 440.0 * exp2((notes[s] - 69.0) / 12.0);
+            let string = &mut self.sympathetic[v][s];
+            string.glide_to(hz / self.sample_rate, glide);
+            let input = if answering {
+                &self.sympathetic_input
+            } else if feeding {
+                &self.excitation
+            } else {
+                &SILENCE
+            };
+            level = level.max(string.process(&settings, input, &mut self.out, &mut self.aux));
+            if s == 0 {
+                let gain = 0.2 / count as f32;
+                for i in 0..ENGINE_BLOCK {
+                    self.sympathetic_input[i] = gain * (self.out[i] - self.aux[i]);
+                }
+            }
+        }
+        level
     }
 
     /// Adds voice `v`'s block into the outputs at its stereo placement.

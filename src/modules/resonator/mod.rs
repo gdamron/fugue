@@ -1,7 +1,8 @@
 //! Resonator: tuned, ringing bodies excited by any sound.
 //!
-//! A click, a drum, a voice or noise goes in; a bowl, a bar or a bell
-//! rings out, in tune. Strummed by a sequencer with nothing patched into `audio`, its
+//! A click, a drum, a voice or noise goes in; a bowl, a bell, a plucked
+//! string or a string with a halo of sympathetic strings rings out, in
+//! tune. Strummed by a sequencer with nothing patched into `audio`, its
 //! internal exciter makes it a melodic voice of its own; fed other audio, it
 //! tunes that audio to the played pitch.
 
@@ -30,6 +31,9 @@ pub use self::tuning::ring_seconds;
 mod controls;
 mod limiter;
 mod modal;
+mod plucker;
+mod string;
+mod sympathetic;
 #[cfg(test)]
 mod tests;
 mod tuning;
@@ -105,12 +109,12 @@ impl ModuleFactory for ResonatorFactory {
 /// size.
 ///
 /// # Outputs
-/// - `odd`, `even`: at polyphony 1, the odd and even partials; above 1,
-///   alternate voices, for stereo
+/// - `odd`, `even`: at polyphony 1, the odd and even partials (or the
+///   string and its pickup); above 1, alternate voices, for stereo
 /// - `audio`: the two summed
 ///
 /// # Controls
-/// - `model`: modal; a change lets the old body ring out
+/// - `model`: modal, sympathetic_strings or string; the old body rings out
 /// - `frequency`: pitch in Hz
 /// - `structure`, `brightness`, `damping`, `position`: the body, 0 to 1;
 ///   a write glides over 10 ms

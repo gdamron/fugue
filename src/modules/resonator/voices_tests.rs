@@ -1,16 +1,19 @@
 use super::*;
 
-/// How many modes a voice gets at each polyphony, so the bank's cost stays
-/// about the same as voices are added.
+/// How many modes and sympathetic strings a voice gets at each polyphony,
+/// so the bank's cost stays about the same as voices are added.
 #[test]
 fn voices_share_a_fixed_budget_of_modes_and_strings() {
     let mut voices = Voices::new(48_000, 1);
     let mut modes = vec![];
+    let mut strings = vec![];
     for polyphony in 1..=VOICES {
         voices.configure(0, polyphony);
         modes.push(voices.modal[0].resolution());
+        strings.push(voices.sympathetic_count[0]);
     }
     assert_eq!(modes, [60, 28, 16, 12]);
+    assert_eq!(strings, [8, 4, 2, 2]);
 }
 
 /// At three voices the third keeps its partials split across both outputs,
