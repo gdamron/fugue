@@ -30,22 +30,28 @@ pub struct LoopShape {
     pub size: f32,
     /// A clock's period in frames, which then sets the delay and loop.
     pub period: Option<u32>,
+    /// Frames what is read is delayed by afterwards (a pitch shifter's),
+    /// taken off the delay so a tapped or clocked time stays on time.
+    pub latency: u32,
 }
 
 /// One reader over a [`Recording`], with a crossfade for its jumps.
 pub struct Looper {
     active: bool,
     at: f64,
-    /// Where the reader was before its last jump, while that fades out;
-    /// `None` fades in from silence.
+    /// Where the reader was before its last jump, while that fades out.
     old: Option<f64>,
     fade: u32,
     fade_frames: u32,
-    /// While frozen, frames left before the loop comes round.
+    /// While frozen, frames left before the loop comes round, and where
+    /// the head was as the freeze began (it runs on through its fade).
     cycle: Option<f64>,
-    /// Frames since the last tap, and the time between the last two.
+    anchor: Option<f64>,
+    /// Frames since the last tap, and the time between the last two; a
+    /// tap after longer than the longest delay starts afresh.
     since_tap: Option<u32>,
     tapped: Option<u32>,
+    longest_tap: u32,
     shortest_loop: f64,
 }
 
@@ -59,23 +65,38 @@ impl Looper {
             fade: 0,
             fade_frames: (JUMP_SECONDS * rate).round().max(1.0) as u32,
             cycle: None,
+            anchor: None,
             since_tap: None,
             tapped: None,
+            longest_tap: u32::MAX,
             shortest_loop: f64::from(SHORTEST_LOOP * rate),
         }
     }
 
-    /// Stops reading, so the next frame fades in afresh.
+    /// Stops reading, so the next frame starts afresh.
     pub fn clear(&mut self) {
         self.active = false;
         self.cycle = None;
+        self.anchor = None;
         self.fade = 0;
+        self.since_tap = None;
+    }
+
+    /// Whether it is reading (else the next frame starts afresh).
+    pub fn active(&self) -> bool {
+        self.active
+    }
+
+    /// Where the next frame will be read.
+    pub fn at(&self) -> f64 {
+        self.at
     }
 
     /// A tap: two set the delay (and the loop) to the time between them.
     pub fn tap(&mut self) {
-        if let Some(since) = self.since_tap {
-            self.tapped = Some(since.max(1));
+        match self.since_tap {
+            Some(since) if since <= self.longest_tap => self.tapped = Some(since.max(1)),
+            _ => {}
         }
         self.since_tap = Some(0);
     }
@@ -96,6 +117,7 @@ impl Looper {
         let head = buffer.head() as f64;
         let jump = f64::from(self.fade_frames);
         let longest = (length - 2.0 * MARGIN - jump).max(1.0);
+        self.longest_tap = longest as u32;
         let set = shape.period.or(self.tapped).map(f64::from);
         let delay = set
             .unwrap_or_else(|| f64::from(shape.position.clamp(0.0, 1.0)) * longest)
@@ -104,24 +126,29 @@ impl Looper {
 
         if recording {
             self.cycle = None;
+            self.anchor = None;
+            let delay = (delay - f64::from(shape.latency)).max(MARGIN);
             self.follow(place(head - 1.0 - delay, length), length);
         } else {
+            // The head runs on through its write fade after a freeze: the
+            // loop is placed from where it stood, and kept clear of what
+            // the fade writes over (just past it, the oldest audio).
+            let head = *self.anchor.get_or_insert(head);
+            let longest = (longest - buffer.fade_frames() as f64).max(1.0);
+            let delay = (delay - f64::from(shape.latency)).max(MARGIN).min(longest);
             // The loop is set as it comes round, so `size` and `position`
-            // move it a loop at a time.
-            let due = match self.cycle {
-                None => true,
-                Some(left) => left <= 0.0 && self.fade == 0,
-            };
+            // move it a loop at a time; never mid-jump, so it never starts
+            // from where the reader was before one.
+            let due = self.fade == 0 && self.cycle.is_none_or(|left| left <= 0.0);
             if due {
                 let span = set.unwrap_or_else(|| {
                     let size = f64::from(shape.size.clamp(0.0, 1.0));
                     self.shortest_loop * (longest / self.shortest_loop).max(1.0).powf(size)
                 });
-                let span = span
-                    .round()
-                    .clamp(2.0 * jump, (longest - MARGIN).max(2.0 * jump));
+                let span = span.round().clamp(2.0 * jump, longest.max(2.0 * jump));
                 // The loop and the fade past its end stay behind the head.
-                let start = place(head - delay.max(span + MARGIN + jump), length);
+                // Where the reader is at the freeze, if the loop fits there.
+                let start = place(head - 1.0 - delay.max(span + MARGIN + jump), length);
                 if self.cycle.is_none() {
                     self.follow(start, length);
                 } else {
@@ -139,7 +166,8 @@ impl Looper {
             self.active = true;
             self.at = to;
             self.old = None;
-            self.fade = self.fade_frames;
+            // Nothing to fade from: a mode change fades the whole mode in.
+            self.fade = 0;
             return;
         }
         let apart = (self.at - to).rem_euclid(length);

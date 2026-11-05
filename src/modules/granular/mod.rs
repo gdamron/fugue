@@ -403,7 +403,9 @@ impl Module for Granular {
             }
             (POSITION, RtValue::F32(x)) => {
                 // Turned, `position` sets the delay again after taps.
-                self.playback.forget_taps();
+                if unit(x) != self.shape.position {
+                    self.playback.forget_taps();
+                }
                 self.shape.position = unit(x);
                 RtValue::F32(self.shape.position)
             }

@@ -212,10 +212,16 @@ impl Playback {
                         position: frame.shape.position,
                         size: frame.shape.size,
                         period: frame.period,
+                        latency: self.shifter.latency(),
                     };
+                    let fresh = !self.looper.active();
                     let (l, r) = self
                         .looper
                         .tick(frame.recording, &shape, frame.recording_on);
+                    if fresh {
+                        // What the reader would have played before now.
+                        self.shifter.prime(frame.recording, self.looper.at() - 2.0);
+                    }
                     let (l, r) = self.shifter.tick(l, r, frame.shape.ratio);
                     (l, r, true)
                 }
@@ -238,10 +244,7 @@ impl Playback {
         match mode {
             Mode::Granular => self.grains.clear(),
             Mode::Stretch => self.stretcher.clear(),
-            Mode::LoopingDelay => {
-                self.looper.clear();
-                self.shifter.clear();
-            }
+            Mode::LoopingDelay => self.looper.clear(),
         }
     }
 

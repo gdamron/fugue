@@ -4,9 +4,11 @@
 //!
 //! As in Mutable Instruments' `clouds/dsp/pitch_shifter.h` (MIT, Copyright
 //! 2014 Emilie Gillet), with a window scaled by sample rate. At unity the
-//! taps would sit half a window apart and comb, so the sweep settles,
-//! slowly enough not to be heard, to a phase where one tap plays alone.
+//! taps would sit half a window apart and comb, so the sweep settles, at
+//! a 1% detune for up to a second, to a phase where one tap plays alone.
 //! See THIRD_PARTY_NOTICES.md.
+
+use super::Recording;
 
 /// The window, in seconds (2048 frames at 48 kHz).
 const WINDOW_SECONDS: f32 = 0.042_67;
@@ -37,10 +39,23 @@ impl PitchShifter {
         }
     }
 
-    /// Silences the line, as if it had never played.
-    pub fn clear(&mut self) {
-        self.left.fill(0.0);
-        self.right.fill(0.0);
+    /// Frames the shifter delays by at unity, where one tap plays alone.
+    pub fn latency(&self) -> u32 {
+        (0.5 * self.window) as u32
+    }
+
+    /// Fills the line with the recording up to `newest`, as if it had
+    /// been playing it, so starting afresh leaves no gap.
+    pub fn prime(&mut self, buffer: &Recording, newest: f64) {
+        let length = buffer.len() as isize;
+        let newest = newest.round() as isize;
+        for k in 0..self.left.len() {
+            let at = (newest - k as isize).rem_euclid(length) as usize;
+            let (l, r) = buffer.read(at, 0.0);
+            let slot = self.write.wrapping_sub(1 + k) & self.mask;
+            self.left[slot] = l;
+            self.right[slot] = r;
+        }
         self.phase = 0.0;
     }
 

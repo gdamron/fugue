@@ -72,6 +72,7 @@ fn freezing_loops_what_was_heard_without_a_click() {
         position: 0.3,
         size: 0.42,
         period: None,
+        latency: 0,
     };
     let steady = run(&mut looper, &mut buffer, &shape, true, 0, SR as usize, tone);
     let steady = largest_step(&steady[SR as usize / 2..]);
@@ -115,6 +116,7 @@ fn a_synced_period_sets_the_frozen_loop() {
         position: 0.9,
         size: 0.0,
         period: Some(12_000),
+        latency: 0,
     };
     run(&mut looper, &mut buffer, &shape, true, 0, SR as usize, tone);
     run(
@@ -130,4 +132,75 @@ fn a_synced_period_sets_the_frozen_loop() {
         looper.cycle.map(|left| left.round() as i64 + 2_000),
         Some(12_000)
     );
+}
+
+/// Frozen output after `freeze_at`, fed `input` throughout.
+fn frozen_loop(size: f32, freeze_at: usize, input: fn(usize) -> f32) -> Vec<f32> {
+    let mut buffer = Recording::new(SR, SR as usize);
+    let mut looper = Looper::new(SR);
+    let mut shape = LoopShape {
+        position: 0.1,
+        size,
+        ..LoopShape::default()
+    };
+    run(
+        &mut looper,
+        &mut buffer,
+        &shape,
+        true,
+        0,
+        freeze_at - 200,
+        tone,
+    );
+    // Move the delay just before the freeze, so it lands mid-jump.
+    shape.position = 0.05;
+    run(
+        &mut looper,
+        &mut buffer,
+        &shape,
+        true,
+        freeze_at - 200,
+        200,
+        tone,
+    );
+    run(
+        &mut looper,
+        &mut buffer,
+        &shape,
+        false,
+        freeze_at,
+        SR as usize,
+        input,
+    )
+}
+
+#[test]
+fn the_frozen_loop_never_reads_what_the_write_fade_overwrites() {
+    // The head runs on for its fade after a freeze, still writing: the
+    // loop must not reach it, from the first cycle or any after.
+    for size in [0.0, 0.3, 1.0] {
+        let quiet = frozen_loop(size, 30_000, |_| 0.0);
+        let loud = frozen_loop(size, 30_000, |n| tone(n * 3));
+        assert_eq!(quiet, loud, "size {size}");
+        assert!(quiet.iter().any(|x| x.abs() > 0.5), "size {size} plays");
+    }
+}
+
+#[test]
+fn a_stray_tap_long_after_the_last_starts_afresh() {
+    let mut buffer = Recording::new(SR, SR as usize);
+    let mut looper = Looper::new(SR);
+    let shape = LoopShape::default();
+    looper.tap();
+    run(
+        &mut looper,
+        &mut buffer,
+        &shape,
+        true,
+        0,
+        2 * SR as usize,
+        |_| 0.0,
+    );
+    looper.tap();
+    assert_eq!(looper.tapped, None);
 }
