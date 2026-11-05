@@ -32,6 +32,8 @@ fn granular_declares_its_controls() {
         ("texture", 0.0, 1.0, 0.5),
         ("spread", 0.0, 1.0, 0.0),
         ("feedback", 0.0, 1.0, 0.0),
+        ("glide", 0.0, 2.0, 0.0),
+        ("inertia", 0.0, 1.0, 0.5),
     ] {
         let got = number(&controls, key);
         assert_eq!((got.0, got.1), (min, max), "{key} range");
@@ -52,7 +54,7 @@ fn granular_declares_its_controls() {
     assert_eq!(got, &["granular", "stretch", "looping_delay"]);
     assert_eq!(mode.default, ControlValue::from("granular"));
     let keys: Vec<&str> = controls.iter().map(|m| m.key.as_str()).collect();
-    assert_eq!(keys.len(), 10, "no undocumented controls: {keys:?}");
+    assert_eq!(keys.len(), 12, "no undocumented controls: {keys:?}");
 }
 
 /// Every control may be given in config as its starting value, and is
