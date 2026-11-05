@@ -13,7 +13,9 @@ impl SignalGraph {
     /// always `<= block_size`), mixing all sink outputs into `left`/`right`.
     ///
     /// Process groups run in topological order: acyclic modules a whole block at
-    /// a time, feedback cycles sample-by-sample. Zero heap allocations.
+    /// a time, feedback cycles in chunks of their shortest declared delay
+    /// (see [`super::chunks`]) or else sample-by-sample. Zero heap
+    /// allocations.
     ///
     /// The block runs as segments split at each pending control request's
     /// sample (see [`super::requests`]); with none due it is one segment.
@@ -96,7 +98,14 @@ impl SignalGraph {
                         self.apply_conditions_on(self.process_groups[g].members[m]);
                     }
                 }
-                self.process_feedback_group(g, frames);
+                let chunk = self.process_groups[g].chunks.as_ref().map(|c| c.frames);
+                if chunk == Some(1) {
+                    self.process_unit_chunks(g, frames);
+                } else if chunk.is_some() {
+                    self.process_chunked_group(g, frames);
+                } else {
+                    self.process_feedback_group(g, frames);
+                }
             } else {
                 let module_idx = self.process_groups[g].members[0];
                 if !conditioned {
@@ -153,6 +162,90 @@ impl SignalGraph {
     /// [`Self::process_conditioned`]), as a block of its own.
     pub(super) fn process_span(&mut self, module_idx: usize, from: usize, to: usize) {
         let frames = to - from;
+        self.gather_inputs(module_idx, from, frames);
+
+        // Its requests' writes, then the automation written after them.
+        self.flush_staged_on(module_idx);
+        if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
+            // A span after the first starts at its own frame 0.
+            let _frame_zero = (from > 0).then(|| FrameScope::frame(from));
+            take_automation(inst.module_mut());
+            inst.module_mut().process(frames);
+        }
+        self.store_outputs(module_idx, from, frames);
+    }
+
+    /// Runs a feedback group in chunks (see [`super::chunks`]): for each,
+    /// the cut members emit from their history, the rest process over the
+    /// chunk in order, and the cuts absorb what the rest wrote. Every route
+    /// inside the group reads the same chunk, so the loop is exactly as
+    /// long as its delays.
+    fn process_chunked_group(&mut self, group: usize, frames: usize) {
+        let Some(chunk) = self.process_groups[group].chunks.as_ref().map(|c| c.frames) else {
+            return;
+        };
+        let mut from = 0;
+        while from < frames {
+            let to = (from + chunk).min(frames);
+            let n = to - from;
+            let cut_count = self.process_groups[group]
+                .chunks
+                .as_ref()
+                .map_or(0, |c| c.cuts.len());
+            for c in 0..cut_count {
+                let module_idx = self.chunk_member(group, c, true);
+                if self.emit_reads(group, c) {
+                    self.gather_inputs(module_idx, from, n);
+                }
+                self.flush_staged_on(module_idx);
+                if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
+                    let _frame_zero = (from > 0).then(|| FrameScope::frame(from));
+                    take_automation(inst.module_mut());
+                    inst.module_mut().emit(n);
+                }
+                self.store_outputs(module_idx, from, n);
+            }
+            let rest_count = self.process_groups[group]
+                .chunks
+                .as_ref()
+                .map_or(0, |c| c.rest.len());
+            for r in 0..rest_count {
+                let module_idx = self.chunk_member(group, r, false);
+                self.process_span(module_idx, from, to);
+            }
+            for c in 0..cut_count {
+                let module_idx = self.chunk_member(group, c, true);
+                self.gather_inputs(module_idx, from, n);
+                if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
+                    inst.module_mut().absorb(n);
+                }
+            }
+            from = to;
+        }
+    }
+
+    /// Whether the `k`th cut of chunked group `group` reads an input as it
+    /// emits, which is then gathered first.
+    fn emit_reads(&self, group: usize, k: usize) -> bool {
+        let chunks = self.process_groups[group].chunks.as_ref();
+        chunks
+            .and_then(|c| c.emit_reads.get(k))
+            .copied()
+            .unwrap_or(true)
+    }
+
+    /// The `k`th cut (`cut`) or other member of chunked group `group`.
+    fn chunk_member(&self, group: usize, k: usize, cut: bool) -> usize {
+        let chunks = self.process_groups[group].chunks.as_ref();
+        chunks
+            .and_then(|c| if cut { c.cuts.get(k) } else { c.rest.get(k) })
+            .copied()
+            .unwrap_or(usize::MAX)
+    }
+
+    /// Fills module `module_idx`'s connected inputs with frames
+    /// `from..from + frames` of the routes feeding them, at its frame 0.
+    fn gather_inputs(&mut self, module_idx: usize, from: usize, frames: usize) {
         // Zero connected input ports, then sum every route feeding them.
         let port_count = self.connected_in_ports[module_idx].len();
         for pi in 0..port_count {
@@ -174,16 +267,11 @@ impl SignalGraph {
                 }
             }
         }
+    }
 
-        // Its requests' writes, then the automation written after them.
-        self.flush_staged_on(module_idx);
-        if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
-            // A span after the first starts at its own frame 0.
-            let _frame_zero = (from > 0).then(|| FrameScope::frame(from));
-            take_automation(inst.module_mut());
-            inst.module_mut().process(frames);
-        }
-
+    /// Stores `frames` of module `module_idx`'s outputs at frame `from` of
+    /// its output buffers.
+    fn store_outputs(&mut self, module_idx: usize, from: usize, frames: usize) {
         let n_out = self.out_counts[module_idx];
         for p in 0..n_out {
             let base = p * self.block_capacity + from;
@@ -202,50 +290,93 @@ impl SignalGraph {
             let member_count = self.process_groups[group].members.len();
             for mi in 0..member_count {
                 let module_idx = self.process_groups[group].members[mi];
+                self.step(module_idx, s, Step::Process, true);
+            }
+        }
+    }
 
-                // Zero connected input ports at frame 0, then sum routes.
-                let port_count = self.connected_in_ports[module_idx].len();
-                for pi in 0..port_count {
-                    let port = self.connected_in_ports[module_idx][pi];
-                    if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
-                        inst.module_mut().input_block_mut(port)[0] = 0.0;
-                    }
-                }
+    /// Runs a chunked group whose chunks are a single frame as
+    /// [`Self::process_chunked_group`] would, a frame at a time as
+    /// [`Self::process_feedback_group`] does, without its spans' overhead.
+    fn process_unit_chunks(&mut self, group: usize, frames: usize) {
+        let (cuts, rest) = self.process_groups[group]
+            .chunks
+            .as_ref()
+            .map_or((0, 0), |c| (c.cuts.len(), c.rest.len()));
+        for s in 0..frames {
+            let _frame_zero = FrameScope::frame(s);
+            for c in 0..cuts {
+                let module_idx = self.chunk_member(group, c, true);
+                self.step(module_idx, s, Step::Emit(self.emit_reads(group, c)), false);
+            }
+            for r in 0..rest {
+                let module_idx = self.chunk_member(group, r, false);
+                self.step(module_idx, s, Step::Process, false);
+            }
+            for c in 0..cuts {
+                let module_idx = self.chunk_member(group, c, true);
+                self.step(module_idx, s, Step::Absorb, false);
+            }
+        }
+    }
 
-                let route_count = self.compiled_routes[module_idx].len();
-                for r in 0..route_count {
-                    let route = self.compiled_routes[module_idx][r];
-                    let value = if route.delayed {
-                        if s == 0 {
-                            self.out_prev[route.from_module][route.from_port]
-                        } else {
-                            self.out_bufs[route.from_module]
-                                [route.from_port * self.block_capacity + (s - 1)]
-                        }
-                    } else {
-                        self.out_bufs[route.from_module][route.from_port * self.block_capacity + s]
-                    };
-                    if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
-                        inst.module_mut().input_block_mut(route.to_port)[0] += value;
-                    }
-                }
-
-                self.flush_staged_on(module_idx);
+    /// Runs module `module_idx` for frame `s` of a group run a frame at a
+    /// time: its routes summed into its inputs' frame 0 (a back-edge
+    /// reading the frame before when `delays`), then `step`.
+    fn step(&mut self, module_idx: usize, s: usize, step: Step, delays: bool) {
+        if !matches!(step, Step::Emit(false)) {
+            // Zero connected input ports at frame 0, then sum routes.
+            let port_count = self.connected_in_ports[module_idx].len();
+            for pi in 0..port_count {
+                let port = self.connected_in_ports[module_idx][pi];
                 if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
-                    take_automation(inst.module_mut());
-                    inst.module_mut().process(1);
-                }
-
-                let n_out = self.out_counts[module_idx];
-                for p in 0..n_out {
-                    let value = self
-                        .modules
-                        .get_index(module_idx)
-                        .map(|(_, inst)| inst.module().output_block(p)[0])
-                        .unwrap_or(0.0);
-                    self.out_bufs[module_idx][p * self.block_capacity + s] = value;
+                    inst.module_mut().input_block_mut(port)[0] = 0.0;
                 }
             }
+
+            let route_count = self.compiled_routes[module_idx].len();
+            for r in 0..route_count {
+                let route = self.compiled_routes[module_idx][r];
+                let value = if route.delayed && delays {
+                    if s == 0 {
+                        self.out_prev[route.from_module][route.from_port]
+                    } else {
+                        self.out_bufs[route.from_module]
+                            [route.from_port * self.block_capacity + (s - 1)]
+                    }
+                } else {
+                    self.out_bufs[route.from_module][route.from_port * self.block_capacity + s]
+                };
+                if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
+                    inst.module_mut().input_block_mut(route.to_port)[0] += value;
+                }
+            }
+        }
+
+        if step == Step::Absorb {
+            if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
+                inst.module_mut().absorb(1);
+            }
+            return;
+        }
+        self.flush_staged_on(module_idx);
+        if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
+            take_automation(inst.module_mut());
+            if step == Step::Process {
+                inst.module_mut().process(1);
+            } else {
+                inst.module_mut().emit(1);
+            }
+        }
+
+        let n_out = self.out_counts[module_idx];
+        for p in 0..n_out {
+            let value = self
+                .modules
+                .get_index(module_idx)
+                .map(|(_, inst)| inst.module().output_block(p)[0])
+                .unwrap_or(0.0);
+            self.out_bufs[module_idx][p * self.block_capacity + s] = value;
         }
     }
 
@@ -260,4 +391,13 @@ impl SignalGraph {
             }
         }
     }
+}
+
+/// What [`SignalGraph::step`] has a module do with its frame.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Step {
+    Process,
+    /// Emit, its inputs gathered first when it reads any as it emits.
+    Emit(bool),
+    Absorb,
 }

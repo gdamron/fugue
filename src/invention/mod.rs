@@ -45,7 +45,7 @@ pub use format::{
     AssetSpec, Connection, DevelopmentControl, DevelopmentInput, DevelopmentOutput,
     DevelopmentSpec, Invention, ModuleSpec, TimeSignature,
 };
-pub use graph::MasterLevels;
+pub use graph::{feedback_chunks, set_feedback_chunks, MasterLevels, FEEDBACK_CHUNKS_ENV};
 pub use handles::InventionHandles;
 pub use notes::{NoteChange, NoteChanges, NoteTime, Playhead};
 pub use orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot};

@@ -135,7 +135,7 @@ impl GraphChange {
     fn heard(&self, targets: &Targets) -> Heard {
         let mirror = &self.mirror;
         let facts = MirrorFacts { mirror, targets };
-        let topology = compile_topology(&facts, &mirror.edges, &mirror.sinks(), 1);
+        let topology = compile_topology(&facts, &mirror.edges, &mirror.sinks(), 1, false);
         heard_of(&topology, |module| {
             let (id, _) = mirror.modules.get_index(module).unwrap();
             targets.get(id).is_some_and(|targets| !targets.is_empty())

@@ -150,7 +150,11 @@ pub(crate) fn process_groups(adj: &[Vec<usize>], pos: &[usize]) -> (Vec<ProcessG
         .map(|mut members| {
             members.sort_by_key(|&m| pos[m]);
             let feedback = members.len() > 1 || adj[members[0]].contains(&members[0]);
-            ProcessGroup { members, feedback }
+            ProcessGroup {
+                members,
+                feedback,
+                chunks: None,
+            }
         })
         .collect();
     let mut group_of = vec![0; n];
