@@ -1,0 +1,34 @@
+{
+  "version": "1.0.0",
+  "title": "Contour Rolling Filters",
+  "description": "One contour, looping slowly in phase output mode, opens the filters of a four-note sawtooth chord one after another: shift staggers the four outputs in phase, so the brightness rolls up through the chord and back down.",
+  "modules": [
+    {"id": "contour", "type": "contour", "config": {"mode": "looping", "range": "control", "output_mode": "phase", "frequency": 0.2, "shape": 0.35, "slope": 0.25, "smoothness": 0.35, "shift": 0.85}},
+    {"id": "osc_low", "type": "oscillator", "config": {"waveform": "sawtooth", "frequency": 146.83}},
+    {"id": "filter_low", "type": "filter", "config": {"filter_type": "lowpass", "cutoff": 1200.0, "resonance": 0.5, "cutoff_mod_depth": 1000.0}},
+    {"id": "osc_fifth", "type": "oscillator", "config": {"waveform": "sawtooth", "frequency": 220.0}},
+    {"id": "filter_fifth", "type": "filter", "config": {"filter_type": "lowpass", "cutoff": 1200.0, "resonance": 0.5, "cutoff_mod_depth": 1000.0}},
+    {"id": "osc_seventh", "type": "oscillator", "config": {"waveform": "sawtooth", "frequency": 261.63}},
+    {"id": "filter_seventh", "type": "filter", "config": {"filter_type": "lowpass", "cutoff": 1200.0, "resonance": 0.5, "cutoff_mod_depth": 1000.0}},
+    {"id": "osc_third", "type": "oscillator", "config": {"waveform": "sawtooth", "frequency": 349.23}},
+    {"id": "filter_third", "type": "filter", "config": {"filter_type": "lowpass", "cutoff": 1200.0, "resonance": 0.5, "cutoff_mod_depth": 1000.0}},
+    {"id": "mix", "type": "mixer", "config": {"channel_count": 4, "levels": [0.22, 0.2, 0.18, 0.16], "master": 0.9, "pans": [-0.15, 0.3, -0.3, 0.15]}},
+    {"id": "dac", "type": "dac"}
+  ],
+  "connections": [
+    {"from": "osc_low", "from_port": "audio", "to": "filter_low", "to_port": "audio"},
+    {"from": "contour", "from_port": "contour.0", "to": "filter_low", "to_port": "cutoff_mod"},
+    {"from": "filter_low", "from_port": "audio", "to": "mix", "to_port": "audio.0"},
+    {"from": "osc_fifth", "from_port": "audio", "to": "filter_fifth", "to_port": "audio"},
+    {"from": "contour", "from_port": "contour.1", "to": "filter_fifth", "to_port": "cutoff_mod"},
+    {"from": "filter_fifth", "from_port": "audio", "to": "mix", "to_port": "audio.1"},
+    {"from": "osc_seventh", "from_port": "audio", "to": "filter_seventh", "to_port": "audio"},
+    {"from": "contour", "from_port": "contour.2", "to": "filter_seventh", "to_port": "cutoff_mod"},
+    {"from": "filter_seventh", "from_port": "audio", "to": "mix", "to_port": "audio.2"},
+    {"from": "osc_third", "from_port": "audio", "to": "filter_third", "to_port": "audio"},
+    {"from": "contour", "from_port": "contour.3", "to": "filter_third", "to_port": "cutoff_mod"},
+    {"from": "filter_third", "from_port": "audio", "to": "mix", "to_port": "audio.3"},
+    {"from": "mix", "from_port": "audio_left", "to": "dac", "to_port": "audio_left"},
+    {"from": "mix", "from_port": "audio_right", "to": "dac", "to_port": "audio_right"}
+  ]
+}

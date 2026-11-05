@@ -10,6 +10,7 @@
 //! - [`StepSequencer`] / [`Step`] - Deterministic step sequencer
 //! - [`Chance`] - Random rhythms and melodies in key, with a repetition loop
 //! - [`Adsr`] - Envelope generator
+//! - [`Contour`] - One shaped ramp: envelope, LFO or oscillator, with four related outputs
 //! - [`Vca`] - Voltage controlled amplifier
 //! - [`MacroOscillator`] - One voice with a choice of synthesis models
 //! - [`Noise`] - White and pink noise source
@@ -74,6 +75,7 @@ pub use audio_file_sink::{
 pub use cell_sequencer::CellSequencer;
 pub use chance::Chance;
 pub use clock::Clock;
+pub use contour::{Contour, ContourFactory};
 pub use code::CodeControls;
 pub use control_scheduler::{
     ControlScheduler, ControlSchedulerControls, ScheduleEntry, ScheduleValue,
