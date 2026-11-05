@@ -33,6 +33,12 @@ pub struct ClockDivider {
 }
 
 impl ClockDivider {
+    /// The last pulse's length in frames, once two edges have passed.
+    #[inline]
+    pub fn period(&self) -> Option<u32> {
+        self.period
+    }
+
     /// Whether an onset falls on this frame of `gate`, dividing pulses into
     /// `divisions`. The division count is taken at each edge.
     #[inline]

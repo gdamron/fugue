@@ -5,6 +5,8 @@
 //! [`MODE_FADE_SECONDS`], equal in power since the two read different
 //! audio. A change asked for mid-fade waits for the fade to finish.
 //!
+//! The looping delay is transposed after it is read, by a pitch shifter.
+//!
 //! The modes other than `granular` pass through a tone filter, as in
 //! Mutable Instruments' `clouds/dsp/granular_processor.cc` (MIT, Copyright
 //! 2014 Emilie Gillet): `texture` below 0.5 lowers a low-pass from the top
@@ -12,8 +14,8 @@
 //! up to 8 kHz. See THIRD_PARTY_NOTICES.md.
 
 use crate::dsp::{
-    cosine, sine, GrainCloud, GrainShape, LinearRamp, Onsets, Recording, StretchShape, Stretcher,
-    Svf,
+    cosine, sine, GrainCloud, GrainShape, LinearRamp, LoopShape, Looper, Onsets, PitchShifter,
+    Recording, StretchShape, Stretcher, Svf,
 };
 
 /// How long a mode change takes.
@@ -31,6 +33,7 @@ const TONE_OCTAVES: f32 = 18.0;
 pub(super) enum Mode {
     Granular,
     Stretch,
+    LoopingDelay,
 }
 
 impl Mode {
@@ -38,6 +41,7 @@ impl Mode {
         match index {
             0 => Some(Self::Granular),
             1 => Some(Self::Stretch),
+            2 => Some(Self::LoopingDelay),
             _ => None,
         }
     }
@@ -51,6 +55,8 @@ pub(super) struct Frame<'a> {
     pub(super) regular: bool,
     pub(super) onsets: Onsets,
     pub(super) trigger: bool,
+    /// A synced clock's period in frames.
+    pub(super) period: Option<u32>,
     /// Whether the write head is moving.
     pub(super) recording_on: bool,
 }
@@ -59,6 +65,8 @@ pub(super) struct Frame<'a> {
 pub(super) struct Playback {
     pub(super) grains: GrainCloud,
     stretcher: Stretcher,
+    looper: Looper,
+    shifter: PitchShifter,
     mode: Mode,
     /// The mode fading out, if a change is under way.
     from: Option<Mode>,
@@ -79,6 +87,8 @@ impl Playback {
         let mut playback = Self {
             grains: GrainCloud::new(sample_rate, seed),
             stretcher: Stretcher::new(sample_rate),
+            looper: Looper::new(sample_rate),
+            shifter: PitchShifter::new(sample_rate),
             mode: Mode::Granular,
             from: None,
             fade: 0.0,
@@ -102,6 +112,11 @@ impl Playback {
     /// Asks for `mode`: a crossfade starts with the next block.
     pub(super) fn request(&mut self, mode: Mode) {
         self.pending = Some(mode);
+    }
+
+    /// Lets `position` set the looping delay again, after taps.
+    pub(super) fn forget_taps(&mut self) {
+        self.looper.forget_taps();
     }
 
     pub(super) fn set_texture(&mut self, texture: f32) {
@@ -189,6 +204,21 @@ impl Playback {
                         .tick(frame.recording, &shape, frame.recording_on);
                     (l, r, true)
                 }
+                Some(Mode::LoopingDelay) => {
+                    if frame.trigger {
+                        self.looper.tap();
+                    }
+                    let shape = LoopShape {
+                        position: frame.shape.position,
+                        size: frame.shape.size,
+                        period: frame.period,
+                    };
+                    let (l, r) = self
+                        .looper
+                        .tick(frame.recording, &shape, frame.recording_on);
+                    let (l, r) = self.shifter.tick(l, r, frame.shape.ratio);
+                    (l, r, true)
+                }
                 None => continue,
             };
             let sum = if filtered { &mut toned } else { &mut granular };
@@ -208,6 +238,10 @@ impl Playback {
         match mode {
             Mode::Granular => self.grains.clear(),
             Mode::Stretch => self.stretcher.clear(),
+            Mode::LoopingDelay => {
+                self.looper.clear();
+                self.shifter.clear();
+            }
         }
     }
 

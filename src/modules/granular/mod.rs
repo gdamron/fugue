@@ -130,14 +130,18 @@ impl ModuleFactory for GranularFactory {
 /// # Inputs
 /// - `audio_left`, `audio_right`: the signal to record; with `audio_right`
 ///   unpatched, both channels record `audio_left`
-/// - `trigger`: a rising edge starts a grain on that frame
-/// - `clock`: gates whose divisions place grains while `sync` is on
+/// - `trigger`: a rising edge starts a grain on that frame (granular),
+///   cuts to a fresh window at `position` (stretch), or taps the delay's
+///   length, the time between two taps (looping delay)
+/// - `clock`: gates whose divisions place grains, or whose period sets
+///   the looping delay, while `sync` is on
 ///
 /// # Outputs
 /// - `audio_left`, `audio_right`: the grains alone, within ±1
 ///
 /// # Controls
-/// - `mode`: `granular` or `stretch` (a change crossfades over 20 ms)
+/// - `mode`: `granular`, `stretch` or `looping_delay` (a change
+///   crossfades over 20 ms)
 /// - `position`, `size`, `pitch`, `density`, `texture`, `spread`: the
 ///   grains (each grain keeps the values it started with, so changes
 ///   never step the sound)
@@ -248,7 +252,7 @@ impl Granular {
     fn update_diffusion(&mut self) {
         let amount = match self.playback.mode() {
             Mode::Granular => ((self.texture - 0.75) * 4.0).clamp(0.0, 1.0),
-            Mode::Stretch => self.density,
+            Mode::Stretch | Mode::LoopingDelay => self.density,
         };
         self.diffusion.set_target(amount);
     }
@@ -311,6 +315,7 @@ impl Granular {
                 regular,
                 onsets,
                 trigger,
+                period: if synced { self.clock.period() } else { None },
                 recording_on: recording,
             });
             let (left, right) = self.diffuser.tick(left, right, self.diffusion.next_value());
@@ -397,6 +402,8 @@ impl Module for Granular {
                 value
             }
             (POSITION, RtValue::F32(x)) => {
+                // Turned, `position` sets the delay again after taps.
+                self.playback.forget_taps();
                 self.shape.position = unit(x);
                 RtValue::F32(self.shape.position)
             }
