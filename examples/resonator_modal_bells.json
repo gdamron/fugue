@@ -1,0 +1,47 @@
+{
+  "version": "1.0.0",
+  "title": "Resonator Modal Bells",
+  "description": "A step sequencer strikes a resonator's modal body tuned towards bells: four voices let each struck bell ring on under the next, and the stretched partials give a gamelan-like shimmer.",
+  "modules": [
+    { "id": "clock", "type": "clock", "config": { "bpm": 84.0 } },
+    {
+      "id": "seq",
+      "type": "step_sequencer",
+      "config": {
+        "root_note": 69,
+        "step_count": 8,
+        "gate_length": 0.2,
+        "pattern": [
+          { "note": 0 },
+          { "note": 7 },
+          { "note": 3 },
+          { "note": 10 },
+          { "note": 5 },
+          { "note": 12 },
+          { "note": 3 },
+          { "note": -2 }
+        ]
+      }
+    },
+    {
+      "id": "bells",
+      "type": "resonator",
+      "config": {
+        "model": "modal",
+        "structure": 0.7,
+        "brightness": 0.6,
+        "damping": 0.65,
+        "position": 0.2,
+        "polyphony": 4,
+        "level": 0.7
+      }
+    },
+    { "id": "dac", "type": "dac" }
+  ],
+  "connections": [
+    { "from": "clock", "from_port": "beat_x2", "to": "seq", "to_port": "clock" },
+    { "from": "seq", "from_port": "frequency", "to": "bells", "to_port": "frequency" },
+    { "from": "seq", "from_port": "gate", "to": "bells", "to_port": "strum" },
+    { "from": "bells", "from_port": "audio", "to": "dac", "to_port": "audio" }
+  ]
+}

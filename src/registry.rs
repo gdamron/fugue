@@ -311,6 +311,7 @@ impl Default for ModuleRegistry {
         reg.register(GainCurveFactory);
         reg.register(crate::modules::MacroOscillatorFactory);
         reg.register(crate::modules::ContourFactory);
+        reg.register(crate::modules::ResonatorFactory);
         reg.register(AdsrFactory);
         reg.register(VcaFactory);
         reg.register(MelodyFactory);
