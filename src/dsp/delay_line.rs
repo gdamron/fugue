@@ -59,26 +59,41 @@ impl DelayLine {
     /// read stays inside.
     #[inline]
     pub fn read_fractional(&self, offset: f32) -> f32 {
+        self.read_fractional_within(offset, 1, 0)
+    }
+
+    /// [`DelayLine::read_fractional`] for a reader that may not see the
+    /// `nearest - 1` newest samples, and that `behind` writes it has yet to
+    /// make: `offset` counts back from the newest sample as it will be once
+    /// they are made (clamped to `[nearest, len - 2]`), and an offset
+    /// within one sample of `nearest` interpolates linearly, as the newer
+    /// neighbour a cubic needs may not be written yet. The same offset and
+    /// `nearest` read the same samples, bit for bit, whatever `behind` is,
+    /// so long as `behind < nearest`. `read_fractional` is `nearest` 1 and
+    /// `behind` 0.
+    #[inline]
+    pub fn read_fractional_within(&self, offset: f32, nearest: usize, behind: usize) -> f32 {
         let longest = self.buffer.len().saturating_sub(2).max(1) as f32;
+        let nearest_offset = (nearest.max(1) as f32).min(longest);
         let offset = if offset.is_finite() {
-            offset.clamp(1.0, longest)
+            offset.clamp(nearest_offset, longest)
         } else {
-            1.0
+            nearest_offset
         };
         let whole = offset.floor();
         let t = offset - whole;
         let i = whole as usize;
         if t == 0.0 {
-            return self.read(i);
+            return self.read(i - behind);
         }
         // `i + 1` is older than `i`: the read moves back in time as `t`
         // grows.
-        let (near, far) = (self.read(i), self.read(i + 1));
-        if i < 2 {
+        let (near, far) = (self.read(i - behind), self.read(i + 1 - behind));
+        if i <= nearest {
             return near + t * (far - near);
         }
-        let newer = self.read(i - 1);
-        let older = self.read(i + 2);
+        let newer = self.read(i - 1 - behind);
+        let older = self.read(i + 2 - behind);
         let c1 = 0.5 * (far - newer);
         let c2 = newer - 2.5 * near + 2.0 * far - 0.5 * older;
         let c3 = 0.5 * (older - newer) + 1.5 * (near - far);

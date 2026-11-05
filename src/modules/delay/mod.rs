@@ -36,17 +36,19 @@ use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
 use crate::modules::mixer::gain_ramp_frames;
 use crate::traits::ControlMeta;
-use crate::{Module, MAX_BLOCK};
+use crate::{FeedbackCut, Module, MAX_BLOCK};
 
 use self::controls::{
     BPM, DIVISION, DIVISION_BEATS, FEEDBACK, GLIDE, HOLD, LONGEST_SECONDS, MOST_FEEDBACK, TABLE,
     TIME, TIME_MOD_DEPTH,
 };
+use self::frames::Write;
 use self::heads::{Glide, Heads};
 use self::hold::Hold;
 use self::inputs::{DelayInputs, INPUTS};
 
 mod controls;
+mod frames;
 mod heads;
 mod hold;
 #[cfg(test)]
@@ -57,6 +59,9 @@ mod tests;
 
 const TYPE_ID: &str = "delay";
 const MAX_TIME_KEY: ConfigKey = ConfigKey::float("max_time");
+const MIN_TIME_KEY: ConfigKey = ConfigKey::float("min_time");
+/// The inputs only the line's writes read, by index: `audio`.
+const ABSORBED: [usize; 1] = [0];
 /// How long a delay holds when its config doesn't say.
 const DEFAULT_MAX_TIME: f32 = 4.0;
 const OUTPUTS: [&str; 1] = ["audio"];
@@ -116,7 +121,7 @@ impl ModuleFactory for DelayFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[MAX_TIME_KEY]
+        &[MAX_TIME_KEY, MIN_TIME_KEY]
     }
 
     fn build(
@@ -134,10 +139,11 @@ impl ModuleFactory for DelayFactory {
             );
         }
         let max_time = max_time.min(LONGEST_SECONDS);
+        let min_time = reader.float(&MIN_TIME_KEY)?.unwrap_or(0.0);
         let cells = Arc::new(ControlCells::new(controls::defaults()));
         let surface = DeclaredSurface::new(TABLE.clone(), cells.clone());
         apply_control_keys(&surface, config, |key| TABLE.resolve(key).is_some())?;
-        let delay = Delay::with_cells(sample_rate, max_time, cells);
+        let delay = Delay::with_cells(sample_rate, max_time, min_time, cells);
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(delay)),
             handles: Vec::new(),
@@ -161,7 +167,8 @@ impl ModuleFactory for DelayFactory {
 /// - `audio`: the delayed signal alone; mix it with the dry signal outside
 ///
 /// # Controls
-/// - `time`: seconds, while `division` is `off` (clamped to `max_time`)
+/// - `time`: seconds, while `division` is `off` (clamped to `min_time` and
+///   `max_time`)
 /// - `division`: `off`, or a note value (`dotted_8th_note`, `1/8.`) timed
 ///   at the tempo, a quarter note being one beat
 /// - `bpm`: the tempo for `division` (default 120)
@@ -174,15 +181,26 @@ impl ModuleFactory for DelayFactory {
 /// # Config
 /// - `max_time`: the longest time in seconds (default 4; above 0, and
 ///   held to 60). The line is allocated once, at build, to hold it.
+/// - `min_time`: the shortest time in seconds (default 0, one sample;
+///   held to `max_time`). Every read, `time_mod` and the hold loop
+///   included, is at least this far back.
 ///
 /// A time of a whole number of samples is exact: with feedback at 0, input
 /// within ±0.75 comes out bit for bit. Times are at least one sample.
-/// Repeats from `feedback` are spaced exactly the time; a loop patched
-/// around the delay through other modules adds a sample per pass.
+/// Repeats from `feedback` are spaced exactly the time, and so are those
+/// of a loop patched around the delay through other modules: the loop
+/// runs in chunks of `min_time` (see [`crate::FeedbackCut`]), so a longer
+/// `min_time` makes it cheaper.
 pub struct Delay {
     sample_rate: f64,
     /// The longest delay, in samples.
     longest: f64,
+    /// The shortest delay, in whole samples (at least 1), and in seconds.
+    shortest: usize,
+    shortest_time: f32,
+    /// The writes an emit kept for its absorb, and how many (see [`frames`]).
+    writes: [Option<Write>; MAX_BLOCK],
+    emitted: usize,
     line: DelayLine,
     heads: Heads,
     hold: Hold,
@@ -208,11 +226,17 @@ impl Delay {
         Self::with_cells(
             sample_rate,
             max_time,
+            0.0,
             Arc::new(ControlCells::new(controls::defaults())),
         )
     }
 
-    fn with_cells(sample_rate: u32, max_time: f32, cells: Arc<ControlCells>) -> Self {
+    fn with_cells(
+        sample_rate: u32,
+        max_time: f32,
+        min_time: f32,
+        cells: Arc<ControlCells>,
+    ) -> Self {
         let rate = f64::from(sample_rate);
         let max_time = if max_time.is_finite() {
             max_time.clamp(0.0, LONGEST_SECONDS)
@@ -220,11 +244,21 @@ impl Delay {
             DEFAULT_MAX_TIME
         };
         let longest = whole_or_up(f64::from(max_time) * rate).max(1.0);
+        let min_time = if min_time.is_finite() {
+            min_time.clamp(0.0, max_time)
+        } else {
+            0.0
+        };
+        let shortest = whole_or_up(f64::from(min_time) * rate).clamp(1.0, longest) as usize;
         let mut delay = Self {
             sample_rate: rate,
             longest,
+            shortest,
+            shortest_time: min_time,
+            writes: [None; MAX_BLOCK],
+            emitted: 0,
             line: DelayLine::new(longest as usize + READ_MARGIN + Hold::headroom(sample_rate)),
-            heads: Heads::new(sample_rate, 1.0, Glide::Crossfade),
+            heads: Heads::new(sample_rate, shortest as f64, Glide::Crossfade),
             hold: Hold::new(sample_rate),
             feedback: LinearRamp::new(0.0, gain_ramp_frames(sample_rate)),
             time: 0.25,
@@ -259,22 +293,28 @@ impl Delay {
         }
     }
 
-    /// The time the controls and tempo ask for, in samples, from 1 to the
-    /// longest. One within [`WHOLE_SAMPLE`] of a whole sample is that sample.
+    /// The time the controls and tempo ask for, in samples, from the
+    /// shortest to the longest. One within [`WHOLE_SAMPLE`] of a whole
+    /// sample is that sample.
     fn time_samples(&self) -> f64 {
         let seconds = match DIVISION_BEATS.get(self.division) {
             Some(&beats) if beats > 0.0 => beats * 60.0 / self.tempo(),
             _ => f64::from(self.time),
         };
-        whole_or_exact(seconds * self.sample_rate).clamp(1.0, self.longest)
+        whole_or_exact(seconds * self.sample_rate).clamp(self.shortest as f64, self.longest)
     }
 
+    /// The line `offset + modulation` samples back, held to the shortest
+    /// and longest times, with `behind` writes the line has yet to make
+    /// (see [`frames`]).
     #[inline]
-    fn read(&self, offset: f32, modulation: f32) -> f32 {
-        let offset = (offset + modulation).clamp(1.0, self.longest as f32);
+    fn read(&self, offset: f32, modulation: f32, behind: usize) -> f32 {
+        let offset = (offset + modulation).clamp(self.shortest as f32, self.longest as f32);
         // Between samples a cubic can overshoot the samples either side of
         // it; whole samples are already within ±1, so they read exactly.
-        self.line.read_fractional(offset).clamp(-1.0, 1.0)
+        self.line
+            .read_fractional_within(offset, self.shortest, behind)
+            .clamp(-1.0, 1.0)
     }
 }
 
@@ -284,35 +324,23 @@ impl Module for Delay {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        self.heads.retarget(self.time_samples());
-        if !self.heard && frames > 0 {
-            // The first frame plays where the controls and tempo are now.
-            self.heads.settle();
-            self.feedback.settle();
-            self.heard = true;
-        }
-        let modulation = self.time_mod_depth * self.sample_rate as f32;
-        for i in 0..frames {
-            let reads = self.heads.next();
-            let shift = self.inputs.time_mod[i] * modulation;
-            let shift = if shift.is_finite() { shift } else { 0.0 };
-            let mut live = self.read(reads.from, shift);
-            if reads.weight > 0.0 {
-                let incoming = self.read(reads.to, shift);
-                live += reads.weight * (incoming - live);
-            }
-            let feedback = self.feedback.next_value();
-            if self.hold.recording() {
-                let input = self.inputs.audio[i];
-                let input = if input.is_finite() { input } else { 0.0 };
-                let level = self.hold.write_level();
-                self.line
-                    .write_and_advance(soft_clip(input + feedback * live) * level);
-                self.hold.recorded();
-            }
-            self.out[i] = self.hold.next(live, &self.line);
-        }
+        self.run(frames);
         true
+    }
+
+    fn feedback_cut(&self) -> Option<FeedbackCut> {
+        Some(FeedbackCut {
+            frames: self.shortest,
+            absorbed: &ABSORBED,
+        })
+    }
+
+    fn emit(&mut self, frames: usize) {
+        self.emit_frames(frames);
+    }
+
+    fn absorb(&mut self, frames: usize) {
+        self.absorb_frames(frames);
     }
 
     fn inputs(&self) -> &[&str] {
@@ -355,7 +383,8 @@ impl Module for Delay {
     fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
         let applied = match (control, value) {
             (TIME, RtValue::F32(time)) => {
-                self.time = time.clamp(0.0, (self.longest / self.sample_rate) as f32);
+                let longest = (self.longest / self.sample_rate) as f32;
+                self.time = time.clamp(self.shortest_time.min(longest), longest);
                 RtValue::F32(self.time)
             }
             (BPM, RtValue::F32(bpm)) => {

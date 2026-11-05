@@ -157,14 +157,15 @@ impl Hold {
     }
 
     /// This sample's output: the delay's own `live` output, the loop, or a
-    /// fade between them.
+    /// fade between them. `line` has yet to record the last `behind`
+    /// samples [`Self::recorded`] counted (see `Delay::emit_frames`).
     #[inline]
-    pub(super) fn next(&mut self, live: f32, line: &DelayLine) -> f32 {
+    pub(super) fn next(&mut self, live: f32, line: &DelayLine, behind: usize) -> f32 {
         if !self.engaged {
             return live;
         }
         let mix = self.mix.next_value();
-        let looped = self.looped(line);
+        let looped = self.looped(line, behind);
         self.position += 1;
         if self.position >= self.length {
             self.position = 0;
@@ -188,18 +189,21 @@ impl Hold {
 
     /// The loop's sample at its position. Offsets count back from the
     /// line's newest sample: the slice's first sample is `length` back
-    /// (plus whatever was recorded since), its last is 1 back.
+    /// (plus whatever was recorded since), its last is 1 back; `behind`
+    /// samples counted are not in the line yet. The loop is at least as
+    /// long as the delay's shortest time, so what it reads always is.
     #[inline]
-    fn looped(&self, line: &DelayLine) -> f32 {
+    fn looped(&self, line: &DelayLine, behind: usize) -> f32 {
         let (length, p) = (self.length, self.position);
-        let sample = line.read(length - p + self.since);
+        let back = (length - p + self.since).saturating_sub(behind);
+        let sample = line.read(back);
         let into_seam = (p + self.seam + 1).saturating_sub(length);
         if into_seam == 0 {
             return sample;
         }
         // Across the seam, fade into the samples just before the slice:
         // the ones that led into its first sample.
-        let before = line.read(2 * length - p + self.since);
+        let before = line.read(back + length);
         let weight = into_seam as f32 / (self.seam + 1) as f32;
         sample + weight * (before - sample)
     }
