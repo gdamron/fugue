@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 30] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 31] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",

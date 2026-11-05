@@ -103,7 +103,7 @@ impl ModuleFactory for GranularFactory {
         let length = reader
             .float(&BUFFER_LENGTH_KEY)?
             .unwrap_or(DEFAULT_BUFFER_LENGTH);
-        if !(length > 0.0) {
+        if length.is_nan() || length <= 0.0 {
             return Err(format!(
                 "granular config 'buffer_length' must be above 0 seconds, got {length}"
             )

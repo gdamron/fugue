@@ -55,6 +55,12 @@ impl Recording {
         self.left.len()
     }
 
+    /// Never: a recording holds at least 4 frames.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.left.is_empty()
+    }
+
     /// Where the next frame will be written; the newest frame is one before.
     #[inline]
     pub fn head(&self) -> usize {
