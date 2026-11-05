@@ -317,6 +317,7 @@ impl Default for ModuleRegistry {
         reg.register(MelodyFactory);
         reg.register(ReverbFactory);
         reg.register(DelayFactory);
+        reg.register(crate::modules::GranularFactory);
         #[cfg(not(target_arch = "wasm32"))]
         reg.register(crate::modules::RtmpSinkFactory);
         #[cfg(not(target_arch = "wasm32"))]

@@ -1,0 +1,63 @@
+{
+  "version": "1.0.0",
+  "title": "Granular Cloud",
+  "description": "A plucked line scattered into a cloud: the granular processor records the melody and replays it as overlapping grains an octave up, spread across the stereo field, under the dry notes.",
+  "modules": [
+    { "id": "clock", "type": "clock", "config": { "bpm": 84.0 } },
+    {
+      "id": "seq",
+      "type": "step_sequencer",
+      "config": {
+        "root_note": 57,
+        "step_count": 8,
+        "gate_length": 0.3,
+        "pattern": [
+          { "note": 0 },
+          { "note": 7 },
+          { "note": 12 },
+          { "note": null },
+          { "note": 3 },
+          { "note": 10 },
+          { "note": 15 },
+          { "note": null }
+        ]
+      }
+    },
+    { "id": "osc", "type": "oscillator", "config": { "waveform": "triangle" } },
+    {
+      "id": "adsr",
+      "type": "adsr",
+      "config": { "attack": 0.004, "decay": 0.3, "sustain": 0.0, "release": 0.2 }
+    },
+    { "id": "vca", "type": "vca" },
+    {
+      "id": "cloud",
+      "type": "granular",
+      "config": {
+        "buffer_length": 4.0,
+        "position": 0.25,
+        "size": 0.6,
+        "pitch": 12.0,
+        "density": 0.85,
+        "texture": 0.65,
+        "spread": 0.8,
+        "seed": 1
+      }
+    },
+    { "id": "mix", "type": "mixer", "config": { "levels": [0.5, 0.5, 0.5], "pans": [0.0, -1.0, 1.0], "master": 0.8 } },
+    { "id": "dac", "type": "dac" }
+  ],
+  "connections": [
+    { "from": "clock", "from_port": "beat_x2", "to": "seq", "to_port": "clock" },
+    { "from": "seq", "from_port": "frequency", "to": "osc", "to_port": "frequency" },
+    { "from": "seq", "from_port": "gate", "to": "adsr", "to_port": "gate" },
+    { "from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio" },
+    { "from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "level" },
+    { "from": "vca", "from_port": "audio", "to": "mix", "to_port": "audio.0" },
+    { "from": "vca", "from_port": "audio", "to": "cloud", "to_port": "audio_left" },
+    { "from": "cloud", "from_port": "audio_left", "to": "mix", "to_port": "audio.1" },
+    { "from": "cloud", "from_port": "audio_right", "to": "mix", "to_port": "audio.2" },
+    { "from": "mix", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
+    { "from": "mix", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
+  ]
+}
