@@ -62,6 +62,11 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 30] = [
         summary: "A plucked line through a dotted-eighth delay timed by the clock.",
     },
     ExampleDefinition {
+        file_name: "granular_cloud.json",
+        title: "Granular Cloud",
+        summary: "A plucked line scattered into a stereo cloud of grains an octave up.",
+    },
+    ExampleDefinition {
         file_name: "drive_bass_and_crushed_bells.json",
         title: "Drive: Bass and Crushed Bells",
         summary: "A bass warmed by asymmetric drive under bit-crushed bells.",
@@ -297,6 +302,7 @@ mod tests {
                 "mixer_voices.json",
                 "noise_surf_and_hats.json",
                 "delay_dotted_echo.json",
+                "granular_cloud.json",
                 "drive_bass_and_crushed_bells.json",
                 "limiter_hot_mix.json",
                 "macro_oscillator_pluck.json",

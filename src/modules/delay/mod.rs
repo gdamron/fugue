@@ -82,7 +82,7 @@ const WHOLE_SAMPLE: f64 = 1.0e-3;
 /// the line records passes through it, so repeats past unity feedback, or
 /// a loop patched around the delay, stay within ±1.
 #[inline]
-fn soft_clip(value: f32) -> f32 {
+pub(crate) fn soft_clip(value: f32) -> f32 {
     let magnitude = value.abs();
     if magnitude <= KNEE {
         return value;

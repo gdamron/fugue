@@ -1,0 +1,195 @@
+use super::*;
+use crate::ModuleRegistry;
+
+const SR: u32 = 48_000;
+
+fn build(config: serde_json::Value) -> Box<dyn Module> {
+    match ModuleRegistry::default()
+        .build(TYPE_ID, SR, &config)
+        .unwrap()
+        .module
+    {
+        GraphModule::Module(module) => module,
+        _ => panic!("granular is a plain module"),
+    }
+}
+
+/// Renders `frames` of `input(n)` into the left input, `gates(n)` into
+/// trigger and clock as patched, with `controls` set first.
+fn render(
+    module: &mut dyn Module,
+    frames: usize,
+    input: impl Fn(usize) -> f32,
+    gate: Option<(usize, &dyn Fn(usize) -> f32)>,
+) -> (Vec<f32>, Vec<f32>) {
+    module.set_input_connected(0, true);
+    if let Some((port, _)) = gate {
+        module.set_input_connected(port, true);
+    }
+    let (mut left, mut right) = (Vec::new(), Vec::new());
+    let mut at = 0;
+    while at < frames {
+        let n = MAX_BLOCK.min(frames - at);
+        for i in 0..n {
+            module.input_block_mut(0)[i] = input(at + i);
+            if let Some((port, gate)) = gate {
+                module.input_block_mut(port)[i] = gate(at + i);
+            }
+        }
+        module.process(n);
+        left.extend_from_slice(&module.output_block(0)[..n]);
+        right.extend_from_slice(&module.output_block(1)[..n]);
+        at += n;
+    }
+    (left, right)
+}
+
+fn sine(n: usize, hz: f32) -> f32 {
+    (std::f32::consts::TAU * hz * n as f32 / SR as f32).sin()
+}
+
+fn largest_step(x: &[f32]) -> f32 {
+    x.windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0, f32::max)
+}
+
+#[test]
+fn full_feedback_on_a_full_scale_input_stays_within_unity() {
+    let mut module = build(serde_json::json!({ "feedback": 1.0, "density": 0.95, "texture": 0.9 }));
+    let (left, right) = render(module.as_mut(), SR as usize * 10, |n| sine(n, 220.0), None);
+    for x in left.iter().chain(&right) {
+        assert!(x.is_finite() && x.abs() <= 1.0);
+    }
+    assert!(left.iter().any(|x| x.abs() > 0.1), "the grains are heard");
+}
+
+#[test]
+fn a_trigger_starts_one_grain_on_its_frame() {
+    // Density in its silent middle: only the trigger starts grains.
+    let mut module =
+        build(serde_json::json!({ "density": 0.5, "texture": 0.0, "size": 0.0, "position": 0.0 }));
+    let edge = 30_000;
+    let trigger = |n: usize| {
+        if (edge..edge + 100).contains(&n) {
+            1.0
+        } else {
+            0.0
+        }
+    };
+    let (left, _) = render(
+        module.as_mut(),
+        40_000,
+        |_| 0.5,
+        Some((TRIGGER_IN, &trigger)),
+    );
+    assert!(left[..=edge].iter().all(|x| *x == 0.0));
+    assert!(left[edge + 1] > 0.0);
+    // One grain of about 32 ms, then silence again.
+    let length = left.iter().rposition(|x| *x != 0.0).unwrap() - edge;
+    assert!((1500..1600).contains(&length), "a grain of {length} frames");
+}
+
+#[test]
+fn synced_grains_fall_on_the_clock_divisions() {
+    // Grains at regular intervals, four to a pulse.
+    let mut module = build(serde_json::json!({
+        "sync": true, "density": 0.2, "texture": 0.0, "size": 0.0, "position": 0.0
+    }));
+    // The first edge comes once there is audio to read.
+    let (first, period) = (2_000, 24_000);
+    let clock = |n: usize| {
+        if n >= first && (n - first) % period < 100 {
+            1.0
+        } else {
+            0.0
+        }
+    };
+    let (left, _) = render(
+        module.as_mut(),
+        first + period * 3,
+        |_| 0.5,
+        Some((CLOCK_IN, &clock)),
+    );
+    let onsets: Vec<usize> = (1..left.len())
+        .filter(|&n| left[n] > 0.0 && left[n - 1] == 0.0)
+        .map(|n| n - 1)
+        .collect();
+    let expected: Vec<usize> = std::iter::once(first)
+        .chain(
+            (1..3).flat_map(|pulse| (0..4).map(move |k| first + pulse * period + k * period / 4)),
+        )
+        .collect();
+    assert_eq!(onsets, expected);
+}
+
+#[test]
+fn freeze_keeps_playing_what_was_recorded() {
+    let config = serde_json::json!({ "density": 0.9, "position": 0.2, "seed": 3 });
+    let freeze_at = SR as usize;
+    let render_with = |input: fn(usize) -> f32| {
+        let mut module = build(config.clone());
+        let (head, _) = render(module.as_mut(), freeze_at, |n| sine(n, 330.0), None);
+        module.set_control("freeze", 1.0).unwrap();
+        let (tail, _) = render(module.as_mut(), SR as usize, input, None);
+        (head, tail)
+    };
+    let (_, silent) = render_with(|_| 0.0);
+    let (_, loud) = render_with(|n| sine(n, 1234.0));
+    assert_eq!(silent, loud, "nothing recorded after the freeze is heard");
+    assert!(
+        silent.iter().any(|x| x.abs() > 0.1),
+        "the frozen buffer plays"
+    );
+}
+
+#[test]
+fn freezing_and_unfreezing_do_not_click() {
+    // Regular grains with a smooth window, over a low sine.
+    let config = serde_json::json!({ "density": 0.1, "texture": 0.75, "position": 0.0 });
+    let mut module = build(config);
+    let input = |n: usize| 0.5 * sine(n, 110.0);
+    let (steady, _) = render(module.as_mut(), SR as usize * 2, input, None);
+    let steady = largest_step(&steady[SR as usize..]);
+    module.set_control("freeze", 1.0).unwrap();
+    let (frozen, _) = render(module.as_mut(), SR as usize, input, None);
+    module.set_control("freeze", 0.0).unwrap();
+    let (thawed, _) = render(module.as_mut(), SR as usize, input, None);
+    assert!(largest_step(&frozen) <= 1.5 * steady);
+    assert!(largest_step(&thawed) <= 1.5 * steady);
+}
+
+#[test]
+fn the_same_seed_renders_the_same_grains() {
+    let config = serde_json::json!({ "density": 0.9, "spread": 1.0, "seed": 7 });
+    let once = render(
+        build(config.clone()).as_mut(),
+        20_000,
+        |n| sine(n, 440.0),
+        None,
+    );
+    let twice = render(build(config).as_mut(), 20_000, |n| sine(n, 440.0), None);
+    assert_eq!(once, twice);
+}
+
+#[test]
+fn the_buffer_length_is_refused_at_zero_and_held_to_a_minute() {
+    let registry = ModuleRegistry::default();
+    assert!(registry
+        .build(TYPE_ID, SR, &serde_json::json!({ "buffer_length": 0.0 }))
+        .is_err());
+    assert!(registry
+        .build(
+            TYPE_ID,
+            SR,
+            &serde_json::json!({ "buffer_length": f32::MAX })
+        )
+        .is_ok());
+}
+
+#[test]
+fn density_reach_picks_the_clock_divisions() {
+    assert_eq!(divisions(0.0), 1);
+    assert_eq!(divisions(0.5), 4);
+    assert_eq!(divisions(1.0), 8);
+}
