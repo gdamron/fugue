@@ -15,6 +15,18 @@ const RATIO: f32 = 1.5;
 /// Absolute slack: -120 dBFS.
 const SLACK: f32 = 1e-6;
 
+/// Blocks rendered between the strike and the first captured block. A damping
+/// sweep starts right after the strike (at damping 0 the voice rings only
+/// ~70 ms), so it is always made while the voice rings; the other keys wait
+/// until the attack has passed.
+fn settle_blocks(key: &str) -> usize {
+    if key == "damping" {
+        0
+    } else {
+        40
+    }
+}
+
 /// Strikes a voice at 220 Hz with `key` at `from`, then moves `key` to `to`
 /// within 50 ms: as ten per-block writes along a ramp, or (`jump`) as one
 /// write of the end value. Captures `BLOCKS` blocks of all three outputs
@@ -25,7 +37,7 @@ fn sweep(position: usize, key: &str, from: f32, to: f32, jump: bool, model: &str
     r.set(key, from);
     r.render(seconds(0.3));
     r.strike();
-    r.render_blocks(40 * HOST, HOST);
+    r.render_blocks(settle_blocks(key) * HOST, HOST);
     let mut out = Rendered::default();
     for block in 0..BLOCKS {
         if block >= START {
@@ -47,6 +59,15 @@ fn sweep(position: usize, key: &str, from: f32, to: f32, jump: bool, model: &str
         peak(&out.audio) > 1e-3,
         "{model}: silent during the sweep of {key}"
     );
+    if key == "damping" {
+        // The voice must still be ringing through the sweep, not just at the
+        // strike: the first block with a damping write and the one after.
+        let sweeping = &out.audio[START * HOST..(START + 2) * HOST];
+        assert!(
+            peak(sweeping) > 1e-2,
+            "{model}: not ringing during the sweep of {key} {from}->{to}"
+        );
+    }
     for (name, x) in out.each() {
         for k in 1..BLOCKS {
             let edge = k * HOST;
@@ -92,7 +113,8 @@ fn fast_structure_and_brightness_sweeps_have_no_block_edge_steps() {
 /// Criterion (INTERFACE.md: "Each write glides (smoothed)"): the same for
 /// `position` and `damping`.
 /// Assumption: these two are held to the same bound as `structure` and
-/// `brightness`.
+/// `brightness`. The `damping` sweeps start right after the strike so the
+/// voice is ringing throughout (checked).
 #[test]
 fn fast_position_and_damping_sweeps_have_no_block_edge_steps() {
     sweep_every_model(&["position", "damping"]);
