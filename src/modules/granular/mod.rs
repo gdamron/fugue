@@ -48,8 +48,8 @@ use crate::traits::ControlMeta;
 use crate::{Module, MAX_BLOCK};
 
 use self::controls::{
-    divisions, DENSITY, FEEDBACK, FREEZE, MODE, MOST_PITCH, PITCH, POSITION, SIZE, SPREAD, SYNC,
-    TABLE, TEXTURE,
+    divisions, DENSITY, FEEDBACK, FREEZE, GLIDE, LONGEST_GLIDE, MODE, MOST_PITCH, PITCH, POSITION,
+    SIZE, SPREAD, SYNC, TABLE, TEXTURE,
 };
 use self::playback::{Frame, Mode, Playback};
 
@@ -151,6 +151,8 @@ impl ModuleFactory for GranularFactory {
 ///   and a soft limit; it fades out while frozen
 /// - `sync`: grains start on `clock` divisions instead of by `density`
 ///   alone
+/// - `glide`: looping delay only, seconds a moved `position` takes to
+///   slide to its new delay, tape-style (0, the default, crossfades)
 ///
 /// # Config
 /// - `buffer_length`: seconds recorded (default 4; above 0, held to 60),
@@ -442,6 +444,11 @@ impl Module for Granular {
             (SYNC, RtValue::Bool(on)) => {
                 self.sync = on;
                 value
+            }
+            (GLIDE, RtValue::F32(x)) => {
+                let seconds = x.clamp(0.0, LONGEST_GLIDE);
+                self.playback.set_glide(seconds);
+                RtValue::F32(seconds)
             }
             _ => return Err(Refusal::Unsupported),
         };

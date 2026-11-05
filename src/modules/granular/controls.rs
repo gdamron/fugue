@@ -12,6 +12,10 @@ pub(super) const FREEZE: ControlIndex = ControlIndex(6);
 pub(super) const SPREAD: ControlIndex = ControlIndex(7);
 pub(super) const FEEDBACK: ControlIndex = ControlIndex(8);
 pub(super) const SYNC: ControlIndex = ControlIndex(9);
+pub(super) const GLIDE: ControlIndex = ControlIndex(10);
+
+/// The longest `glide`, in seconds.
+pub(super) const LONGEST_GLIDE: f32 = 2.0;
 
 /// The furthest `pitch` transposes, in semitones either way.
 pub(super) const MOST_PITCH: f32 = 24.0;
@@ -92,6 +96,18 @@ const DECLS: &[ControlDecl] = &[
         RtValue::Bool(false),
         "While the clock input is patched: granular grains start only on clock divisions (1 to 8 per pulse, set by density); the looping delay's delay and loop follow the clock's period",
     ),
+    ControlDecl::new(
+        "glide",
+        DeclKind::Number {
+            min: 0.0,
+            max: LONGEST_GLIDE,
+        },
+        RtValue::F32(0.0),
+        "Looping delay, while recording: how long a moved position takes to slide to its new delay, bending pitch on the way as tape does; 0 jumps there with a short crossfade. A leap beyond a quarter of the buffer (or a second) still crossfades",
+    )
+    .unit("s")
+    .precision(3)
+    .clamped(0.0, LONGEST_GLIDE),
 ];
 
 pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);
