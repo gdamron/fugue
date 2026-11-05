@@ -1,0 +1,43 @@
+{
+  "version": "1.0.0",
+  "title": "Resonator Sympathetic Halo",
+  "description": "Slow struck notes on a resonator's sympathetic strings: each note wakes a halo of strings tuned in fifths and octaves around it, which hum on and beat gently after the note itself fades.",
+  "modules": [
+    { "id": "clock", "type": "clock", "config": { "bpm": 60.0 } },
+    {
+      "id": "seq",
+      "type": "step_sequencer",
+      "config": {
+        "root_note": 50,
+        "step_count": 4,
+        "gate_length": 0.1,
+        "pattern": [
+          { "note": 0 },
+          { "note": 5 },
+          { "note": -2 },
+          { "note": 3 }
+        ]
+      }
+    },
+    {
+      "id": "halo",
+      "type": "resonator",
+      "config": {
+        "model": "sympathetic_strings",
+        "structure": 0.45,
+        "brightness": 0.55,
+        "damping": 0.7,
+        "position": 0.35,
+        "polyphony": 2,
+        "level": 0.8
+      }
+    },
+    { "id": "dac", "type": "dac" }
+  ],
+  "connections": [
+    { "from": "clock", "from_port": "beat", "to": "seq", "to_port": "clock" },
+    { "from": "seq", "from_port": "frequency", "to": "halo", "to_port": "frequency" },
+    { "from": "seq", "from_port": "gate", "to": "halo", "to_port": "strum" },
+    { "from": "halo", "from_port": "audio", "to": "dac", "to_port": "audio" }
+  ]
+}

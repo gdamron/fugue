@@ -1,0 +1,47 @@
+{
+  "version": "1.0.0",
+  "title": "Resonator String Pluck",
+  "description": "A plucked bass-and-treble line on a resonator's string model, made slightly stiff so the upper partials stretch like a piano wire; two voices let each pluck ring under the next.",
+  "modules": [
+    { "id": "clock", "type": "clock", "config": { "bpm": 100.0 } },
+    {
+      "id": "seq",
+      "type": "step_sequencer",
+      "config": {
+        "root_note": 45,
+        "step_count": 8,
+        "gate_length": 0.3,
+        "pattern": [
+          { "note": 0 },
+          { "note": 12 },
+          { "note": 7 },
+          { "note": 15 },
+          { "note": 3 },
+          { "note": 12 },
+          { "note": 10 },
+          { "note": 19 }
+        ]
+      }
+    },
+    {
+      "id": "string",
+      "type": "resonator",
+      "config": {
+        "model": "string",
+        "structure": 0.4,
+        "brightness": 0.5,
+        "damping": 0.55,
+        "position": 0.15,
+        "polyphony": 2,
+        "level": 0.8
+      }
+    },
+    { "id": "dac", "type": "dac" }
+  ],
+  "connections": [
+    { "from": "clock", "from_port": "beat_x2", "to": "seq", "to_port": "clock" },
+    { "from": "seq", "from_port": "frequency", "to": "string", "to_port": "frequency" },
+    { "from": "seq", "from_port": "gate", "to": "string", "to_port": "strum" },
+    { "from": "string", "from_port": "audio", "to": "dac", "to_port": "audio" }
+  ]
+}

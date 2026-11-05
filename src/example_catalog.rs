@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 28] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 30] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -115,6 +115,16 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 28] = [
         file_name: "resonator_modal_bells.json",
         title: "Resonator Modal Bells",
         summary: "Struck bell-like modal bodies, four voices ringing on under each other.",
+    },
+    ExampleDefinition {
+        file_name: "resonator_sympathetic_halo.json",
+        title: "Resonator Sympathetic Halo",
+        summary: "Slow notes that wake a halo of sympathetic strings in fifths and octaves.",
+    },
+    ExampleDefinition {
+        file_name: "resonator_string_pluck.json",
+        title: "Resonator String Pluck",
+        summary: "A plucked, slightly stiff string line from the resonator's string model.",
     },
     ExampleDefinition {
         file_name: "step_sequencer.json",
@@ -298,6 +308,8 @@ mod tests {
                 "macro_oscillator_vowel_chant.json",
                 "contour_rolling_filters.json",
                 "resonator_modal_bells.json",
+                "resonator_sympathetic_halo.json",
+                "resonator_string_pluck.json",
                 "step_sequencer.json",
                 "chance_groove.json",
                 "drum_map.json",
