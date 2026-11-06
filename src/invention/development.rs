@@ -131,8 +131,12 @@ impl ModuleFactory for DevelopmentFactory {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let (module, control_surface) = starting_values::build_started(self, sample_rate, config)?;
-        apply_development_config(&self.name, config, control_surface.as_ref())?;
+        // A definition starting a ranged control outside its range starts
+        // it within, as a configured value outside it would.
+        let started = starting_values::with_held_starts(self, sample_rate, config)?;
+        let (module, control_surface) =
+            starting_values::build_started(self, sample_rate, &started)?;
+        apply_development_config(&self.name, &started, control_surface.as_ref())?;
         #[cfg(debug_assertions)]
         if let Some(controls) = &module.controls {
             let keys = self.config_keys();

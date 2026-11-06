@@ -10,6 +10,7 @@
 //! sound such a write made: the modules are built at their starting values,
 //! and the writes after the build find them already there.
 
+use std::borrow::Cow;
 use std::error::Error;
 
 use serde_json::Value;
@@ -18,7 +19,7 @@ use super::{ranges, DevelopmentFactory, DevelopmentModule, InventionBuilder};
 use crate::invention::authored_document;
 use crate::invention::runtime::ControlSurfaceInstance;
 use crate::traits::exact_number::json_scalar;
-use crate::{Invention, ModuleRegistry};
+use crate::{ControlValue, Invention, ModuleRegistry};
 
 /// Builds `factory`'s development with its inner modules at the starting
 /// values in `config`. An event (a key an alias fires) is no value to start
@@ -32,18 +33,10 @@ pub(super) fn build_started(
     sample_rate: u32,
     config: &Value,
 ) -> Result<(DevelopmentModule, ControlSurfaceInstance), Box<dyn Error>> {
-    let assemble = |definition: Invention| {
-        let builder = InventionBuilder::with_registry_and_registered(
-            sample_rate,
-            factory.registry.clone(),
-            factory.registered.clone(),
-            factory.loaded.clone(),
-        );
-        let (runtime, _handles) = builder.build(definition)?;
-        DevelopmentModule::new(&factory.name, runtime, &factory.definition)
-    };
+    let assemble = |definition: Invention| assemble(factory, sample_rate, definition);
     let (definition, registry) = (&factory.definition, &factory.registry);
-    let Some(started) = with_starting_values(definition, config, registry, &[]) else {
+    let Some(started) = with_starting_values(&factory.name, definition, config, registry, &[])
+    else {
         return assemble(definition.clone());
     };
     let Ok((module, surface)) = assemble(started) else {
@@ -60,10 +53,72 @@ pub(super) fn build_started(
     if events.is_empty() {
         return Ok((module, surface));
     }
-    let without = with_starting_values(definition, config, registry, &events);
+    let without = with_starting_values(&factory.name, definition, config, registry, &events);
     without
         .and_then(|started| assemble(started).ok())
         .map_or_else(|| assemble(definition.clone()), Ok)
+}
+
+/// `factory`'s development built from `definition`, one of its own.
+fn assemble(
+    factory: &DevelopmentFactory,
+    sample_rate: u32,
+    definition: Invention,
+) -> Result<(DevelopmentModule, ControlSurfaceInstance), Box<dyn Error>> {
+    let builder = InventionBuilder::with_registry_and_registered(
+        sample_rate,
+        factory.registry.clone(),
+        factory.registered.clone(),
+        factory.loaded.clone(),
+    );
+    let (runtime, _handles) = builder.build(definition)?;
+    DevelopmentModule::new(&factory.name, runtime, &factory.definition)
+}
+
+/// An instance's `config` with a starting value for each control that
+/// declares a range its definition starts it outside (a value config
+/// leaves out): that start, held within the range, as a configured one
+/// is. `config` as is when no such control exists, which takes no build
+/// for a development declaring no range.
+pub(super) fn with_held_starts<'a>(
+    factory: &DevelopmentFactory,
+    sample_rate: u32,
+    config: &'a Value,
+) -> Result<Cow<'a, Value>, Box<dyn Error>> {
+    let definition = &factory.definition;
+    let ranged: Vec<(&str, (f32, f32))> = (definition.controls.iter())
+        .filter(|control| config.get(&control.name).is_none())
+        .filter_map(|control| {
+            let range = ranges::declared(&factory.name, definition, &control.name);
+            Some((control.name.as_str(), range.ok().flatten()?))
+        })
+        .collect();
+    let empty = serde_json::Map::new();
+    let configured = match config {
+        Value::Null => &empty,
+        Value::Object(map) => map,
+        _ => return Ok(Cow::Borrowed(config)),
+    };
+    if ranged.is_empty() {
+        return Ok(Cow::Borrowed(config));
+    }
+    let (_, surface) = assemble(factory, sample_rate, definition.clone())?;
+    let mut held = configured.clone();
+    for (name, range) in ranged {
+        if let Ok(ControlValue::Number(start)) = surface.get_control(name) {
+            if let ControlValue::Number(within) =
+                ranges::held(ControlValue::Number(start), Some(range))
+            {
+                if within != start {
+                    held.insert(name.to_string(), Value::from(f64::from(within)));
+                }
+            }
+        }
+    }
+    Ok(match held.len() == configured.len() {
+        true => Cow::Borrowed(config),
+        false => Cow::Owned(Value::Object(held)),
+    })
 }
 
 /// `definition` with each scalar value of an instance's `config`, but those
@@ -71,6 +126,7 @@ pub(super) fn build_started(
 /// control reaches, under that control's key; or `None` when no value
 /// reaches one.
 fn with_starting_values(
+    development: &str,
     definition: &Invention,
     config: &Value,
     registry: &ModuleRegistry,
@@ -86,10 +142,11 @@ fn with_starting_values(
         let Some(value) = json_scalar(value) else {
             continue;
         };
-        // Held within the range its control declares, as a write to it is.
-        // A range the build refuses is reported by the build, so the name
-        // its error would carry is not needed here.
-        let range = ranges::declared("", definition, name).ok().flatten();
+        // Held within the range its control declares, as a write to it is;
+        // a range the build refuses is reported by the build.
+        let range = ranges::declared(development, definition, name)
+            .ok()
+            .flatten();
         let value = ranges::held(value, range);
         for alias in definition
             .controls

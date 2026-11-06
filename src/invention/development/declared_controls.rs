@@ -183,8 +183,7 @@ impl DevelopmentControls {
             let range = ranges::declared(development, definition, &control.name)?;
             if let Some(range) = range {
                 let alias = format!("{}.{}", control.module, control.control);
-                ranges::check(development, &control.name, range, &alias, found.decl.kind)?;
-                ranges::check_start(development, &control.name, range, &alias, found.current)?;
+                ranges::check(development, &control.name, range, &alias, &found.decl)?;
             }
             let module = *module_indexes
                 .get(&control.module)
@@ -211,6 +210,13 @@ impl DevelopmentControls {
                             _ if range.is_some() => range,
                             DeclKind::Integer { .. } => found.decl.clamp,
                             _ => None,
+                        },
+                        // Its declared default, held within its range.
+                        default: match (range, found.decl.default) {
+                            (Some((min, max)), RtValue::F32(number)) => {
+                                RtValue::F32(number.max(min).min(max))
+                            }
+                            (_, default) => default,
                         },
                         // A key lists itself, whatever count its alias's
                         // module lists it below.

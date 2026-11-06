@@ -75,16 +75,52 @@ fn a_nesting_development_narrows_a_nested_range_and_may_not_widen_it() {
     assert!(error.contains("outer") && error.contains("0.1") && error.contains("0.2"));
 }
 
+/// A main graph holding one instance of `definition`, as `kit`, with
+/// `config`.
+fn holding(definition: &Invention, config: serde_json::Value) -> Invention {
+    serde_json::from_value(json!({
+        "version": "1.0.0",
+        "developments": [{ "name": "kit", "definition": definition }],
+        "modules": [{ "id": "k", "type": "kit", "config": config }],
+        "connections": []
+    }))
+    .unwrap()
+}
+
 #[test]
-fn a_definition_starting_a_ranged_control_outside_its_range_is_refused() {
+fn a_definition_starting_a_ranged_control_outside_its_range_starts_within_it() {
     let mut definition = dial_development(json!({ "min": 0.5, "max": 0.75 }));
     definition.modules[0].config = json!({ "level": 0.25 });
-    let (runtime, _) = InventionBuilder::with_registry(48_000, registry())
-        .build(definition.clone())
-        .unwrap();
-    let error = DevelopmentModule::new("one", runtime, &definition)
+    let build = |config| {
+        let invention = holding(&definition, config);
+        InventionBuilder::with_registry(48_000, registry()).build(invention)
+    };
+    let (runtime, _) = build(json!({})).unwrap();
+    let kit = runtime.control_surfaces.lock().unwrap()["k"].clone();
+    assert_eq!(kit.get_control("level"), Ok(ControlValue::Number(0.5)));
+    let listed = kit.controls();
+    assert_eq!(listed[0].default, ControlValue::Number(0.5));
+    // A configured value still wins over the definition's start.
+    let (runtime, _) = build(json!({ "level": 0.7 })).unwrap();
+    let kit = runtime.control_surfaces.lock().unwrap()["k"].clone();
+    assert_eq!(kit.get_control("level"), Ok(ControlValue::Number(0.7)));
+}
+
+#[test]
+fn a_range_on_a_control_that_is_not_a_number_is_refused() {
+    let definition: Invention = serde_json::from_value(json!({
+        "version": "1.0.0",
+        "modules": [{ "id": "a", "type": "dial" }],
+        "connections": [],
+        "outputs": [{ "name": "a", "from": "a", "from_port": "out" }],
+        "controls": [{ "name": "steps", "module": "a", "control": "steps",
+                       "range": { "min": 2, "max": 4 } }]
+    }))
+    .unwrap();
+    let error = InventionBuilder::with_registry(48_000, registry())
+        .build(holding(&definition, json!({})))
         .err()
-        .unwrap();
-    let error = error.to_string();
-    assert!(error.contains("'one'") && error.contains("0.25") && error.contains("0.5"));
+        .unwrap()
+        .to_string();
+    assert!(error.contains("'kit'") && error.contains("'steps'") && error.contains("a.steps"));
 }

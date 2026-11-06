@@ -8,7 +8,7 @@
 //! range must lie within each inner control the name reaches, so no alias
 //! is asked to hold a value its own range refuses.
 
-use crate::control_request::{DeclKind, RtValue};
+use crate::control_request::{ControlDecl, DeclKind};
 use crate::{ControlKind, ControlValue, Invention};
 
 /// The range `definition`, the development `development`, declares for its
@@ -37,20 +37,22 @@ pub(super) fn declared(
 }
 
 /// Refuses `range`, declared for exposed control `name` of `development`,
-/// unless it narrows `alias`, an inner control of kind `kind`: a number
-/// control whose own range holds it, from a finite min up to a finite max.
+/// unless it narrows `alias`, the inner control `decl` declares: a number
+/// control whose own range holds it, from a finite min up to a finite max,
+/// whole numbers for a control held whole (so what it reads back is what
+/// it plays).
 pub(super) fn check(
     development: &str,
     name: &str,
     (min, max): (f32, f32),
     alias: &str,
-    kind: DeclKind,
+    decl: &ControlDecl,
 ) -> Result<(), String> {
     let prefix = format!("Development '{development}' control '{name}'");
     let DeclKind::Number {
         min: own_min,
         max: own_max,
-    } = kind
+    } = decl.kind
     else {
         return Err(format!(
             "{prefix}: a range ({min} to {max}) narrows only a number control, and '{alias}' \
@@ -63,6 +65,12 @@ pub(super) fn check(
              (the range of '{alias}' is {own_min} to {own_max})"
         ));
     }
+    if decl.whole && (min.fract() != 0.0 || max.fract() != 0.0) {
+        return Err(format!(
+            "{prefix}: range {min} to {max} must run between whole numbers, since \
+             '{alias}' holds whole numbers (its range is {own_min} to {own_max})"
+        ));
+    }
     if min < own_min || max > own_max {
         return Err(format!(
             "{prefix}: range {min} to {max} lies outside the range of '{alias}', \
@@ -70,26 +78,6 @@ pub(super) fn check(
         ));
     }
     Ok(())
-}
-
-/// Refuses `range`, declared for exposed control `name` of `development`,
-/// when the value its alias `alias` starts at (`current`, from the
-/// definition or the instance's config) lies outside it: a definition
-/// starting a control where its own range forbids is written wrongly.
-pub(super) fn check_start(
-    development: &str,
-    name: &str,
-    (min, max): (f32, f32),
-    alias: &str,
-    current: RtValue,
-) -> Result<(), String> {
-    match current {
-        RtValue::F32(value) if !(min..=max).contains(&value) => Err(format!(
-            "Development '{development}' control '{name}': '{alias}' starts at {value}, \
-             outside its range {min} to {max}"
-        )),
-        _ => Ok(()),
-    }
 }
 
 /// Why `range`, declared for exposed control `name` of `development`, is

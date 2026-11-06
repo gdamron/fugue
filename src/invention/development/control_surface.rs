@@ -75,15 +75,13 @@ impl DevelopmentControlSurface {
                     )
                 })?;
 
+            let range = super::ranges::declared(name, definition, &control.name)?;
             controls.push(AliasedControl {
                 meta: ControlMeta {
                     key: control.name.clone(),
                     description: source.description,
-                    default: source.default,
-                    kind: super::ranges::listed(
-                        source.kind,
-                        super::ranges::declared(name, definition, &control.name)?,
-                    ),
+                    default: super::ranges::held(source.default, range),
+                    kind: super::ranges::listed(source.kind, range),
                 },
                 module_id: control.module.clone(),
                 key: control.control.clone(),
