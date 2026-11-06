@@ -32,7 +32,7 @@
         "scale": "dorian",
         "harmonics": 0.62,
         "timbre": 0.5,
-        "morph": 0.55,
+        "morph": 0.256,
         "decay": 3.0,
         "level": 0.8
       }

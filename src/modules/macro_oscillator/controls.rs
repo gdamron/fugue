@@ -71,7 +71,7 @@ const DECLS: &[ControlDecl] = &[
     ),
     macro_control(
         "morph",
-        "Waveform morph; virtual analog: saw to triangle; waveshaping: triangle to saw; fm: feedback (below 0.5 rough, above noisy); grain_formant: grain window; additive: narrows the spectral peak; chords: organ registration, bright to hollow; speech: vowel; wavetable: the bank's second axis of waves",
+        "Waveform morph; virtual analog: saw to triangle; waveshaping: triangle to saw; fm: feedback (below 0.5 rough, above noisy); grain_formant: grain window; additive: narrows the spectral peak; chords: organ registrations, bright to hollow, to about 0.47, then the notes turn one by one to wavetable voices that scan soft to bright; speech: vowel; wavetable: the bank's second axis of waves",
     ),
     ControlDecl::new(
         "level",
