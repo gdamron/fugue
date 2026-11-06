@@ -318,6 +318,7 @@ fn a_mixed_development_write_the_queue_cannot_take_changes_no_alias() {
         registry: rig.registry.clone(),
         registered: Arc::default(),
         loaded: Arc::default(),
+        held_starts: Default::default(),
     };
     rig.registry
         .register_boxed("mixed".to_string(), Arc::new(factory));

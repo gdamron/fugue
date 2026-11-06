@@ -19,7 +19,7 @@ use super::{ranges, DevelopmentFactory, DevelopmentModule, InventionBuilder};
 use crate::invention::authored_document;
 use crate::invention::runtime::ControlSurfaceInstance;
 use crate::traits::exact_number::json_scalar;
-use crate::{ControlValue, Invention, ModuleRegistry};
+use crate::{Invention, ModuleRegistry};
 
 /// Builds `factory`'s development with its inner modules at the starting
 /// values in `config`. An event (a key an alias fires) is no value to start
@@ -76,49 +76,78 @@ fn assemble(
 }
 
 /// An instance's `config` with a starting value for each control that
-/// declares a range its definition starts it outside (a value config
-/// leaves out): that start, held within the range, as a configured one
-/// is. `config` as is when no such control exists, which takes no build
-/// for a development declaring no range.
+/// declares a range its definition starts any of its aliases outside, and
+/// that config gives no scalar value: the first alias's start, held within
+/// the range, as a configured value is (written to every alias, as a
+/// configured one is). `config` as is when there is none.
 pub(super) fn with_held_starts<'a>(
     factory: &DevelopmentFactory,
     sample_rate: u32,
     config: &'a Value,
-) -> Result<Cow<'a, Value>, Box<dyn Error>> {
-    let definition = &factory.definition;
-    let ranged: Vec<(&str, (f32, f32))> = (definition.controls.iter())
-        .filter(|control| config.get(&control.name).is_none())
-        .filter_map(|control| {
-            let range = ranges::declared(&factory.name, definition, &control.name);
-            Some((control.name.as_str(), range.ok().flatten()?))
-        })
-        .collect();
+) -> Cow<'a, Value> {
     let empty = serde_json::Map::new();
     let configured = match config {
         Value::Null => &empty,
         Value::Object(map) => map,
-        _ => return Ok(Cow::Borrowed(config)),
+        _ => return Cow::Borrowed(config),
     };
-    if ranged.is_empty() {
-        return Ok(Cow::Borrowed(config));
+    let held = (factory.held_starts).get_or_init(|| held_starts(factory, sample_rate));
+    let mut missing = (held.iter())
+        .filter(|(name, _)| configured.get(name).and_then(json_scalar).is_none())
+        .peekable();
+    if missing.peek().is_none() {
+        return Cow::Borrowed(config);
     }
-    let (_, surface) = assemble(factory, sample_rate, definition.clone())?;
-    let mut held = configured.clone();
-    for (name, range) in ranged {
-        if let Ok(ControlValue::Number(start)) = surface.get_control(name) {
-            if let ControlValue::Number(within) =
-                ranges::held(ControlValue::Number(start), Some(range))
-            {
-                if within != start {
-                    held.insert(name.to_string(), Value::from(f64::from(within)));
-                }
+    let mut with_held = configured.clone();
+    for (name, start) in missing {
+        with_held.insert(name.clone(), Value::from(f64::from(*start)));
+    }
+    Cow::Owned(Value::Object(with_held))
+}
+
+/// Each control `factory`'s definition declares a range for and starts an
+/// alias of outside it, with its first alias's start held within it. Builds
+/// the definition only when it declares a range; a definition that fails to
+/// build has nothing held, and its build reports why.
+fn held_starts(factory: &DevelopmentFactory, sample_rate: u32) -> Vec<(String, f32)> {
+    let definition = &factory.definition;
+    let mut ranged: Vec<(&str, (f32, f32))> = Vec::new();
+    for control in &definition.controls {
+        let range = ranges::declared(&factory.name, definition, &control.name);
+        if let Ok(Some(range)) = range {
+            if !ranged.iter().any(|(name, _)| *name == control.name) {
+                ranged.push((&control.name, range));
             }
         }
     }
-    Ok(match held.len() == configured.len() {
-        true => Cow::Borrowed(config),
-        false => Cow::Owned(Value::Object(held)),
-    })
+    if ranged.is_empty() {
+        return Vec::new();
+    }
+    let builder = InventionBuilder::with_registry_and_registered(
+        sample_rate,
+        factory.registry.clone(),
+        factory.registered.clone(),
+        factory.loaded.clone(),
+    );
+    let Ok((runtime, _handles)) = builder.build(definition.clone()) else {
+        return Vec::new();
+    };
+    let surfaces = runtime.control_surfaces.lock().unwrap().clone();
+    let mut held = Vec::new();
+    for (name, (min, max)) in ranged {
+        let starts: Vec<f32> = (definition.controls.iter())
+            .filter(|control| control.name == name)
+            .filter_map(|control| {
+                let start = surfaces.get(&control.module)?.get_control(&control.control);
+                start.ok()?.as_number().ok()
+            })
+            .collect();
+        let outside = starts.iter().any(|start| !(min..=max).contains(start));
+        if let (true, Some(first)) = (outside, starts.first()) {
+            held.push((name.to_string(), first.max(min).min(max)));
+        }
+    }
+    held
 }
 
 /// `definition` with each scalar value of an instance's `config`, but those

@@ -124,3 +124,41 @@ fn a_range_on_a_control_that_is_not_a_number_is_refused() {
         .to_string();
     assert!(error.contains("'kit'") && error.contains("'steps'") && error.contains("a.steps"));
 }
+
+#[test]
+fn a_fan_out_whose_later_alias_starts_outside_its_range_starts_every_alias_within() {
+    let definition: Invention = serde_json::from_value(json!({
+        "version": "1.0.0",
+        "modules": [
+            { "id": "a", "type": "lfo", "config": { "rate": 2.0 } },
+            { "id": "b", "type": "lfo", "config": { "rate": 50.0 } }
+        ],
+        "connections": [],
+        "outputs": [{ "name": "a", "from": "a", "from_port": "bipolar" }],
+        "controls": [
+            { "name": "rate", "module": "a", "control": "rate",
+              "range": { "min": 0.05, "max": 10.0 } },
+            { "name": "rate", "module": "b", "control": "rate" }
+        ]
+    }))
+    .unwrap();
+    for config in [json!({}), json!({ "rate": null })] {
+        let (runtime, _) = InventionBuilder::with_registry(48_000, registry())
+            .build(holding(&definition, config))
+            .unwrap();
+        let module = &runtime.modules["k"];
+        let mut values = Vec::new();
+        module
+            .module()
+            .for_each_alias(ControlIndex(0), &mut |table, cells, index| {
+                values.push(table.value(index, cells.load(index).unwrap()));
+            });
+        assert_eq!(
+            values,
+            vec![
+                Some(ControlValue::Number(2.0)),
+                Some(ControlValue::Number(2.0))
+            ]
+        );
+    }
+}

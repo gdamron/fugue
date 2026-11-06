@@ -11,7 +11,7 @@ use crate::{
 use indexmap::IndexMap;
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use super::builder::InventionBuilder;
 use super::reload::LoadedDevelopments;
@@ -75,6 +75,11 @@ pub(crate) struct DevelopmentFactory {
     /// The developments `definition` declares, as loaded with the outermost
     /// document: nested developments build from these, never from disk again.
     pub(crate) loaded: Arc<LoadedDevelopments>,
+    /// Each ranged control `definition` starts outside its range, with the
+    /// value it starts at instead (see `starting_values::with_held_starts`):
+    /// found once, by building the definition, and shared by the factories
+    /// rebuilt from this one.
+    pub(crate) held_starts: Arc<OnceLock<Vec<(String, f32)>>>,
 }
 
 impl DevelopmentFactory {
@@ -90,6 +95,7 @@ impl DevelopmentFactory {
             registry,
             registered: Arc::new(Mutex::new(registered)),
             loaded: self.loaded.clone(),
+            held_starts: self.held_starts.clone(),
         }
     }
 }
@@ -133,7 +139,7 @@ impl ModuleFactory for DevelopmentFactory {
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         // A definition starting a ranged control outside its range starts
         // it within, as a configured value outside it would.
-        let started = starting_values::with_held_starts(self, sample_rate, config)?;
+        let started = starting_values::with_held_starts(self, sample_rate, config);
         let (module, control_surface) =
             starting_values::build_started(self, sample_rate, &started)?;
         apply_development_config(&self.name, &started, control_surface.as_ref())?;

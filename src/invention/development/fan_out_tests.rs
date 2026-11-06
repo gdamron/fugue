@@ -39,6 +39,7 @@ fn factory(a: &str, controls: serde_json::Value) -> DevelopmentFactory {
         registry,
         registered: Arc::new(Mutex::new(HashSet::new())),
         loaded: Arc::new(LoadedDevelopments::default()),
+        held_starts: Default::default(),
     }
 }
 

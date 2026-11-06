@@ -414,6 +414,7 @@ impl InventionBuilder {
                 registry: self.registry.clone(),
                 registered: self.registered.clone(),
                 loaded: scope,
+                held_starts: Default::default(),
             };
             self.registry.register_boxed(
                 development.name.clone(),
