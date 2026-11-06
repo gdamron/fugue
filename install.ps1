@@ -1,7 +1,7 @@
 param(
   [string]$FugueBinDir = $(if ($env:FUGUE_BIN_DIR) { $env:FUGUE_BIN_DIR } else { Join-Path $HOME ".fugue\bin" }),
-  [string]$FugueDocDir = $(if ($env:FUGUE_DOC_DIR) { $env:FUGUE_DOC_DIR } else { Join-Path $HOME ".fugue\share\doc" }),
-  [string]$FugueVersion = $(if ($env:FUGUE_VERSION) { $env:FUGUE_VERSION } else { "latest" })
+  [string]$FugueVersion = $(if ($env:FUGUE_VERSION) { $env:FUGUE_VERSION } else { "latest" }),
+  [string]$FugueDocDir = $(if ($env:FUGUE_DOC_DIR) { $env:FUGUE_DOC_DIR } else { Join-Path $HOME ".fugue\share\doc" })
 )
 
 $ErrorActionPreference = "Stop"
