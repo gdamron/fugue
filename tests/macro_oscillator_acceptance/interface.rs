@@ -61,15 +61,19 @@ fn declares_controls_with_specified_ranges_and_defaults() {
 }
 
 /// Criterion: "`model`: a choice ... the full set, in this fixed order";
-/// models arrive a few at a time, so the options present must be a prefix of
-/// the order, starting with `virtual_analog`. Also: default is the first
-/// model and each position is selectable.
+/// the part-1 models come first, in that order, starting with
+/// `virtual_analog`. Later models may follow them, so `MODEL_ORDER` must be a
+/// prefix of the reported options. Also: default is the first model and each
+/// reported position is selectable and renders.
 #[test]
 fn model_options_are_a_prefix_of_the_fixed_order() {
     let mut v = voice(json!({}));
-    assert!(!v.models.is_empty(), "at least one model");
-    assert!(v.models.len() <= MODEL_ORDER.len(), "models {:?}", v.models);
-    assert_eq!(v.models[..], MODEL_ORDER[..v.models.len()], "order");
+    assert!(
+        v.models.len() >= MODEL_ORDER.len(),
+        "models {:?} lack the part-1 models",
+        v.models
+    );
+    assert_eq!(v.models[..MODEL_ORDER.len()], MODEL_ORDER[..], "order");
     assert_eq!(v.models[0], "virtual_analog");
     for position in 0..v.models.len() {
         v.select(position);

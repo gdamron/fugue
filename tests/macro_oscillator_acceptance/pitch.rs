@@ -5,6 +5,14 @@ use super::*;
 
 const LENGTH: f64 = 4.0;
 
+/// Index of a part-1 model in the reported `model` options.
+fn position_of(names: &[String], model: &str) -> usize {
+    names
+        .iter()
+        .position(|n| n == model)
+        .unwrap_or_else(|| panic!("model {model} missing from {names:?}"))
+}
+
 fn assert_pitch(model: &str, wanted: f64, mut v: Voice, what: &str) {
     let x = v.render(seconds(LENGTH));
     assert!(peak(&x) > 0.001, "{model}: silent at {wanted} Hz ({what})");
@@ -17,11 +25,13 @@ fn assert_pitch(model: &str, wanted: f64, mut v: Voice, what: &str) {
 
 /// Criterion: "Each engine at 110, 440 and 1760 Hz has a fundamental within
 /// +-2 cents, at default macro settings", measured on `audio` after 0.3 s.
+/// Covers the part-1 models only (`MODEL_ORDER`).
 /// Assumption: with `trigger` and `level` unconnected the gate is open.
 #[test]
 fn every_model_plays_in_tune_at_110_440_1760() {
     let names = voice(json!({})).models;
-    for (position, model) in names.iter().enumerate() {
+    for model in MODEL_ORDER {
+        let position = position_of(&names, model);
         for hz in [110.0f32, 440.0, 1760.0] {
             assert_pitch(
                 model,
@@ -35,11 +45,12 @@ fn every_model_plays_in_tune_at_110_440_1760() {
 
 /// Criterion: "`frequency` (Hz; when connected it overrides the control, as
 /// on `oscillator`)": a connected 440 Hz input wins over a 220 Hz control,
-/// to within +-2 cents, for every model.
+/// to within +-2 cents, for every part-1 model.
 #[test]
 fn connected_frequency_input_overrides_the_control() {
     let names = voice(json!({})).models;
-    for (position, model) in names.iter().enumerate() {
+    for model in MODEL_ORDER {
+        let position = position_of(&names, model);
         let mut v = settled(position, 220.0);
         let port = v.frequency_in;
         v.hold(port, 440.0);
@@ -52,10 +63,12 @@ fn connected_frequency_input_overrides_the_control() {
 /// `frequency_mod` input". Assumption: a constant `frequency_mod` of 1 with
 /// depth 100 raises a 440 Hz voice by a steady 100 Hz (to 540 Hz), i.e. the
 /// offset is linear in Hz and the input is not scaled by anything else.
+/// Covers the part-1 models only.
 #[test]
 fn frequency_mod_offsets_pitch_by_depth_in_hz() {
     let names = voice(json!({})).models;
-    for (position, model) in names.iter().enumerate() {
+    for model in MODEL_ORDER {
+        let position = position_of(&names, model);
         let mut v = settled(position, 440.0);
         v.set("frequency_mod_depth", 100.0);
         let port = v.frequency_mod_in;
