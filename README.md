@@ -225,10 +225,10 @@ cannot exist and read the list in the error.
 
 ## CLI and REPL
 
-The `fugue` command-line host is distributed separately from this repository
-(see [Install](#install)). It provides playback, rendering, daemon, and
-interactive REPL commands, while this repository stays focused on the core
-library and runtime.
+The `fugue` command-line host is built and released by the Fugue product (see
+[Install](#install)). It provides playback, rendering, daemon, and interactive
+REPL commands, while this repository stays focused on the core library and
+runtime.
 
 ```bash
 fugue repl
@@ -321,8 +321,8 @@ FUGUE_YOUTUBE_SINK_REAL_FFMPEG=1 \
 
 ## MCP Server (AI-Driven Composition)
 
-The `fugue-mcp` server is distributed separately with the CLI (see
-[Install](#install)). It exposes the runtime API as tools and talks to
+The `fugue-mcp` server is built and released by the Fugue product with the CLI
+(see [Install](#install)). It exposes the runtime API as tools and talks to
 `fugue serve` over the shared runtime RPC protocol.
 
 ## Design Docs
