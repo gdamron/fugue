@@ -8,7 +8,7 @@
 //! range must lie within each inner control the name reaches, so no alias
 //! is asked to hold a value its own range refuses.
 
-use crate::control_request::DeclKind;
+use crate::control_request::{DeclKind, RtValue};
 use crate::{ControlKind, ControlValue, Invention};
 
 /// The range `definition`, the development `development`, declares for its
@@ -59,17 +59,37 @@ pub(super) fn check(
     };
     if !(min.is_finite() && max.is_finite()) || min > max {
         return Err(format!(
-            "{prefix}: range {min} to {max} must run from a min up to a max, within \
-             '{alias}''s own range, {own_min} to {own_max}"
+            "{prefix}: range {min} to {max} needs a finite min no greater than its max \
+             (the range of '{alias}' is {own_min} to {own_max})"
         ));
     }
     if min < own_min || max > own_max {
         return Err(format!(
-            "{prefix}: range {min} to {max} lies outside '{alias}''s own range, \
+            "{prefix}: range {min} to {max} lies outside the range of '{alias}', \
              {own_min} to {own_max}"
         ));
     }
     Ok(())
+}
+
+/// Refuses `range`, declared for exposed control `name` of `development`,
+/// when the value its alias `alias` starts at (`current`, from the
+/// definition or the instance's config) lies outside it: a definition
+/// starting a control where its own range forbids is written wrongly.
+pub(super) fn check_start(
+    development: &str,
+    name: &str,
+    (min, max): (f32, f32),
+    alias: &str,
+    current: RtValue,
+) -> Result<(), String> {
+    match current {
+        RtValue::F32(value) if !(min..=max).contains(&value) => Err(format!(
+            "Development '{development}' control '{name}': '{alias}' starts at {value}, \
+             outside its range {min} to {max}"
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Why `range`, declared for exposed control `name` of `development`, is

@@ -46,7 +46,7 @@ fn a_nesting_development_narrows_a_nested_range_and_may_not_widen_it() {
         json!({
             "version": "1.0.0",
             "developments": [{ "name": "inner", "definition": dial_development(json!({ "min": 0.2, "max": 0.8 })) }],
-            "modules": [{ "id": "i", "type": "inner" }],
+            "modules": [{ "id": "i", "type": "inner", "config": { "level": 0.5 } }],
             "connections": [],
             "outputs": [{ "name": "a", "from": "i", "from_port": "a" }],
             "controls": [{ "name": "level", "module": "i", "control": "level", "range": range }]
@@ -73,4 +73,18 @@ fn a_nesting_development_narrows_a_nested_range_and_may_not_widen_it() {
     let error = build(json!({ "min": 0.1, "max": 0.6 })).err().unwrap();
     let error = error.to_string();
     assert!(error.contains("outer") && error.contains("0.1") && error.contains("0.2"));
+}
+
+#[test]
+fn a_definition_starting_a_ranged_control_outside_its_range_is_refused() {
+    let mut definition = dial_development(json!({ "min": 0.5, "max": 0.75 }));
+    definition.modules[0].config = json!({ "level": 0.25 });
+    let (runtime, _) = InventionBuilder::with_registry(48_000, registry())
+        .build(definition.clone())
+        .unwrap();
+    let error = DevelopmentModule::new("one", runtime, &definition)
+        .err()
+        .unwrap();
+    let error = error.to_string();
+    assert!(error.contains("'one'") && error.contains("0.25") && error.contains("0.5"));
 }

@@ -86,8 +86,9 @@ fn with_starting_values(
         let Some(value) = json_scalar(value) else {
             continue;
         };
-        // Held within the range its control declares, as a write to it is;
-        // a range the build refuses is reported there.
+        // Held within the range its control declares, as a write to it is.
+        // A range the build refuses is reported by the build, so the name
+        // its error would carry is not needed here.
         let range = ranges::declared("", definition, name).ok().flatten();
         let value = ranges::held(value, range);
         for alias in definition

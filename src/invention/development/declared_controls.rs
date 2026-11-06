@@ -184,6 +184,7 @@ impl DevelopmentControls {
             if let Some(range) = range {
                 let alias = format!("{}.{}", control.module, control.control);
                 ranges::check(development, &control.name, range, &alias, found.decl.kind)?;
+                ranges::check_start(development, &control.name, range, &alias, found.current)?;
             }
             let module = *module_indexes
                 .get(&control.module)
