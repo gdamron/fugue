@@ -146,6 +146,22 @@ pub struct DevelopmentControl {
     pub name: String,
     pub module: String,
     pub control: String,
+    /// Narrows the range of the number control it reaches: the exposed
+    /// control reports it, and holds its starting value and every write
+    /// within it. It must lie within the inner control's own range. One
+    /// entry of a fanned-out name may declare it for the name; several
+    /// must agree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<ControlRange>,
+}
+
+/// A number control's range, from `min` to `max`, kept as written so a
+/// saved document holds the numbers its author wrote (controls hold `f32`).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct ControlRange {
+    pub min: f64,
+    pub max: f64,
 }
 
 /// Specification for a single module in an invention.

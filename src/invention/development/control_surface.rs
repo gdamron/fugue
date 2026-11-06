@@ -51,6 +51,7 @@ impl DevelopmentControlSurface {
     /// Builds the surface over `directory`, the development's internal
     /// runtime directory, retaining it (see the type docs).
     pub(super) fn new(
+        name: &str,
         definition: &Invention,
         directory: SurfaceDirectory,
         declared: Option<DeclaredSurface>,
@@ -79,7 +80,10 @@ impl DevelopmentControlSurface {
                     key: control.name.clone(),
                     description: source.description,
                     default: source.default,
-                    kind: source.kind,
+                    kind: super::ranges::listed(
+                        source.kind,
+                        super::ranges::declared(name, definition, &control.name)?,
+                    ),
                 },
                 module_id: control.module.clone(),
                 key: control.control.clone(),

@@ -657,7 +657,10 @@ impl DeclaredSurface {
     ) -> Result<Queued, String> {
         let (event, reserved, clamp, whole) = match self.table.decl(index) {
             Some((decl, _)) => {
-                let clamp = decl.clamp.filter(|_| self.clamps);
+                // A development's number clamps only to a range it
+                // declares, which it holds writes within itself.
+                let clamp = (decl.clamp)
+                    .filter(|_| self.clamps || matches!(decl.kind, DeclKind::Number { .. }));
                 (decl.event, decl.reserved, clamp, decl.whole)
             }
             None => (false, false, None, false),

@@ -14,7 +14,7 @@ use std::error::Error;
 
 use serde_json::Value;
 
-use super::{DevelopmentFactory, DevelopmentModule, InventionBuilder};
+use super::{ranges, DevelopmentFactory, DevelopmentModule, InventionBuilder};
 use crate::invention::authored_document;
 use crate::invention::runtime::ControlSurfaceInstance;
 use crate::traits::exact_number::json_scalar;
@@ -86,6 +86,10 @@ fn with_starting_values(
         let Some(value) = json_scalar(value) else {
             continue;
         };
+        // Held within the range its control declares, as a write to it is;
+        // a range the build refuses is reported there.
+        let range = ranges::declared("", definition, name).ok().flatten();
+        let value = ranges::held(value, range);
         for alias in definition
             .controls
             .iter()

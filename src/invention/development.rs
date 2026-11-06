@@ -44,6 +44,9 @@ mod payload_tests;
 mod process;
 #[cfg(test)]
 mod ramp_tests;
+mod ranges;
+#[cfg(test)]
+mod ranges_tests;
 mod replacing;
 mod retarget;
 #[cfg(test)]
@@ -288,7 +291,7 @@ impl DevelopmentModule {
         let surfaces = runtime.control_surfaces.lock().unwrap().clone();
         enclose(&surfaces, &mut module_list);
         let (controls, declared) =
-            match DevelopmentControls::new(definition, &surfaces, &module_indexes)? {
+            match DevelopmentControls::new(name, definition, &surfaces, &module_indexes)? {
                 Some((controls, declared)) => (Some(controls), Some(declared)),
                 None => (None, None),
             };
@@ -313,6 +316,7 @@ impl DevelopmentModule {
         // The surface keeps the internal directory alive once `runtime` is
         // consumed, so inner schedulers can still resolve schedules.
         let control_surface = Arc::new(DevelopmentControlSurface::new(
+            name,
             definition,
             runtime.control_surfaces.clone(),
             declared,
