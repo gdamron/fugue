@@ -15,7 +15,7 @@ use std::f32::consts::PI;
 /// or filter state never reaches 0 in `f32`: it sticks in subnormal
 /// numbers, which are slow and which a module must not output.
 #[inline]
-pub(super) fn flush(x: f32) -> f32 {
+pub(in crate::modules::macro_oscillator::engines) fn flush(x: f32) -> f32 {
     if x.abs() < 1.0e-20 {
         0.0
     } else {
@@ -26,14 +26,14 @@ pub(super) fn flush(x: f32) -> f32 {
 /// `tan(π·f)` for `f` a fraction of the sample rate, accurate below about
 /// 8 kHz at 48 kHz: one multiply-add, for a cutoff that moves every sample.
 #[inline]
-pub(super) fn tan_dirty(f: f32) -> f32 {
+pub(in crate::modules::macro_oscillator::engines) fn tan_dirty(f: f32) -> f32 {
     const A: f32 = 3.736e-1 * PI * PI * PI;
     f * (PI + A * f * f)
 }
 
 /// `tan(π·f)`, accurate across 16 Hz to 16 kHz at 48 kHz.
 #[inline]
-pub(super) fn tan_fast(f: f32) -> f32 {
+pub(in crate::modules::macro_oscillator::engines) fn tan_fast(f: f32) -> f32 {
     const A: f32 = 3.260e-1 * PI * PI * PI;
     const B: f32 = 1.823e-1 * PI * PI * PI * PI * PI;
     let f2 = f * f;
@@ -43,7 +43,7 @@ pub(super) fn tan_fast(f: f32) -> f32 {
 /// `tan(π·f)` to within 0.01% below 8 kHz at 48 kHz and 2.5% at 16 kHz,
 /// for a cutoff that moves across the audio range.
 #[inline]
-pub(super) fn tan_accurate(f: f32) -> f32 {
+pub(in crate::modules::macro_oscillator::engines) fn tan_accurate(f: f32) -> f32 {
     const P3: f32 = PI * PI * PI;
     const P5: f32 = P3 * PI * PI;
     const P7: f32 = P5 * PI * PI;
@@ -57,13 +57,13 @@ pub(super) fn tan_accurate(f: f32) -> f32 {
 
 /// A gentle saturation, exact near zero and reaching ±1 at ±3.
 #[inline]
-pub(super) fn soft_limit(x: f32) -> f32 {
+pub(in crate::modules::macro_oscillator::engines) fn soft_limit(x: f32) -> f32 {
     x * (27.0 + x * x) / (27.0 + 9.0 * x * x)
 }
 
 /// [`soft_limit`], held at ±1 beyond ±3.
 #[inline]
-pub(super) fn soft_clip(x: f32) -> f32 {
+pub(in crate::modules::macro_oscillator::engines) fn soft_clip(x: f32) -> f32 {
     if x < -3.0 {
         -1.0
     } else if x > 3.0 {
@@ -75,7 +75,7 @@ pub(super) fn soft_clip(x: f32) -> f32 {
 
 /// One sample of a [`ModeFilter`]: every response at once.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Modes {
+pub(in crate::modules::macro_oscillator::engines) struct Modes {
     pub highpass: f32,
     pub lowpass: f32,
     /// Peaks at the filter's Q at its cutoff.
@@ -84,7 +84,7 @@ pub(super) struct Modes {
 
 /// A two-pole state-variable filter with no limit on its Q.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct ModeFilter {
+pub(in crate::modules::macro_oscillator::engines) struct ModeFilter {
     g: f32,
     r: f32,
     h: f32,
@@ -133,7 +133,7 @@ impl ModeFilter {
 /// A one-pole filter in the same trapezoidal form: low-pass, and the
 /// high-pass that is what the low-pass leaves.
 #[derive(Clone, Copy, Debug, Default)]
-pub(super) struct OnePoleFilter {
+pub(in crate::modules::macro_oscillator::engines) struct OnePoleFilter {
     g: f32,
     gi: f32,
     state: f32,
@@ -163,7 +163,11 @@ impl OnePoleFilter {
 /// Moves `state` by `coefficient` of the way toward `x`, and returns it:
 /// the reference's `ONE_POLE`.
 #[inline]
-pub(super) fn one_pole(state: &mut f32, x: f32, coefficient: f32) -> f32 {
+pub(in crate::modules::macro_oscillator::engines) fn one_pole(
+    state: &mut f32,
+    x: f32,
+    coefficient: f32,
+) -> f32 {
     *state = flush(*state + coefficient * (x - *state));
     *state
 }
@@ -171,7 +175,12 @@ pub(super) fn one_pole(state: &mut f32, x: f32, coefficient: f32) -> f32 {
 /// Moves `state` toward `x` by `rise` of the way when `x` is above it and
 /// by `fall` when below, and returns it: the reference's `SLOPE`.
 #[inline]
-pub(super) fn slope(state: &mut f32, x: f32, rise: f32, fall: f32) -> f32 {
+pub(in crate::modules::macro_oscillator::engines) fn slope(
+    state: &mut f32,
+    x: f32,
+    rise: f32,
+    fall: f32,
+) -> f32 {
     let error = x - *state;
     *state = flush(*state + if error > 0.0 { rise } else { fall } * error);
     *state
@@ -179,14 +188,17 @@ pub(super) fn slope(state: &mut f32, x: f32, rise: f32, fall: f32) -> f32 {
 
 /// A per-sample one-pole coefficient given at 48 kHz, moved to `rate`, so
 /// a smoothing or decay takes the same time at any sample rate.
-pub(super) fn per_sample(coefficient: f32, rate: f32) -> f32 {
+pub(in crate::modules::macro_oscillator::engines) fn per_sample(
+    coefficient: f32,
+    rate: f32,
+) -> f32 {
     1.0 - (1.0 - coefficient).powf(48_000.0 / rate)
 }
 
 /// The reference's constants are for 48 kHz; this turns them into the
 /// same times at the running rate.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Rate {
+pub(in crate::modules::macro_oscillator::engines) struct Rate {
     rate: f32,
 }
 
@@ -241,7 +253,7 @@ impl Rate {
 /// A value that moves linearly from where it was to a new target across a
 /// block, as the reference's parameter interpolator does.
 #[derive(Clone, Copy, Debug, Default)]
-pub(super) struct BlockGlide {
+pub(in crate::modules::macro_oscillator::engines) struct BlockGlide {
     value: f32,
     step: f32,
 }
@@ -261,7 +273,7 @@ impl BlockGlide {
 
 /// What the drums' tests play them with.
 #[cfg(test)]
-pub(super) mod testing {
+pub(in crate::modules::macro_oscillator::engines) mod testing {
     use crate::modules::macro_oscillator::engine::{EngineParameters, ENGINE_BLOCK};
 
     pub const RATE: u32 = 48_000;

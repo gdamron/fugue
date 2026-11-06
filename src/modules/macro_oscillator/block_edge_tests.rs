@@ -76,6 +76,10 @@ fn a_step_at_every_block_edge_stands_out() {
 fn macro_sweeps_put_no_steps_at_block_edges() {
     // A write every engine block: the whole range in 100 ms.
     const WRITES: usize = 400;
+    // Back and forth, so a noise engine's random turns average out across
+    // the frame positions and only a step that recurs every block stands
+    // out.
+    const PASSES: usize = 8;
     for model in first_excited_model()..MODEL_COUNT {
         for key in ["harmonics", "timbre", "morph"] {
             for (from, to) in [(0.0f32, 1.0f32), (1.0, 0.0)] {
@@ -85,10 +89,17 @@ fn macro_sweeps_put_no_steps_at_block_edges() {
                     }));
                     render(&mut module, 24 * HOST_BLOCK, HOST_BLOCK);
                     let mut swept = Vec::new();
-                    for write in 1..=WRITES {
-                        let value = from + (to - from) * write as f32 / WRITES as f32;
-                        module.set_control(key, value).unwrap();
-                        swept.extend(render(&mut module, ENGINE_BLOCK, ENGINE_BLOCK));
+                    for pass in 0..PASSES {
+                        let (from, to) = if pass % 2 == 0 {
+                            (from, to)
+                        } else {
+                            (to, from)
+                        };
+                        for write in 1..=WRITES {
+                            let value = from + (to - from) * write as f32 / WRITES as f32;
+                            module.set_control(key, value).unwrap();
+                            swept.extend(render(&mut module, ENGINE_BLOCK, ENGINE_BLOCK));
+                        }
                     }
                     let ratio = edge_ratio(&swept);
                     assert!(

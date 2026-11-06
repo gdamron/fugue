@@ -1,0 +1,36 @@
+{
+  "version": "1.0.0",
+  "title": "Macro Oscillator Drum Groove",
+  "description": "A groove from the macro oscillator's percussive and noise models alone: an analog-style kick, snare and hi-hat, a shaker of clocked noise through a resonant band, all over a soft bed of particle noise like rain on a roof.",
+  "modules": [
+    {"id": "clock", "type": "clock", "config": {"bpm": 104.0}},
+    {"id": "kick_steps", "type": "step_sequencer", "config": {"root_note": 36, "step_count": 16, "gate_length": 0.25, "pattern": [{"note": 0}, {"note": null}, {"note": null}, {"note": null}, {"note": null}, {"note": null}, {"note": 0}, {"note": null}, {"note": null}, {"note": null}, {"note": 0}, {"note": null}, {"note": null}, {"note": null}, {"note": null}, {"note": null}]}},
+    {"id": "snare_steps", "type": "step_sequencer", "config": {"root_note": 36, "step_count": 16, "gate_length": 0.25, "pattern": [{"note": null}, {"note": null}, {"note": null}, {"note": null}, {"note": 0}, {"note": null}, {"note": null}, {"note": null}, {"note": null}, {"note": null}, {"note": null}, {"note": null}, {"note": 0}, {"note": null}, {"note": null}, {"note": 0}]}},
+    {"id": "hat_steps", "type": "step_sequencer", "config": {"root_note": 36, "step_count": 16, "gate_length": 0.25, "pattern": [{"note": 0}, {"note": null}, {"note": 0}, {"note": null}, {"note": 0}, {"note": null}, {"note": 0}, {"note": 0}, {"note": 0}, {"note": null}, {"note": 0}, {"note": null}, {"note": 0}, {"note": null}, {"note": 0}, {"note": null}]}},
+    {"id": "shaker_steps", "type": "step_sequencer", "config": {"root_note": 36, "step_count": 16, "gate_length": 0.15, "pattern": [{"note": null}, {"note": 0}, {"note": null}, {"note": 0}, {"note": null}, {"note": 0}, {"note": null}, {"note": 0}, {"note": null}, {"note": 0}, {"note": null}, {"note": 0}, {"note": null}, {"note": 0}, {"note": 0}, {"note": 0}]}},
+    {"id": "kick", "type": "macro_oscillator", "config": {"model": "bass_drum", "frequency": 48.0, "harmonics": 0.35, "timbre": 0.35, "morph": 0.55, "level": 1.0}},
+    {"id": "snare", "type": "macro_oscillator", "config": {"model": "snare_drum", "frequency": 180.0, "harmonics": 0.6, "timbre": 0.5, "morph": 0.45, "level": 0.9}},
+    {"id": "hat", "type": "macro_oscillator", "config": {"model": "hi_hat", "frequency": 400.0, "harmonics": 0.3, "timbre": 0.7, "morph": 0.25, "level": 0.6}},
+    {"id": "shaker", "type": "macro_oscillator", "config": {"model": "filtered_noise", "frequency": 3000.0, "harmonics": 0.75, "timbre": 0.85, "morph": 0.3, "decay": 0.15, "level": 0.35}},
+    {"id": "rain", "type": "macro_oscillator", "config": {"model": "particle_noise", "frequency": 900.0, "harmonics": 0.6, "timbre": 0.55, "morph": 0.3, "level": 0.25}},
+    {"id": "mixer", "type": "mixer", "config": {"channel_count": 5, "levels": [0.9, 0.7, 0.5, 0.4, 0.35], "pans": [0.0, 0.05, -0.3, 0.35, 0.0], "master": 0.8}},
+    {"id": "dac", "type": "dac"}
+  ],
+  "connections": [
+    {"from": "clock", "from_port": "beat_x4", "to": "kick_steps", "to_port": "clock"},
+    {"from": "kick_steps", "from_port": "gate", "to": "kick", "to_port": "trigger"},
+    {"from": "clock", "from_port": "beat_x4", "to": "snare_steps", "to_port": "clock"},
+    {"from": "snare_steps", "from_port": "gate", "to": "snare", "to_port": "trigger"},
+    {"from": "clock", "from_port": "beat_x4", "to": "hat_steps", "to_port": "clock"},
+    {"from": "hat_steps", "from_port": "gate", "to": "hat", "to_port": "trigger"},
+    {"from": "clock", "from_port": "beat_x4", "to": "shaker_steps", "to_port": "clock"},
+    {"from": "shaker_steps", "from_port": "gate", "to": "shaker", "to_port": "trigger"},
+    {"from": "kick", "from_port": "audio", "to": "mixer", "to_port": "audio.0"},
+    {"from": "snare", "from_port": "audio", "to": "mixer", "to_port": "audio.1"},
+    {"from": "hat", "from_port": "audio", "to": "mixer", "to_port": "audio.2"},
+    {"from": "shaker", "from_port": "audio", "to": "mixer", "to_port": "audio.3"},
+    {"from": "rain", "from_port": "audio", "to": "mixer", "to_port": "audio.4"},
+    {"from": "mixer", "from_port": "audio_left", "to": "dac", "to_port": "audio_left"},
+    {"from": "mixer", "from_port": "audio_right", "to": "dac", "to_port": "audio_right"}
+  ]
+}

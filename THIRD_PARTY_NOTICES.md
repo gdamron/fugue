@@ -74,6 +74,11 @@ where they live in Fugue, then the full license text:
   - `plaits/dsp/drums/hi_hat.h` (`SquareNoise`, `RingModNoise`), `plaits/dsp/oscillator/oscillator.h` (square and saw shapes) → `src/modules/macro_oscillator/engines/drums/metallic_noise.rs`
   - `plaits/dsp/drums/hi_hat.h` (`HiHat`, `SwingVCA`, `LinearVCA`) → `src/modules/macro_oscillator/engines/drums/hats.rs`
   - `plaits/dsp/engine/hi_hat_engine.cc` → `src/modules/macro_oscillator/engines/drums/hi_hat.rs`
+  - `plaits/dsp/noise/clocked_noise.h` → `src/modules/macro_oscillator/engines/noise/clocked.rs`
+  - `plaits/dsp/engine/noise_engine.cc` → `src/modules/macro_oscillator/engines/noise/filtered.rs`
+  - `plaits/dsp/noise/particle.h` → `src/modules/macro_oscillator/engines/noise/particles.rs`
+  - `plaits/dsp/fx/diffuser.h` (and the `fx_engine.h` operations it uses) → `src/modules/macro_oscillator/engines/noise/diffuser.rs`
+  - `plaits/dsp/engine/particle_engine.cc` → `src/modules/macro_oscillator/engines/noise/particle.rs`
   - `tides2/ramp_shaper.h` → `src/modules/contour/shaper.rs`
   - `tides2/ramp_generator.h` → `src/modules/contour/ramp.rs`
   - `tides2/poly_slope_generator.h` → `src/modules/contour/generator.rs`

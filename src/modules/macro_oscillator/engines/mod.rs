@@ -10,6 +10,7 @@ mod fm;
 mod grain_formant;
 mod limiter;
 mod modal;
+mod noise;
 mod six_op;
 mod speech;
 mod string;
@@ -27,6 +28,7 @@ use self::fm::FmEngine;
 use self::grain_formant::GrainFormantEngine;
 use self::limiter::Limiter;
 use self::modal::ModalEngine;
+use self::noise::{FilteredNoiseEngine, ParticleNoiseEngine};
 use self::six_op::SixOpEngine;
 use self::speech::SpeechEngine;
 use self::string::StringEngine;
@@ -52,6 +54,8 @@ pub(super) const MODELS: &[&str] = &[
     "bass_drum",
     "snare_drum",
     "hi_hat",
+    "filtered_noise",
+    "particle_noise",
 ];
 
 /// How many engines there are.
@@ -77,12 +81,15 @@ const LEVELS: [(f32, f32); MODEL_COUNT] = [
     (0.8, 0.8),
     (0.8, 0.8),
     (0.8, 0.8),
+    (-1.0, -1.0),
+    (-2.0, 1.0),
 ];
 
 /// Whether each engine shapes its own sound over time when struck by a
 /// trigger (a string, a body, a drum), so the low-pass gate leaves it be.
 pub(super) const ENVELOPED: [bool; MODEL_COUNT] = [
     false, false, false, false, false, false, false, false, true, true, true, true, true, true,
+    false, false,
 ];
 
 /// Every engine, built up front so switching allocates nothing.
@@ -101,6 +108,8 @@ pub(super) struct Engines {
     bass_drum: BassDrumEngine,
     snare_drum: SnareDrumEngine,
     hi_hat: HiHatEngine,
+    filtered_noise: FilteredNoiseEngine,
+    particle_noise: ParticleNoiseEngine,
     /// The `audio` and `aux` limiters of each engine with a negative level.
     limiters: [[Limiter; 2]; MODEL_COUNT],
 }
@@ -125,6 +134,8 @@ impl Engines {
             bass_drum: BassDrumEngine::new(sample_rate),
             snare_drum: SnareDrumEngine::new(sample_rate),
             hi_hat: HiHatEngine::new(sample_rate),
+            filtered_noise: FilteredNoiseEngine::new(sample_rate),
+            particle_noise: ParticleNoiseEngine::new(sample_rate),
             limiters: std::array::from_fn(|_| {
                 [Limiter::new(sample_rate), Limiter::new(sample_rate)]
             }),
@@ -148,7 +159,9 @@ impl Engines {
             10 => self.modal.render(p, out, aux),
             11 => self.bass_drum.render(p, out, aux),
             12 => self.snare_drum.render(p, out, aux),
-            _ => self.hi_hat.render(p, out, aux),
+            13 => self.hi_hat.render(p, out, aux),
+            14 => self.filtered_noise.render(p, out, aux),
+            _ => self.particle_noise.render(p, out, aux),
         }
         let (out_level, aux_level) = LEVELS[model];
         let [out_limiter, aux_limiter] = &mut self.limiters[model];
