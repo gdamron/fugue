@@ -5,7 +5,7 @@
 //! bridged-T resonator whose pitch the pulse itself bends at the attack.
 //! Un-triggered, a sine stands in for the resonator.
 
-use super::filters::{flush, one_pole, tan_dirty, BlockGlide, ModeFilter, Rate};
+use super::super::filters::{flush, one_pole, tan_dirty, BlockGlide, ModeFilter, Rate};
 use crate::dsp::sine;
 use crate::modules::macro_oscillator::engine::semitones_to_ratio;
 

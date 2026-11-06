@@ -39,7 +39,7 @@ impl HiHatEngine {
 
 #[cfg(test)]
 mod tests {
-    use super::super::filters::testing::{
+    use super::super::super::filters::testing::{
         assert_rate_independent, loudness_over_time, params, peak, play, strike, RATE,
     };
     use super::*;

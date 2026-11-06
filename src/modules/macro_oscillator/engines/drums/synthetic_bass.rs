@@ -5,7 +5,7 @@
 //! towards a soft triangle by `dirtiness`, swept down from a pitch blip
 //! through a transistor VCA, with a click and a breath of noise on top.
 
-use super::filters::{flush, one_pole, slope, tan_fast, BlockGlide, ModeFilter, Rate};
+use super::super::filters::{flush, one_pole, slope, tan_fast, BlockGlide, ModeFilter, Rate};
 use crate::dsp::{sine, Rng};
 use crate::modules::macro_oscillator::engine::semitones_to_ratio;
 

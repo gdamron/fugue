@@ -5,7 +5,7 @@ mod clocked;
 mod diffuser;
 mod filtered;
 mod particle;
-mod particles;
+mod particle_noise;
 
 pub(super) use self::filtered::FilteredNoiseEngine;
-pub(super) use self::particle::ParticleNoiseEngine;
+pub(super) use self::particle_noise::ParticleNoiseEngine;

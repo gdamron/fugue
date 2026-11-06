@@ -6,6 +6,7 @@ mod chord_waves;
 mod chords;
 mod drums;
 mod dust;
+mod filters;
 mod fm;
 mod grain_formant;
 mod limiter;

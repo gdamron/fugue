@@ -7,7 +7,7 @@
 //! slowly swaying delay: a short, dense smear that turns sparse clicks
 //! into a wash.
 
-use super::super::drums::filters::{flush, BlockGlide, Rate};
+use super::super::filters::{flush, BlockGlide, Rate};
 use crate::dsp::cosine;
 
 /// The allpasses' coefficient.
@@ -48,7 +48,10 @@ impl Line {
 
     #[inline]
     fn at(&self, back: usize) -> f32 {
-        self.buffer[(self.head + back) % self.buffer.len()]
+        // `head` and `back` are each within the buffer, so one wrap will do.
+        let at = self.head + back;
+        let len = self.buffer.len();
+        self.buffer[if at >= len { at - len } else { at }]
     }
 
     #[inline]

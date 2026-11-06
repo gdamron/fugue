@@ -7,7 +7,7 @@
 //! clock, from grainy to smooth; `morph` the resonance. `audio` is the
 //! swept filter, `aux` two band-passes.
 
-use super::super::drums::filters::{tan_accurate, BlockGlide, ModeFilter, Rate};
+use super::super::filters::{tan_accurate, BlockGlide, ModeFilter, Rate};
 use super::clocked::ClockedNoise;
 use crate::modules::macro_oscillator::engine::{
     semitones_to_ratio, EngineParameters, ENGINE_BLOCK,
@@ -49,10 +49,8 @@ impl FilteredNoiseEngine {
 
     pub fn render(&mut self, p: &EngineParameters, out: &mut [f32], aux: &mut [f32]) {
         let size = out.len();
-        let f0 = p.note_to_frequency(p.note).min(MAX_CUTOFF);
-        let f1 = p
-            .note_to_frequency(p.note + p.harmonics * 48.0 - 24.0)
-            .min(MAX_CUTOFF);
+        let f0 = p.note_to_frequency(p.note);
+        let f1 = p.note_to_frequency(p.note + p.harmonics * 48.0 - 24.0);
         // Struck, the clock reaches two octaves lower, for sparser grains.
         let lowest = if p.untriggered { 0.0 } else { -24.0 };
         let clock_f = p.note_to_frequency(p.timbre * (128.0 - lowest) + lowest);
@@ -61,8 +59,8 @@ impl FilteredNoiseEngine {
         self.clocked[0].render(p.trigger, clock_f, aux);
         self.clocked[1].render(p.trigger, clock_f * f1 / f0, second);
 
-        self.f0.start(f0, size);
-        self.f1.start(f1, size);
+        self.f0.start(f0.min(MAX_CUTOFF), size);
+        self.f1.start(f1.min(MAX_CUTOFF), size);
         self.q.start(q, size);
         self.mode.start(p.harmonics, size);
         for ((o, a), b) in out.iter_mut().zip(aux.iter_mut()).zip(second.iter()) {
@@ -93,7 +91,7 @@ impl FilteredNoiseEngine {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::drums::filters::testing::{params, peak, play};
+    use super::super::super::filters::testing::{params, peak, play};
     use super::*;
 
     fn loudness(rate: u32, timbre: f32) -> (f32, f32) {

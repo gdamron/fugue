@@ -1,7 +1,7 @@
 //! Ported from Mutable Instruments' `plaits/dsp/noise/clocked_noise.h`
 //! (MIT, Copyright 2016 Emilie Gillet). See THIRD_PARTY_NOTICES.md.
 
-use super::super::drums::filters::{BlockGlide, Rate};
+use super::super::filters::{BlockGlide, Rate};
 use crate::dsp::Rng;
 use crate::modules::macro_oscillator::engine::{next_blep_sample, this_blep_sample};
 

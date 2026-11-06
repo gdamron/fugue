@@ -5,7 +5,7 @@
 //! triangles for the shell, swept by a pitch blip, beside band-limited
 //! noise that holds a moment before it decays.
 
-use super::filters::{flush, tan_fast, BlockGlide, ModeFilter, OnePoleFilter, Rate};
+use super::super::filters::{flush, tan_fast, BlockGlide, ModeFilter, OnePoleFilter, Rate};
 use crate::dsp::Rng;
 use crate::modules::macro_oscillator::engine::semitones_to_ratio;
 

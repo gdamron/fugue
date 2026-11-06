@@ -6,7 +6,7 @@
 //! The clangorous sources under a hi-hat: detuned square waves summed, or
 //! square waves ring-modulated by saws, so no pitch stands out.
 
-use super::filters::{BlockGlide, Rate};
+use super::super::filters::{BlockGlide, Rate};
 use crate::modules::macro_oscillator::engine::{next_blep_sample, this_blep_sample, MAX_FREQUENCY};
 
 /// Six square waves at inharmonic ratios of the pitch, summed: the six
