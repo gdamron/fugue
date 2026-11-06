@@ -103,12 +103,29 @@ echo "--- an unaccepted license fails packaging"
 printf 'accepted = ["MIT"]\n' >"$work/narrow.toml"
 rm -rf "$work/failing" && mkdir "$work/failing"
 if FUGUE_ABOUT_CONFIG="$work/narrow.toml" bash "$ROOT/scripts/package-native.sh" \
-  x86_64-unknown-linux-gnu "$VERSION" "$work/failing" >/dev/null 2>&1; then
+  x86_64-unknown-linux-gnu "$VERSION" "$work/failing" >/dev/null 2>"$work/failing.err"; then
   fail "packaging passed with a dependency license that is not accepted"
+elif ! grep -q 'could not generate the notices' "$work/failing.err"; then
+  fail "packaging failed, but not because the notices could not be generated"
+  cat "$work/failing.err" >&2
 elif ls "$work/failing"/*.tar.gz >/dev/null 2>&1; then
   fail "a failed notices build still left an archive"
 else
   pass "packaging fails, and leaves no archive, when a dependency license is not accepted"
+fi
+
+echo "--- the accepted licenses match deny.toml"
+accepted() { python3 - "$1" "$2" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+block = re.search(rf"^{sys.argv[2]}\s*=\s*\[(.*?)\]", text, re.S | re.M).group(1)
+print("\n".join(sorted(re.findall(r'"([^"]+)"', block))))
+PY
+}
+if diff <(accepted "$ROOT/packaging/licenses/about.toml" accepted) <(accepted "$ROOT/deny.toml" allow) >/dev/null; then
+  pass "packaging/licenses/about.toml accepts exactly the licenses deny.toml allows"
+else
+  fail "packaging/licenses/about.toml and deny.toml disagree on the accepted licenses"
 fi
 
 exit "$failed"

@@ -216,6 +216,20 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
+      - name: Check every archive carries the license notices
+        run: |
+          set -euo pipefail
+          count=0
+          while IFS= read -r -d '' file; do
+            listing="$(tar -tzf "$file" | sed 's|^\./||')"
+            if ! grep -Eq '^[^/]+/THIRD_PARTY_LICENSES\.txt$' <<<"$listing"; then
+              echo "::error::$file lacks THIRD_PARTY_LICENSES.txt" >&2
+              exit 1
+            fi
+            count=$((count + 1))
+          done < <(find dist -type f -name '*.tar.gz' -print0)
+          [[ "$count" -gt 0 ]] || { echo "::error::no archives to publish" >&2; exit 1; }
+          echo "$count archives carry THIRD_PARTY_LICENSES.txt"
       - name: Create tag if needed
         env:
           TAG: v${{ inputs.version }}
@@ -226,19 +240,6 @@ jobs:
             git tag "$TAG" "$(git rev-parse HEAD)"
             git push origin "$TAG"
           fi
-      - name: Check every archive carries the license notices
-        run: |
-          set -euo pipefail
-          count=0
-          while IFS= read -r -d '' file; do
-            if ! tar -tzf "$file" | sed 's|^\./||' | grep -Eq '^[^/]+/THIRD_PARTY_LICENSES\.txt$'; then
-              echo "::error::$file lacks THIRD_PARTY_LICENSES.txt" >&2
-              exit 1
-            fi
-            count=$((count + 1))
-          done < <(find dist -type f -name '*.tar.gz' -print0)
-          [[ "$count" -gt 0 ]] || { echo "::error::no archives to publish" >&2; exit 1; }
-          echo "$count archives carry THIRD_PARTY_LICENSES.txt"
       - name: Generate checksums
         run: |
           set -euo pipefail
