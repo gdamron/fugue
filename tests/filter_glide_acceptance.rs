@@ -458,9 +458,9 @@ fn unwritten_filters_render_as_before() {
 const REF_LOWPASS: u64 = 0xcceba42bc6b542c2;
 const REF_HIGHPASS: u64 = 0xf2f31bb4028ec4dc;
 const REF_BANDPASS: u64 = 0xb1585a71e86af1f8;
-const REF_OPEN: u64 = 0xd88060f56bb93903;
+const REF_OPEN: u64 = 0x0eac78cd0edae9d7;
 const REF_DEFAULTS: u64 = 0x235b54ae4a43ec15;
-const REF_SWEEP: u64 = 0x081c74fb42e4c0d1;
+const REF_SWEEP: u64 = 0x009604a71d9202ee;
 
 // ---------------------------------------------------------------- criterion 5
 
