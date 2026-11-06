@@ -166,7 +166,8 @@ impl SignalGraph {
     }
 
     /// Writes frames `from..from + frames` of the segment into the inputs
-    /// of module `module` that are releasing, at its frame 0.
+    /// of module `module` that are releasing, at its frame 0, gliding each
+    /// to where its module says it rests as of this span.
     pub(super) fn play_releases(&mut self, module: usize, from: usize, frames: usize) {
         let first = self.segment.start + from as u64;
         let length = self.releases.frames;
@@ -176,6 +177,30 @@ impl SignalGraph {
                 continue;
             }
             if let Some((_, inst)) = self.modules.get_index_mut(module) {
+                // A control written since the release began (as a reload's
+                // are, after its edit) moves where it rests: it glides on
+                // from where it is to there, a release's length from now.
+                let rest = inst.module().input_rest(release.port);
+                let rest = rest.filter(|to| to.is_finite()).unwrap_or(release.to);
+                let release = if rest == release.to {
+                    release
+                } else {
+                    let now = first.max(release.start);
+                    let at = release.value(now.saturating_sub(1), length);
+                    let from = if now == release.start {
+                        release.from
+                    } else {
+                        at
+                    };
+                    let moved = Release {
+                        from,
+                        to: rest,
+                        start: now,
+                        ..release
+                    };
+                    self.releases.slots[i] = moved;
+                    moved
+                };
                 let input = inst.module_mut().input_block_mut(release.port);
                 for (k, x) in input[..frames].iter_mut().enumerate() {
                     *x = release.value(first + k as u64, length);
