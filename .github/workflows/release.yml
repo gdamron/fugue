@@ -194,8 +194,8 @@ jobs:
           name: wasm
           path: dist/*.tar.gz
 
-  # Publishes the library artifacts only. The Fugue CLI, MCP adapter, install
-  # units, Claude Desktop bundles and macOS disk image are built, signed and
+  # Publishes the library artifacts only. The Fugue CLI, MCP adapter,
+  # Claude Desktop bundles and macOS disk image are built, signed and
   # tested by the product release, which promotes them into this repository's
   # release under the same asset names and merges its checksums into
   # SHA256SUMS.txt.

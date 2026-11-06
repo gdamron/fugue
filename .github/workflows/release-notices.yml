@@ -1,9 +1,9 @@
 name: Release Notices
 
 # Dry run of the license notices every release archive carries. It builds them
-# with the pinned cargo-about and checks the archive layout the installers and
-# users expect, so a dependency change or a packaging change that would break
-# the release fails on the pull request instead.
+# with the pinned cargo-about and checks the archive layout users expect, so a
+# dependency change or a packaging change that would break the release fails on
+# the pull request instead.
 on:
   pull_request:
     paths: &paths

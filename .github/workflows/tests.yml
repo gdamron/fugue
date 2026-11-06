@@ -58,8 +58,6 @@ jobs:
               - '!docs/**'
               - '!skills/**'
               - '!scripts/**'
-              - '!install.sh'
-              - '!install.ps1'
               - '!.github/workflows/release.yml'
               - '!.github/workflows/release-notices.yml'
 
