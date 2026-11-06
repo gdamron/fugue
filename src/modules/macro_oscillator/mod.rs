@@ -39,6 +39,8 @@ mod oscillators;
 #[cfg(test)]
 mod tests;
 mod voice;
+#[cfg(test)]
+mod wavetable_tests;
 
 const TYPE_ID: &str = "macro_oscillator";
 

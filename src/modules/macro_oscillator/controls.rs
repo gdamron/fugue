@@ -63,15 +63,15 @@ const DECLS: &[ControlDecl] = &[
     .unit("Hz"),
     macro_control(
         "harmonics",
-        "Harmonic content; virtual analog: second oscillator detune; waveshaping: shaper curve (0.5 linear); fm: modulator ratio (0.5 an octave); grain_formant: second formant ratio, bare window below 0.5; additive: spectral bumps; chords: chord (octave, fifth, sus2, sus4, triad, sixth, seventh, ninth, eleventh, six-nine); speech: formant shift, ±1 octave",
+        "Harmonic content; virtual analog: second oscillator detune; waveshaping: shaper curve (0.5 linear); fm: modulator ratio (0.5 an octave); grain_formant: second formant ratio, bare window below 0.5; additive: spectral bumps; chords: chord (octave, fifth, sus2, sus4, triad, sixth, seventh, ninth, eleventh, six-nine); speech: formant shift, ±1 octave; wavetable: bank (harmonic, formant, sync, bit-reduced), gliding through them to about 0.43, then stepping back with timbre and morph quantized too from about 0.57",
     ),
     macro_control(
         "timbre",
-        "Brightness; virtual analog: pulse width and sync; waveshaping: fold amount; fm: modulation index; grain_formant: formant frequency; additive: spectral peak position; chords: inversion (two octaves down to two up, root position at 0.5); speech: vocal register, low to high voice",
+        "Brightness; virtual analog: pulse width and sync; waveshaping: fold amount; fm: modulation index; grain_formant: formant frequency; additive: spectral peak position; chords: inversion (two octaves down to two up, root position at 0.5); speech: vocal register, low to high voice; wavetable: position along the bank, dark to bright",
     ),
     macro_control(
         "morph",
-        "Waveform morph; virtual analog: saw to triangle; waveshaping: triangle to saw; fm: feedback (below 0.5 rough, above noisy); grain_formant: grain window; additive: narrows the spectral peak; chords: organ registration, bright to hollow; speech: vowel",
+        "Waveform morph; virtual analog: saw to triangle; waveshaping: triangle to saw; fm: feedback (below 0.5 rough, above noisy); grain_formant: grain window; additive: narrows the spectral peak; chords: organ registration, bright to hollow; speech: vowel; wavetable: the bank's second axis of waves",
     ),
     ControlDecl::new(
         "level",

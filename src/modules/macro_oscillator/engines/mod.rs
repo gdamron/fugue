@@ -8,11 +8,9 @@ mod grain_formant;
 mod speech;
 mod tables;
 mod virtual_analog;
-// The wavetable engine reads these; until it does, only tests use them.
-#[allow(dead_code)]
 mod wave_shapes;
 mod waveshaping;
-#[allow(dead_code)]
+mod wavetable;
 mod wavetables;
 
 use self::additive::AdditiveEngine;
@@ -22,6 +20,7 @@ use self::grain_formant::GrainFormantEngine;
 use self::speech::SpeechEngine;
 use self::virtual_analog::VirtualAnalogEngine;
 use self::waveshaping::WaveshapingEngine;
+use self::wavetable::WavetableEngine;
 use super::engine::EngineParameters;
 
 /// The models' names, in `model` position order. New engines are only
@@ -34,13 +33,15 @@ pub(super) const MODELS: &[&str] = &[
     "additive",
     "chords",
     "speech",
+    "wavetable",
 ];
 
 /// How many engines there are.
 pub(super) const MODEL_COUNT: usize = MODELS.len();
 
 /// Each engine's output levels (`audio`, `aux`), so the models sit at
-/// about the same loudness. Speech limits its own `audio`.
+/// about the same loudness. Speech limits its own `audio`; the wavetables
+/// are normalised, and peak below 1, when they are built.
 const LEVELS: [(f32, f32); MODEL_COUNT] = [
     (0.8, 0.8),
     (0.7, 0.6),
@@ -49,6 +50,7 @@ const LEVELS: [(f32, f32); MODEL_COUNT] = [
     (0.8, 0.8),
     (0.8, 0.8),
     (1.0, 0.8),
+    (1.0, 1.0),
 ];
 
 /// Whether each engine shapes its own sound over time when struck by a
@@ -64,12 +66,14 @@ pub(super) struct Engines {
     additive: AdditiveEngine,
     chords: ChordsEngine,
     speech: SpeechEngine,
+    wavetable: WavetableEngine,
 }
 
 impl Engines {
     /// Builds every engine for `sample_rate`, and the tables they share.
     pub fn new(sample_rate: u32) -> Self {
         tables::force();
+        wavetables::force();
         Self {
             virtual_analog: VirtualAnalogEngine::new(),
             waveshaping: WaveshapingEngine::new(),
@@ -78,6 +82,7 @@ impl Engines {
             additive: AdditiveEngine::new(),
             chords: ChordsEngine::new(),
             speech: SpeechEngine::new(sample_rate),
+            wavetable: WavetableEngine::new(),
         }
     }
 
@@ -91,7 +96,8 @@ impl Engines {
             3 => self.grain_formant.render(p, out, aux),
             4 => self.additive.render(p, out, aux),
             5 => self.chords.render(p, out, aux),
-            _ => self.speech.render(p, out, aux),
+            6 => self.speech.render(p, out, aux),
+            _ => self.wavetable.render(p, out, aux),
         }
         let (out_level, aux_level) = LEVELS[model];
         out.iter_mut().for_each(|s| *s *= out_level);
