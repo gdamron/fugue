@@ -60,6 +60,7 @@ where they live in Fugue, then the full license text:
   - `plaits/dsp/fm/algorithms.cc` (the 32 operator wirings, written as Fugue's own data) → `src/modules/macro_oscillator/engines/six_op/algorithms.rs`
   - `plaits/dsp/fm/operator.h` (phase modulation and feedback rendering) → `src/modules/macro_oscillator/engines/six_op/operators.rs`
   - `plaits/dsp/fm/voice.h` (voice structure; the envelope units and scaling curves are Fugue's own) → `src/modules/macro_oscillator/engines/six_op/voice.rs`
+  - `plaits/dsp/engine2/six_op_engine.cc` (voice alternation and drone mode; the patches are Fugue's own, authored for Fugue) → `src/modules/macro_oscillator/engines/six_op/engine.rs`
   - `tides2/ramp_shaper.h` → `src/modules/contour/shaper.rs`
   - `tides2/ramp_generator.h` → `src/modules/contour/ramp.rs`
   - `tides2/poly_slope_generator.h` → `src/modules/contour/generator.rs`

@@ -1,8 +1,11 @@
-//! The six-operator FM synthesizer the `six_op_fm` model will play: its
-//! operators and algorithms, envelopes and LFO, the patch set, and the
-//! voice that plays a patch.
+//! The six-operator FM synthesizer behind the `six_op_fm` model: its
+//! operators, algorithms, envelopes and LFO, the patch set, and the voices
+//! that play it.
 
 mod algorithms;
+mod engine;
+#[cfg(test)]
+mod engine_tests;
 mod envelope;
 mod lfo;
 mod operators;
@@ -13,3 +16,5 @@ mod patches_struck;
 mod voice;
 #[cfg(test)]
 mod voice_tests;
+
+pub(super) use self::engine::SixOpEngine;

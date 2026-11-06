@@ -6,8 +6,6 @@ mod chord_waves;
 mod chords;
 mod fm;
 mod grain_formant;
-// The six_op_fm model's synthesizer, registered once its engine lands.
-#[allow(dead_code)]
 mod six_op;
 mod speech;
 mod tables;
@@ -21,6 +19,7 @@ use self::additive::AdditiveEngine;
 use self::chords::ChordsEngine;
 use self::fm::FmEngine;
 use self::grain_formant::GrainFormantEngine;
+use self::six_op::SixOpEngine;
 use self::speech::SpeechEngine;
 use self::virtual_analog::VirtualAnalogEngine;
 use self::waveshaping::WaveshapingEngine;
@@ -38,6 +37,7 @@ pub(super) const MODELS: &[&str] = &[
     "chords",
     "speech",
     "wavetable",
+    "six_op_fm",
 ];
 
 /// How many engines there are.
@@ -55,11 +55,13 @@ const LEVELS: [(f32, f32); MODEL_COUNT] = [
     (0.8, 0.8),
     (1.0, 0.8),
     (1.0, 1.0),
+    (1.0, 1.0),
 ];
 
 /// Whether each engine shapes its own sound over time when struck by a
 /// trigger (a string, a body, a drum), so the low-pass gate leaves it be.
-pub(super) const ENVELOPED: [bool; MODEL_COUNT] = [false; MODEL_COUNT];
+pub(super) const ENVELOPED: [bool; MODEL_COUNT] =
+    [false, false, false, false, false, false, false, false, true];
 
 /// Every engine, built up front so switching allocates nothing.
 pub(super) struct Engines {
@@ -71,6 +73,7 @@ pub(super) struct Engines {
     chords: ChordsEngine,
     speech: SpeechEngine,
     wavetable: WavetableEngine,
+    six_op: SixOpEngine,
 }
 
 impl Engines {
@@ -87,6 +90,7 @@ impl Engines {
             chords: ChordsEngine::new(),
             speech: SpeechEngine::new(sample_rate),
             wavetable: WavetableEngine::new(),
+            six_op: SixOpEngine::new(),
         }
     }
 
@@ -101,7 +105,8 @@ impl Engines {
             4 => self.additive.render(p, out, aux),
             5 => self.chords.render(p, out, aux),
             6 => self.speech.render(p, out, aux),
-            _ => self.wavetable.render(p, out, aux),
+            7 => self.wavetable.render(p, out, aux),
+            _ => self.six_op.render(p, out, aux),
         }
         let (out_level, aux_level) = LEVELS[model];
         out.iter_mut().for_each(|s| *s *= out_level);
@@ -115,7 +120,7 @@ mod tests {
 
     /// The models that shape their own envelope, by name, so a model added
     /// out of step with `ENVELOPED` is caught rather than gated by mistake.
-    const STRUCK: &[&str] = &[];
+    const STRUCK: &[&str] = &["six_op_fm"];
 
     #[test]
     fn exactly_the_struck_models_shape_their_own_envelope() {

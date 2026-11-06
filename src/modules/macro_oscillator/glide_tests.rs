@@ -94,6 +94,12 @@ fn macro_writes_do_not_put_corners_in_any_model() {
             if engines::MODELS[model] == "wavetable" && key == "harmonics" {
                 continue;
             }
+            // Six-operator FM's harmonics picks another patch, crossfading
+            // to a different sound whose own detuned beating sets its
+            // sharpest turn: the engine tests check that crossfade.
+            if engines::MODELS[model] == "six_op_fm" && key == "harmonics" {
+                continue;
+            }
             let mut module = concrete(json!({
                 "model": engines::MODELS[model], "frequency": 110.0, key: 0.1,
             }));

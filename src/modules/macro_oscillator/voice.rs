@@ -54,6 +54,8 @@ pub(super) struct Block {
     pub trigger: bool,
     /// Whether `trigger` is unpatched.
     pub untriggered: bool,
+    /// Whether `trigger` is patched and still high.
+    pub trigger_held: bool,
     /// The key and scale chords are built in.
     pub key: u8,
     pub scale: u8,
@@ -127,6 +129,11 @@ impl Voice {
         self.shares[model] = 1.0;
     }
 
+    /// Whether the trigger is high (above its hysteresis).
+    pub fn trigger_is_high(&self) -> bool {
+        self.trigger_high
+    }
+
     /// Whether `value` is a trigger's rising edge, with hysteresis so a
     /// slow or noisy edge counts once.
     pub fn trigger_edge(&mut self, value: f32) -> bool {
@@ -164,6 +171,7 @@ impl Voice {
             accent,
             trigger: block.trigger,
             untriggered: block.untriggered,
+            trigger_held: block.trigger_held,
             key: block.key,
             scale: block.scale,
         };
@@ -335,6 +343,7 @@ mod tests {
             decay: 0.5,
             trigger: false,
             untriggered: true,
+            trigger_held: false,
             key: 0,
             scale: 0,
         }
@@ -450,6 +459,7 @@ mod tests {
                 accent: 0.8,
                 trigger: false,
                 untriggered: true,
+                trigger_held: false,
                 key: 0,
                 scale: 0,
             };
