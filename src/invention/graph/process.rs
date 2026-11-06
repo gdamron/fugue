@@ -6,6 +6,7 @@ use super::conditions::Segment;
 use super::SignalGraph;
 use crate::audio_thread::AudioThreadScope;
 use crate::control_request::{take_automation, FrameScope};
+use crate::flush_to_zero::FlushToZeroScope;
 use crate::payload::RenderScope;
 
 impl SignalGraph {
@@ -20,7 +21,10 @@ impl SignalGraph {
     /// The block runs as segments split at each pending control request's
     /// sample (see [`super::requests`]); with none due it is one segment.
     /// All of it runs inside an [`AudioThreadScope`], so debug builds catch
-    /// a payload dropped, or control-only code reached, from here.
+    /// a payload dropped, or control-only code reached, from here, and
+    /// inside a [`FlushToZeroScope`], so no module spends the block on
+    /// subnormal numbers. Every live backend and every offline render
+    /// renders through here.
     ///
     /// A zero-length block takes up publications, input writes and requests
     /// as any block start does and applies the requests due at the current
@@ -33,6 +37,7 @@ impl SignalGraph {
     /// silence and touches nothing.
     pub(crate) fn process_block(&mut self, left: &mut [f32], right: &mut [f32]) {
         let _audio_thread = AudioThreadScope::enter();
+        let _flush_to_zero = FlushToZeroScope::enter();
         let _rendering = RenderScope::enter();
         if self.failed {
             left.fill(0.0);
