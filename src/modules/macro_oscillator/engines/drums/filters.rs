@@ -1,5 +1,5 @@
-//! Ported from Mutable Instruments' `stmlib/dsp/filter.h` (`Svf` and its
-//! `tan` approximations; MIT, Copyright 2014 Emilie Gillet) and
+//! Ported from Mutable Instruments' `stmlib/dsp/filter.h` (`Svf`, `OnePole`
+//! and their `tan` approximations; MIT, Copyright 2014 Emilie Gillet) and
 //! `stmlib/dsp/dsp.h` (`SoftLimit`, `SoftClip` and the `ONE_POLE` and
 //! `SLOPE` macros; MIT, Copyright 2012 Emilie Gillet). See
 //! THIRD_PARTY_NOTICES.md.
@@ -107,6 +107,36 @@ impl ModeFilter {
         let lowpass = self.g * bandpass + self.second;
         self.second = flush(self.g * bandpass + lowpass);
         Modes { lowpass, bandpass }
+    }
+}
+
+/// A one-pole filter in the same trapezoidal form: low-pass, and the
+/// high-pass that is what the low-pass leaves.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct OnePoleFilter {
+    g: f32,
+    gi: f32,
+    state: f32,
+}
+
+impl OnePoleFilter {
+    /// Sets the cutoff from `g = tan(π·f)`.
+    #[inline]
+    pub fn set_g(&mut self, g: f32) {
+        self.g = g;
+        self.gi = 1.0 / (1.0 + g);
+    }
+
+    #[inline]
+    pub fn lowpass(&mut self, x: f32) -> f32 {
+        let lp = (self.g * x + self.state) * self.gi;
+        self.state = self.g * (x - lp) + lp;
+        lp
+    }
+
+    #[inline]
+    pub fn highpass(&mut self, x: f32) -> f32 {
+        x - self.lowpass(x)
     }
 }
 
