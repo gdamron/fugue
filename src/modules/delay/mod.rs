@@ -35,6 +35,7 @@ use crate::factory::{apply_control_keys, GraphModule, ModuleBuildResult, ModuleF
 use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
 use crate::modules::mixer::gain_ramp_frames;
+use crate::modules::note_division;
 use crate::traits::ControlMeta;
 use crate::{FeedbackCut, Module, MAX_BLOCK};
 
@@ -285,22 +286,16 @@ impl Delay {
     /// The tempo: the `bpm` input's while it is patched and carries one,
     /// otherwise the control's.
     fn tempo(&self) -> f64 {
-        let patched = self.inputs.bpm[0];
-        if self.inputs.bpm_connected && patched.is_finite() && patched > 0.0 {
-            f64::from(patched.clamp(1.0, 1000.0))
-        } else {
-            f64::from(self.bpm)
-        }
+        let patched = self.inputs.bpm_connected.then_some(self.inputs.bpm[0]);
+        note_division::tempo(patched, self.bpm)
     }
 
     /// The time the controls and tempo ask for, in samples, from the
     /// shortest to the longest. One within [`WHOLE_SAMPLE`] of a whole
     /// sample is that sample.
     fn time_samples(&self) -> f64 {
-        let seconds = match DIVISION_BEATS.get(self.division) {
-            Some(&beats) if beats > 0.0 => beats * 60.0 / self.tempo(),
-            _ => f64::from(self.time),
-        };
+        let seconds = note_division::division_seconds(self.division, self.tempo())
+            .unwrap_or(f64::from(self.time));
         whole_or_exact(seconds * self.sample_rate).clamp(self.shortest as f64, self.longest)
     }
 

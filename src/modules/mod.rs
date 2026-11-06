@@ -53,6 +53,7 @@ mod lock_scan_tests;
 pub mod melody;
 pub mod mixer;
 pub mod noise;
+pub(crate) mod note_division;
 pub mod oscillator;
 pub mod resonator;
 pub mod reverb;

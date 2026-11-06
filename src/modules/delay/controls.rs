@@ -1,6 +1,9 @@
 //! The delay's declared controls.
 
 use crate::control_request::{ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue};
+use crate::modules::note_division::{DIVISIONS, DIVISION_SPELLINGS};
+
+pub(super) use crate::modules::note_division::DIVISION_BEATS;
 
 pub(super) const TIME: ControlIndex = ControlIndex(0);
 pub(super) const DIVISION: ControlIndex = ControlIndex(1);
@@ -14,64 +17,6 @@ pub(super) const TIME_MOD_DEPTH: ControlIndex = ControlIndex(6);
 pub(super) const LONGEST_SECONDS: f32 = 60.0;
 /// The most feedback: past 1, repeats grow until the soft clip holds them.
 pub(super) const MOST_FEEDBACK: f32 = 1.1;
-
-/// The note values `division` offers, `off` first, in the music module's
-/// vocabulary (`8th_note`, `quarter_triplet`).
-const DIVISIONS: &[&str] = &[
-    "off",
-    "whole_note",
-    "half_note",
-    "quarter_note",
-    "8th_note",
-    "16th_note",
-    "32nd_note",
-    "dotted_half_note",
-    "dotted_quarter_note",
-    "dotted_8th_note",
-    "dotted_16th_note",
-    "half_triplet",
-    "quarter_triplet",
-    "8th_triplet",
-    "16th_triplet",
-];
-
-/// Each division's length in beats (a quarter note is one), in
-/// [`DIVISIONS`] order; `off` has none.
-pub(super) const DIVISION_BEATS: [f64; 15] = [
-    0.0,
-    4.0,
-    2.0,
-    1.0,
-    0.5,
-    0.25,
-    0.125,
-    3.0,
-    1.5,
-    0.75,
-    0.375,
-    4.0 / 3.0,
-    2.0 / 3.0,
-    1.0 / 3.0,
-    1.0 / 6.0,
-];
-
-/// The fractions musicians write, as other spellings of the divisions.
-const DIVISION_SPELLINGS: &[(&str, &str)] = &[
-    ("1/1", "whole_note"),
-    ("1/2", "half_note"),
-    ("1/4", "quarter_note"),
-    ("1/8", "8th_note"),
-    ("1/16", "16th_note"),
-    ("1/32", "32nd_note"),
-    ("1/2.", "dotted_half_note"),
-    ("1/4.", "dotted_quarter_note"),
-    ("1/8.", "dotted_8th_note"),
-    ("1/16.", "dotted_16th_note"),
-    ("1/2t", "half_triplet"),
-    ("1/4t", "quarter_triplet"),
-    ("1/8t", "8th_triplet"),
-    ("1/16t", "16th_triplet"),
-];
 
 /// How a change of time is heard, in [`super::Glide`] order.
 const GLIDES: &[&str] = &["crossfade", "slew"];

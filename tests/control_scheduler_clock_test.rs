@@ -100,7 +100,8 @@ fn clocked(connections: &[fugue::RuntimeConnectionInfo]) -> bool {
 /// clock, the replacement is refused with nothing changed.
 #[test]
 fn replacing_a_schedulers_clock_leaves_it_unclocked() {
-    let lfo = serde_json::json!({ "rate": 2.0, "waveform": "square" });
+    // An oscillator has neither the clock's gate nor its `bpm` control.
+    let osc = serde_json::json!({ "frequency": 2.0, "waveform": "square" });
     let clock = serde_json::json!({ "bpm": 120.0 });
     let feeding = serde_json::json!([to_sched("clock", "beat")]);
     let elsewhere = fugue::ControlValue::String(
@@ -110,14 +111,14 @@ fn replacing_a_schedulers_clock_leaves_it_unclocked() {
     let mut engine = RenderEngine::new(48_000);
     engine.load_invention(document(feeding.clone())).unwrap();
     assert!(
-        engine.add_module("clock", "lfo", &lfo).is_err(),
+        engine.add_module("clock", "oscillator", &osc).is_err(),
         "scheduled"
     );
     assert!(clocked(&engine.list_connections()));
     engine
         .set_control("sched", "schedule", elsewhere.clone())
         .unwrap();
-    engine.add_module("clock", "lfo", &lfo).unwrap();
+    engine.add_module("clock", "oscillator", &osc).unwrap();
     assert!(!clocked(&engine.list_connections()));
     engine.add_module("clock", "clock", &clock).unwrap();
     assert!(!clocked(&engine.list_connections()), "not brought back");
@@ -127,9 +128,9 @@ fn replacing_a_schedulers_clock_leaves_it_unclocked() {
     let mut engine = RenderEngine::new(48_000);
     engine.load_invention(document(feeding)).unwrap();
     let controller = engine.controller().unwrap();
-    assert!(controller.add_module("clock", "lfo", &lfo).is_err());
+    assert!(controller.add_module("clock", "oscillator", &osc).is_err());
     engine.set_control("sched", "schedule", elsewhere).unwrap();
-    controller.add_module("clock", "lfo", &lfo).unwrap();
+    controller.add_module("clock", "oscillator", &osc).unwrap();
     controller
         .connect("lfo", "unipolar", "dac", "audio_left")
         .unwrap();
