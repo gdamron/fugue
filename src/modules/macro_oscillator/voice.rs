@@ -7,7 +7,7 @@
 //! Fugue's own. See THIRD_PARTY_NOTICES.md.
 
 use super::engine::{semitones_to_ratio, EngineParameters, ENGINE_BLOCK};
-use super::engines::{Engines, MODEL_COUNT};
+use super::engines::{Engines, ENVELOPED, MODEL_COUNT};
 use super::lpg::{LowPassGate, LpgEnvelope, TUNED_RATE};
 use crate::dsp::BlockRamp;
 
@@ -52,6 +52,8 @@ pub(super) struct Block {
     pub decay: f32,
     /// Whether a trigger rose during the block, gating or not.
     pub trigger: bool,
+    /// Whether `trigger` is unpatched.
+    pub untriggered: bool,
     /// The key and scale chords are built in.
     pub key: u8,
     pub scale: u8,
@@ -147,10 +149,7 @@ impl Voice {
         audio.fill(0.0);
         aux.fill(0.0);
 
-        let gate = match block.gate {
-            Gate::Level(level) => Gate::Level(compress_level(level)),
-            gate => gate,
-        };
+        let gate = engine_gate(block.gate, ENVELOPED[block.model]);
         let accent = match gate {
             Gate::Level(level) => level,
             _ => 0.8,
@@ -164,6 +163,7 @@ impl Voice {
             morph: block.morph,
             accent,
             trigger: block.trigger,
+            untriggered: block.untriggered,
             key: block.key,
             scale: block.scale,
         };
@@ -295,6 +295,17 @@ impl Voice {
     }
 }
 
+/// The gate as `model` meets it. An engine with its own envelope
+/// (`enveloped`) is struck by the trigger and decays by itself, so a ping
+/// leaves the gate open; a patched level still gates it.
+fn engine_gate(gate: Gate, enveloped: bool) -> Gate {
+    match gate {
+        Gate::Level(level) => Gate::Level(compress_level(level)),
+        Gate::Ping { .. } if enveloped => Gate::Open,
+        gate => gate,
+    }
+}
+
 /// A `level` input bent the way a vactrol responds: quick to open, then
 /// leveling off, 0 to 1. A level that is not a number counts as closed.
 fn compress_level(level: f32) -> f32 {
@@ -322,8 +333,27 @@ mod tests {
             gate,
             decay: 0.5,
             trigger: false,
+            untriggered: true,
             key: 0,
             scale: 0,
+        }
+    }
+
+    /// A self-enveloped engine leaves a ping's gate open but is still
+    /// gated by a patched level; every other engine meets the gate as is.
+    #[test]
+    fn a_self_enveloped_engine_is_gated_only_by_a_level() {
+        for rising in [false, true] {
+            let ping = Gate::Ping { rising };
+            assert_eq!(engine_gate(ping, true), Gate::Open);
+            assert_eq!(engine_gate(ping, false), ping);
+        }
+        for enveloped in [false, true] {
+            assert_eq!(engine_gate(Gate::Open, enveloped), Gate::Open);
+            assert_eq!(
+                engine_gate(Gate::Level(0.5), enveloped),
+                Gate::Level(compress_level(0.5))
+            );
         }
     }
 
