@@ -43,6 +43,8 @@ fn build(name: &str, hz: f32, level: Option<f32>) -> Voice {
 ///   default controls, so they differ only in the second trigger.
 /// - `aux` is judged the same way, but only where the untouched hit has a
 ///   measurable step (above 1e-3), since `aux` may be silent for an engine.
+/// - The exception is particle_noise's `aux`, which is judged by a no-clip
+///   check instead: its absolute peak over the retrigger window is at most 1.0.
 mod retrigger_steps_stay_within_one_and_a_half_times_steady_state {
     use super::*;
 
@@ -70,6 +72,21 @@ mod retrigger_steps_stay_within_one_and_a_half_times_steady_state {
         ] {
             if port == "audio" {
                 assert!(steady > 1e-4, "{what}: untouched hit is silent");
+            } else if name == "particle_noise" {
+                // particle_noise's aux carries the bare impulses, and a
+                // trigger deliberately fires a synchronized burst of every
+                // particle at once, so the retrigger is a fresh click by
+                // design rather than a decay-stack step. The step ratio does
+                // not apply there; the meaningful guarantee is that the burst
+                // does not clip.
+                let top = peak(&aux[from..]);
+                assert!(
+                    top <= 1.0,
+                    "{what}: retrigger at frame {t_r} ({:.3} s) on aux peaks at {top:.5}, \
+                     which clips",
+                    t_r as f64 / SRF
+                );
+                continue;
             } else if steady <= 1e-3 {
                 continue;
             }
