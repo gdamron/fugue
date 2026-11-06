@@ -225,6 +225,7 @@ fn each_macro_changes_the_new_models_sound() {
         "additive",
         "chords",
         "speech",
+        "wavetable",
     ] {
         for key in ["harmonics", "timbre", "morph"] {
             let (low, high) = (play(model, key, 0.1), play(model, key, 0.9));
