@@ -40,6 +40,21 @@ pub(super) fn tan_fast(f: f32) -> f32 {
     f * (PI + f2 * (A + B * f2))
 }
 
+/// `tan(π·f)` to within 0.01% below 8 kHz at 48 kHz and 2.5% at 16 kHz,
+/// for a cutoff that moves across the audio range.
+#[inline]
+pub(super) fn tan_accurate(f: f32) -> f32 {
+    const P3: f32 = PI * PI * PI;
+    const P5: f32 = P3 * PI * PI;
+    const P7: f32 = P5 * PI * PI;
+    const P9: f32 = P7 * PI * PI;
+    const P11: f32 = P9 * PI * PI;
+    let (a, b, c) = (3.333_314e-1 * P3, 1.333_924e-1 * P5, 5.337_406e-2 * P7);
+    let (d, e) = (2.900_525e-3 * P9, 9.516_809e-3 * P11);
+    let f2 = f * f;
+    f * (PI + f2 * (a + f2 * (b + f2 * (c + f2 * (d + f2 * e)))))
+}
+
 /// A gentle saturation, exact near zero and reaching ±1 at ±3.
 #[inline]
 pub(super) fn soft_limit(x: f32) -> f32 {
@@ -61,6 +76,7 @@ pub(super) fn soft_clip(x: f32) -> f32 {
 /// One sample of a [`ModeFilter`]: every response at once.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Modes {
+    pub highpass: f32,
     pub lowpass: f32,
     /// Peaks at the filter's Q at its cutoff.
     pub bandpass: f32,
@@ -106,7 +122,11 @@ impl ModeFilter {
         self.first = flush(self.g * highpass + bandpass);
         let lowpass = self.g * bandpass + self.second;
         self.second = flush(self.g * bandpass + lowpass);
-        Modes { lowpass, bandpass }
+        Modes {
+            highpass,
+            lowpass,
+            bandpass,
+        }
     }
 }
 
@@ -382,6 +402,14 @@ mod tests {
             let exact = (PI * f).tan();
             assert!((tan_fast(f) / exact - 1.0).abs() < 2e-3, "{hz}: fast");
             assert!((tan_dirty(f) / exact - 1.0).abs() < 2e-2, "{hz}: dirty");
+        }
+        for (hz, error) in [(20.0f32, 1e-4), (8_000.0, 2e-4), (16_000.0, 2.5e-2)] {
+            let f = hz / 48_000.0;
+            let exact = (PI * f).tan();
+            assert!(
+                (tan_accurate(f) / exact - 1.0).abs() < error,
+                "{hz}: accurate"
+            );
         }
     }
 

@@ -6,10 +6,14 @@ mod analog_bass;
 mod analog_snare;
 mod bass;
 mod filters;
+mod hats;
+mod hi_hat;
+mod metallic_noise;
 mod overdrive;
 mod snare;
 mod synthetic_bass;
 mod synthetic_snare;
 
 pub(super) use self::bass::BassDrumEngine;
+pub(super) use self::hi_hat::HiHatEngine;
 pub(super) use self::snare::SnareDrumEngine;
