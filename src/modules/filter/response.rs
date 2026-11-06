@@ -92,7 +92,8 @@ impl Response {
     /// An EQ response.
     #[inline(always)]
     fn eq_sample(&mut self, frame: &Frame) -> f32 {
-        (self.eq).design(self.filter_type, frame.cutoff, frame.boost, frame.q);
+        self.eq
+            .design(self.filter_type, frame.cutoff, frame.boost, frame.q);
         let coefficients = &self.eq.coefficients;
         let (bandpass, lowpass) = self.stage.tick(coefficients, frame.input);
         coefficients.mix(frame.input, bandpass, lowpass)

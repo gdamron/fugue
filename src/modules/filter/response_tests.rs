@@ -115,3 +115,46 @@ fn a_switch_before_the_filter_is_heard_lands_at_once() {
         .with_cutoff(1000.0);
     assert_eq!(run(&mut switched, 0, 2_000), run(&mut built, 0, 2_000));
 }
+
+#[test]
+fn steep_and_resonant_switches_crossfade_without_a_step() {
+    use FilterType::*;
+    // (from, to, slope, resonance, slope toggled mid-fade)
+    let cases = [
+        (Bell, LowPass, 1.0, 0.3, false),
+        (LowPass, HighPass, 1.0, 0.3, true),
+        (HighPass, LowShelf, 0.0, 0.3, true),
+        (LowPass, Bell, 0.0, 0.95, false),
+    ];
+    for (from, to, slope, resonance, toggle) in cases {
+        let build = |filter_type| {
+            let mut filter = Filter::new(RATE)
+                .with_filter_type(filter_type)
+                .with_cutoff(1000.0)
+                .with_resonance(resonance);
+            filter.set_control("slope", slope).unwrap();
+            filter.set_control("boost", 12.0).unwrap();
+            filter
+        };
+        let mut filter = build(from);
+        let before = run(&mut filter, 0, 24_000);
+        filter.set_filter_type(to);
+        let mut across = run(&mut filter, 24_000, fade_frames() / 2);
+        if toggle {
+            filter.set_control("slope", 1.0 - slope).unwrap();
+        }
+        let rest = 24_000 + fade_frames() / 2;
+        across.extend(run(&mut filter, rest, 2 * fade_frames()));
+        let steady = [from, to]
+            .map(|t| largest_step(&run(&mut build(t), 0, 24_000)[12_000..]))
+            .into_iter()
+            .fold(largest_step(&before[12_000..]), f32::max);
+        let mut joined = vec![before[before.len() - 1]];
+        joined.extend(across);
+        let step = largest_step(&joined);
+        assert!(
+            step <= 1.5 * steady,
+            "{from:?} -> {to:?}: {step} vs {steady}"
+        );
+    }
+}
