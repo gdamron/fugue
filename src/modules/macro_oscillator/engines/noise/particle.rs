@@ -7,7 +7,7 @@
 //! 0.5 smears the particles in a diffuser, above it narrows the bands
 //! toward pitched pings. `audio` is the ringing, `aux` the bare impulses.
 
-use super::super::drums::filters::{tan_dirty, ModeFilter, Rate};
+use super::super::drums::filters::{flush, tan_dirty, ModeFilter, Rate};
 use super::diffuser::Diffuser;
 use super::particles::{Burst, Particle};
 use crate::modules::macro_oscillator::engine::{semitones_to_ratio, EngineParameters};
@@ -69,6 +69,10 @@ impl ParticleNoiseEngine {
         }
         self.diffuser
             .process(0.8 * diffusion * diffusion, 0.5 * diffusion + 0.25, out);
+        // The ringing bands and the smear fade toward subnormal numbers.
+        for x in out.iter_mut().chain(aux.iter_mut()) {
+            *x = flush(*x);
+        }
     }
 }
 

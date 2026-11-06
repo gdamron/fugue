@@ -7,7 +7,7 @@
 //! slowly swaying delay: a short, dense smear that turns sparse clicks
 //! into a wash.
 
-use super::super::drums::filters::{BlockGlide, Rate};
+use super::super::drums::filters::{flush, BlockGlide, Rate};
 use crate::dsp::cosine;
 
 /// The allpasses' coefficient.
@@ -73,7 +73,7 @@ impl Line {
 /// An allpass over `line`: `x` in, the filtered sample out.
 #[inline]
 fn allpass(line: &mut Line, delayed: f32, x: f32, coefficient: f32) -> f32 {
-    let into = x + coefficient * delayed;
+    let into = flush(x + coefficient * delayed);
     line.write(into);
     delayed - coefficient * into
 }
@@ -141,7 +141,7 @@ impl Diffuser {
 
             let (at, by) = self.swayed[1];
             wet += feedback * delay.read(at + by * self.sway);
-            self.lp += self.damping * (wet - self.lp);
+            self.lp = flush(self.lp + self.damping * (wet - self.lp));
             wet = self.lp;
             let delayed = loop_a.read_tail();
             wet = allpass(loop_a, delayed, wet, -ALLPASS);
