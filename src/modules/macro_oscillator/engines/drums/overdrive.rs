@@ -4,7 +4,7 @@
 //! A soft-clipping overdrive whose output gain makes up for its drive, so
 //! turning it up changes the colour more than the loudness.
 
-use super::filters::{soft_clip, BlockGlide};
+use super::super::filters::{soft_clip, BlockGlide};
 
 #[derive(Default)]
 pub(super) struct Overdrive {

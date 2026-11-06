@@ -4,10 +4,10 @@
 //! `SLOPE` macros; MIT, Copyright 2012 Emilie Gillet). See
 //! THIRD_PARTY_NOTICES.md.
 //!
-//! The filters the drums are built from. A drum's modes ring for seconds at
-//! Q in the thousands, past what `dsp::Svf` allows, and move every sample
-//! under the drum's pitch envelope, so their cutoff is a polynomial `tan`
-//! rather than a call.
+//! The filters the drum and noise engines are built from. A drum's modes
+//! ring for seconds at Q in the thousands, past what `dsp::Svf` allows,
+//! and move every sample under the drum's pitch envelope, so their cutoff
+//! is a polynomial `tan` rather than a call.
 
 use std::f32::consts::PI;
 
@@ -259,7 +259,7 @@ impl BlockGlide {
     }
 }
 
-/// What the drums' tests play them with.
+/// What the drum and noise engines' tests play them with.
 #[cfg(test)]
 pub(super) mod testing {
     use crate::modules::macro_oscillator::engine::{EngineParameters, ENGINE_BLOCK};

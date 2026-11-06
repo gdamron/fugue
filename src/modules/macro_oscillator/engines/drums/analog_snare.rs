@@ -6,7 +6,7 @@
 //! tuned shell modes, beside a burst of filtered noise for the snares.
 //! Un-triggered, sines stand in for the modes.
 
-use super::filters::{flush, soft_clip, tan_fast, BlockGlide, ModeFilter, Rate};
+use super::super::filters::{flush, soft_clip, tan_fast, BlockGlide, ModeFilter, Rate};
 use crate::dsp::{sine, Rng};
 use crate::modules::macro_oscillator::engine::semitones_to_ratio;
 

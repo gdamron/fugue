@@ -5,7 +5,6 @@
 mod analog_bass;
 mod analog_snare;
 mod bass;
-mod filters;
 mod hats;
 mod hi_hat;
 mod metallic_noise;

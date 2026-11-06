@@ -5,7 +5,7 @@
 //! A hi-hat: clangorous metallic noise through a band-pass, roughened by
 //! a little clocked noise, then a decaying VCA and a high-pass.
 
-use super::filters::{flush, tan_accurate, BlockGlide, ModeFilter, Rate};
+use super::super::filters::{flush, tan_accurate, BlockGlide, ModeFilter, Rate};
 use super::metallic_noise::{RingModNoise, SquareNoise};
 use crate::dsp::Rng;
 use crate::modules::macro_oscillator::engine::{semitones_to_ratio, ENGINE_BLOCK};

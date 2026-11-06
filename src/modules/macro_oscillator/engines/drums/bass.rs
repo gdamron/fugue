@@ -6,8 +6,8 @@
 //! tone, from a dull thud to a clicky one; `morph` is the decay. `audio`
 //! is the analog-style drum, `aux` the synthetic one.
 
+use super::super::filters::Rate;
 use super::analog_bass::{AnalogBassDrum, AnalogBassSettings};
-use super::filters::Rate;
 use super::overdrive::Overdrive;
 use super::synthetic_bass::{SyntheticBassDrum, SyntheticBassSettings};
 use crate::modules::macro_oscillator::engine::EngineParameters;
@@ -73,7 +73,7 @@ impl BassDrumEngine {
 
 #[cfg(test)]
 mod tests {
-    use super::super::filters::testing::{
+    use super::super::super::filters::testing::{
         assert_rate_independent, loudness_over_time, params, peak, play, strike, RATE,
     };
     use super::*;

@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 33] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 34] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -121,6 +121,11 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 33] = [
         file_name: "macro_oscillator_six_op_tine_keys.json",
         title: "Macro Oscillator Six-Operator Tine Keys",
         summary: "A slow minor-key line from the macro oscillator's six-operator FM tine keys.",
+    },
+    ExampleDefinition {
+        file_name: "macro_oscillator_drum_groove.json",
+        title: "Macro Oscillator Drum Groove",
+        summary: "A kick, snare, hats, shaker and rain from the macro oscillator's drum and noise models.",
     },
     ExampleDefinition {
         file_name: "contour_rolling_filters.json",
@@ -325,6 +330,7 @@ mod tests {
                 "macro_oscillator_vowel_chant.json",
                 "macro_oscillator_wavetable_arpeggio.json",
                 "macro_oscillator_six_op_tine_keys.json",
+                "macro_oscillator_drum_groove.json",
                 "contour_rolling_filters.json",
                 "resonator_modal_bells.json",
                 "resonator_sympathetic_halo.json",
