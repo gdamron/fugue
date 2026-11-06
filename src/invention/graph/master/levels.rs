@@ -86,6 +86,10 @@ pub struct MasterLevels {
     pub frames: u64,
     /// The rate the audio clock counts frames at.
     pub sample_rate: u32,
+    /// Non-finite samples (NaN or ±inf) the sinks playing now have replaced
+    /// with silence since each was built: a running total, not this
+    /// window's. It drops back only when a sink is rebuilt or removed.
+    pub non_finite_samples: u64,
 }
 
 impl MasterLevels {
@@ -193,6 +197,9 @@ pub(crate) struct LevelMeter {
     slots: [Slot; 2],
     /// Serializes drains, and holds where the last non-empty window ended.
     pub(super) drain: Mutex<u64>,
+    /// The sinks' latest total of replaced non-finite samples. A running
+    /// total, so a drain reads it as is rather than per window.
+    non_finite_samples: AtomicU64,
 }
 
 impl LevelMeter {
@@ -203,6 +210,13 @@ impl LevelMeter {
         let claimed = self.ctl.fetch_add(CLAIM, Ordering::Acquire);
         self.slots[(claimed & ACTIVE) as usize].fold(block, end_frame);
         self.ctl.fetch_add(CLAIM, Ordering::Release);
+    }
+
+    /// Audio thread: records the sinks' running total of replaced
+    /// non-finite samples. One relaxed store.
+    #[inline]
+    pub(crate) fn count_non_finite(&self, total: u64) {
+        self.non_finite_samples.store(total, Ordering::Relaxed);
     }
 
     /// Sampler: the levels since the previous drain, after which the next
@@ -230,6 +244,7 @@ impl LevelMeter {
             end_frame: *last_end,
             frames: window.frames,
             sample_rate,
+            non_finite_samples: self.non_finite_samples.load(Ordering::Relaxed),
         }
     }
 }

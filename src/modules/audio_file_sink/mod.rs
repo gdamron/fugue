@@ -15,6 +15,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::modules::dac::{finite_or_silence, soft_clip};
 use crate::{Module, SinkModule, MAX_BLOCK};
 
 mod inputs;
@@ -123,6 +124,8 @@ pub struct AudioFileSink {
     /// Whether this sink has told its backend it is recording, which it
     /// does once, on the first block it processes.
     activated: bool,
+    /// Non-finite samples replaced with silence since the sink was built.
+    non_finite_samples: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -152,6 +155,7 @@ impl AudioFileSink {
             monitor,
             silence: [0.0; MAX_BLOCK],
             activated: false,
+            non_finite_samples: 0,
         };
         let handle = AudioFileSinkHandle { shared };
         (sink, handle)
@@ -165,21 +169,6 @@ impl AudioFileSink {
     pub fn with_soft_clip(mut self, soft_clip: bool) -> Self {
         self.soft_clip = soft_clip;
         self
-    }
-
-    #[inline]
-    fn soft_clip_sample(sample: f32) -> f32 {
-        const KNEE: f32 = 0.95;
-        const HEADROOM: f32 = 1.0 - KNEE;
-
-        let abs = sample.abs();
-        if abs <= KNEE {
-            sample
-        } else {
-            let excess = (abs - KNEE) / HEADROOM;
-            let compressed = KNEE + HEADROOM * excess / (1.0 + excess);
-            sample.signum() * compressed
-        }
     }
 }
 
@@ -203,11 +192,13 @@ impl Module for AudioFileSink {
             self.shared.activate();
         }
         let stopping = self.shared.is_stopping();
+        let mut replaced = 0;
         for i in 0..frames {
-            let (mut left, mut right) = (self.inputs.audio_left(i), self.inputs.audio_right(i));
+            let mut left = finite_or_silence(self.inputs.audio_left(i), &mut replaced);
+            let mut right = finite_or_silence(self.inputs.audio_right(i), &mut replaced);
             if self.soft_clip {
-                left = Self::soft_clip_sample(left);
-                right = Self::soft_clip_sample(right);
+                left = soft_clip(left);
+                right = soft_clip(right);
             }
             self.outputs.set(i, left, right);
 
@@ -215,6 +206,7 @@ impl Module for AudioFileSink {
                 self.shared.push(left, right);
             }
         }
+        self.non_finite_samples += replaced;
         true
     }
 
@@ -250,6 +242,10 @@ impl SinkModule for AudioFileSink {
         } else {
             (&self.silence, &self.silence)
         }
+    }
+
+    fn non_finite_samples(&self) -> u64 {
+        self.non_finite_samples
     }
 }
 
@@ -339,6 +335,31 @@ mod tests {
         let (left, right) = sink.sink_block();
         assert_eq!(left[0], 3.0);
         assert_eq!(right[0], 3.0);
+
+        handle.finish();
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn non_finite_samples_are_recorded_and_monitored_as_silence() {
+        #[cfg(not(target_arch = "wasm32"))]
+        let path = temp_wav_path("audio-file-sink-non-finite");
+        #[cfg(not(target_arch = "wasm32"))]
+        let (mut sink, handle) =
+            AudioFileSink::new(path.clone(), OutputFormat::Wav, 44_100, true, true, 16).unwrap();
+        #[cfg(target_arch = "wasm32")]
+        let (mut sink, handle) = AudioFileSink::new_wasm(44_100, true, true, 16).unwrap();
+
+        sink.set_input("audio_left", f32::NAN).unwrap();
+        sink.set_input("audio_right", 0.5).unwrap();
+        sink.process(2);
+        let (left, right) = sink.sink_block();
+        assert_eq!(
+            (&left[..2], &right[..2]),
+            (&[0.0, 0.0][..], &[0.5, 0.5][..])
+        );
+        assert_eq!(sink.non_finite_samples(), 2);
 
         handle.finish();
         #[cfg(not(target_arch = "wasm32"))]

@@ -130,6 +130,7 @@ impl SignalGraph {
             right[i] = 0.0;
         }
         let sink_count = self.sink_indices.len();
+        let mut non_finite_samples = 0;
         for si in 0..sink_count {
             let sink_idx = self.sink_indices[si];
             if let Some((_, inst)) = self.modules.get_index(sink_idx) {
@@ -139,6 +140,7 @@ impl SignalGraph {
                         right[i] += r[i];
                     }
                 }
+                non_finite_samples += inst.non_finite_samples();
             }
         }
         if sink_count > 1 {
@@ -152,7 +154,7 @@ impl SignalGraph {
         // Hand the mixed block to the master observers. Lock-free and
         // allocation-free.
         self.master
-            .observe(left, right, frames, self.current_sample);
+            .observe(left, right, frames, self.current_sample, non_finite_samples);
 
         self.store_carry(frames);
     }

@@ -14,6 +14,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::modules::dac::{finite_or_silence, soft_clip};
 use crate::{Module, SinkModule, MAX_BLOCK};
 
 mod inputs;
@@ -93,6 +94,8 @@ pub struct RtmpSink {
     soft_clip: bool,
     monitor: bool,
     silence: [f32; MAX_BLOCK],
+    /// Non-finite samples replaced with silence since the sink was built.
+    non_finite_samples: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -119,6 +122,7 @@ impl RtmpSink {
             soft_clip,
             monitor,
             silence: [0.0; MAX_BLOCK],
+            non_finite_samples: 0,
         };
         let handle = RtmpSinkHandle { shared };
         (sink, handle)
@@ -132,21 +136,6 @@ impl RtmpSink {
     pub fn with_soft_clip(mut self, soft_clip: bool) -> Self {
         self.soft_clip = soft_clip;
         self
-    }
-
-    #[inline]
-    fn soft_clip_sample(sample: f32) -> f32 {
-        const KNEE: f32 = 0.95;
-        const HEADROOM: f32 = 1.0 - KNEE;
-
-        let abs = sample.abs();
-        if abs <= KNEE {
-            sample
-        } else {
-            let excess = (abs - KNEE) / HEADROOM;
-            let compressed = KNEE + HEADROOM * excess / (1.0 + excess);
-            sample.signum() * compressed
-        }
     }
 }
 
@@ -163,19 +152,22 @@ impl Module for RtmpSink {
 
     fn process(&mut self, frames: usize) -> bool {
         let stopping = self.shared.is_stopping();
+        let mut replaced = 0;
         for i in 0..frames {
-            let (left, right) = (self.inputs.audio_left(i), self.inputs.audio_right(i));
+            let left = finite_or_silence(self.inputs.audio_left(i), &mut replaced);
+            let right = finite_or_silence(self.inputs.audio_right(i), &mut replaced);
             self.outputs.set(i, left, right);
 
             if !stopping {
                 let (stream_left, stream_right) = if self.soft_clip {
-                    (Self::soft_clip_sample(left), Self::soft_clip_sample(right))
+                    (soft_clip(left), soft_clip(right))
                 } else {
                     (left, right)
                 };
                 self.shared.push_audio(stream_left, stream_right);
             }
         }
+        self.non_finite_samples += replaced;
         true
     }
 
@@ -211,6 +203,10 @@ impl SinkModule for RtmpSink {
         } else {
             (&self.silence, &self.silence)
         }
+    }
+
+    fn non_finite_samples(&self) -> u64 {
+        self.non_finite_samples
     }
 }
 

@@ -794,6 +794,13 @@ pub trait SinkModule: Module {
     /// signal graph mixes these into the engine's interleaved output. Mono
     /// sinks return the same buffer for both channels.
     fn sink_block(&self) -> (&[f32], &[f32]);
+
+    /// How many non-finite samples (NaN or ±inf) this sink has replaced
+    /// with silence since it was built. The graph sums it over its sinks
+    /// into the master meter. Sinks that never see one report zero.
+    fn non_finite_samples(&self) -> u64 {
+        0
+    }
 }
 
 /// Helper for validating port names at module construction.

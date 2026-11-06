@@ -240,6 +240,15 @@ impl GraphModule {
             Self::Sink(module) => Some(module.sink_block()),
         }
     }
+
+    /// Non-finite samples a sink has replaced with silence (see
+    /// [`SinkModule::non_finite_samples`]); zero for non-sink modules.
+    pub fn non_finite_samples(&self) -> u64 {
+        match self {
+            Self::Module(_) => 0,
+            Self::Sink(module) => module.non_finite_samples(),
+        }
+    }
 }
 
 /// Result of building a module from a factory.

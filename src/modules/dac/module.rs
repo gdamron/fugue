@@ -2,6 +2,7 @@
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::modules::dac::inputs;
+use crate::modules::dac::output_stage::{finite_or_silence, soft_clip};
 use crate::modules::dac::outputs;
 use crate::{Module, SinkModule};
 
@@ -51,6 +52,12 @@ impl ModuleFactory for DacFactory {
 /// By default, applies soft clipping (tanh-based) to prevent harsh digital
 /// clipping when signals exceed the -1.0 to 1.0 range.
 ///
+/// A non-finite sample (NaN or ±inf) on either channel, after the mono
+/// input is summed in, is replaced with silence (0.0) before it can reach
+/// the device or a render, and counted: see
+/// [`SinkModule::non_finite_samples`]. The count lives as long as the
+/// module does, so it starts from zero only when the DAC is rebuilt.
+///
 /// # Inputs
 /// - `audio`: Mono signal summed equally into left and right
 /// - `audio_left`: Left channel input
@@ -79,6 +86,8 @@ pub struct DacModule {
     outputs: outputs::DacOutputs,
     /// Whether to apply soft clipping (default: true)
     soft_clip: bool,
+    /// Non-finite samples replaced with silence since the module was built.
+    non_finite_samples: u64,
 }
 
 impl DacModule {
@@ -88,6 +97,7 @@ impl DacModule {
             inputs: inputs::DacInputs::new(),
             outputs: outputs::DacOutputs::new(),
             soft_clip: true,
+            non_finite_samples: 0,
         }
     }
 
@@ -95,26 +105,6 @@ impl DacModule {
     pub fn with_soft_clip(mut self, enabled: bool) -> Self {
         self.soft_clip = enabled;
         self
-    }
-
-    /// Soft-clips audio that exceeds ±1.0 while preserving signals below the
-    /// knee. Linear below `KNEE`, then smoothly compresses toward ±1.0 using
-    /// `x/(1+x)` saturation on the excess. The function is C1-continuous at
-    /// the knee (derivative = 1.0 from both sides), so no audible artifacts
-    /// at the transition.
-    #[inline]
-    fn soft_clip_sample(sample: f32) -> f32 {
-        const KNEE: f32 = 0.95;
-        const HEADROOM: f32 = 1.0 - KNEE; // 0.05
-
-        let abs = sample.abs();
-        if abs <= KNEE {
-            sample
-        } else {
-            let excess = (abs - KNEE) / HEADROOM;
-            let compressed = KNEE + HEADROOM * excess / (1.0 + excess);
-            sample.signum() * compressed
-        }
     }
 }
 
@@ -130,14 +120,17 @@ impl Module for DacModule {
     }
 
     fn process(&mut self, frames: usize) -> bool {
+        let mut replaced = 0;
         for i in 0..frames {
-            let (mut left, mut right) = (self.inputs.audio_left(i), self.inputs.audio_right(i));
+            let mut left = finite_or_silence(self.inputs.audio_left(i), &mut replaced);
+            let mut right = finite_or_silence(self.inputs.audio_right(i), &mut replaced);
             if self.soft_clip {
-                left = Self::soft_clip_sample(left);
-                right = Self::soft_clip_sample(right);
+                left = soft_clip(left);
+                right = soft_clip(right);
             }
             self.outputs.set(i, left, right);
         }
+        self.non_finite_samples += replaced;
         true
     }
 
@@ -169,6 +162,10 @@ impl Module for DacModule {
 impl SinkModule for DacModule {
     fn sink_block(&self) -> (&[f32], &[f32]) {
         (self.outputs.left_block(), self.outputs.right_block())
+    }
+
+    fn non_finite_samples(&self) -> u64 {
+        self.non_finite_samples
     }
 }
 
@@ -239,6 +236,49 @@ mod tests {
         let neg = dac.get_output("audio").unwrap();
 
         assert!((pos + neg).abs() < 0.001, "Soft clip should be symmetrical");
+    }
+
+    #[test]
+    fn non_finite_samples_become_silence_and_are_counted() {
+        for soft_clip in [true, false] {
+            let mut dac = DacModule::new().with_soft_clip(soft_clip);
+            let left = dac.input_block_mut(1);
+            left[..4].copy_from_slice(&[0.25, f32::NAN, f32::INFINITY, -0.5]);
+            let right = dac.input_block_mut(2);
+            right[..4].copy_from_slice(&[f32::NEG_INFINITY, 0.75, 0.5, 0.125]);
+            dac.process(4);
+            let (l, r) = dac.sink_block();
+            assert_eq!(&l[..4], &[0.25, 0.0, 0.0, -0.5]);
+            assert_eq!(&r[..4], &[0.0, 0.75, 0.5, 0.125]);
+            assert_eq!(dac.output_block(0)[1], 0.375, "the mono monitor is finite");
+            assert_eq!(dac.non_finite_samples(), 3);
+
+            // The count accumulates across blocks.
+            dac.process(4);
+            assert_eq!(dac.non_finite_samples(), 6);
+        }
+    }
+
+    #[test]
+    fn a_non_finite_mono_input_silences_both_channels() {
+        let mut dac = DacModule::new();
+        dac.set_input("audio_left", 0.5).unwrap();
+        dac.set_input("audio", f32::NAN).unwrap();
+        dac.process(2);
+        let (l, r) = dac.sink_block();
+        assert_eq!((&l[..2], &r[..2]), (&[0.0, 0.0][..], &[0.0, 0.0][..]));
+        assert_eq!(dac.non_finite_samples(), 4);
+    }
+
+    #[test]
+    fn finite_samples_pass_unchanged() {
+        let mut dac = DacModule::new().with_soft_clip(false);
+        let samples = [0.0, f32::MIN_POSITIVE, 1.5, -3.0, f32::MAX, f32::MIN];
+        dac.input_block_mut(1)[..samples.len()].copy_from_slice(&samples);
+        dac.process(samples.len());
+        let bits = |s: &[f32]| s.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&dac.sink_block().0[..samples.len()]), bits(&samples));
+        assert_eq!(dac.non_finite_samples(), 0);
     }
 
     #[test]

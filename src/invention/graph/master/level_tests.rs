@@ -6,7 +6,7 @@ const FRAMES: usize = 128;
 
 /// One block of `left`/`right` on fresh live observers, ending at `end`.
 fn observe(observers: &MasterObservers, left: &[f32], right: &[f32], end: u64) {
-    observers.observe(left, right, left.len(), end);
+    observers.observe(left, right, left.len(), end, 0);
 }
 
 fn drain(observers: &MasterObservers) -> MasterLevels {
@@ -133,6 +133,7 @@ fn the_window_end_converts_to_milliseconds_at_the_stated_rate() {
         end_frame,
         frames: 0,
         sample_rate,
+        non_finite_samples: 0,
     };
     assert_eq!(levels(96_000, 48_000).end_ms(), 2_000.0);
     // Rounded to the microsecond: 4_864 frames at 48 kHz is 101.3333... ms.

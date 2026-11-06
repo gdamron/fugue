@@ -89,8 +89,26 @@ fn measured_reading() -> crate::MeterReading {
             end_frame: 96_000,
             frames: 4_800,
             sample_rate: 48_000,
+            non_finite_samples: 0,
         },
     )
+}
+
+/// A count of replaced non-finite samples goes on the wire once there is
+/// one, and reads back.
+#[test]
+fn replaced_non_finite_samples_go_on_the_wire_once_counted() {
+    use crate::{RpcEvent, RpcEventPayload};
+
+    let reading = crate::MeterReading {
+        non_finite_samples: 3,
+        ..measured_reading()
+    };
+    let event = RpcEvent::new(RpcEventPayload::MeterLevel(reading));
+    let wire = serde_json::to_value(&event).unwrap();
+    assert_eq!(wire["non_finite_samples"], 3);
+    let decoded: RpcEvent = serde_json::from_value(wire).unwrap();
+    assert_eq!(decoded, event);
 }
 
 #[test]
