@@ -234,47 +234,58 @@ pub fn resolve_example(name: &str) -> Result<ExampleDefinition, String> {
         .ok_or_else(|| format!("Unknown example '{name}'.\n\n{}", valid_examples_message()))
 }
 
-pub fn parse_example_command<I, S>(args: I) -> Result<ExampleCommand, String>
+/// What the example runner was asked to do, and the invention seed it
+/// builds under (`--seed N`): with one, unseeded random sources play a
+/// stream derived from `N`, so a run repeats.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExampleArgs {
+    pub command: ExampleCommand,
+    pub seed: Option<u64>,
+}
+
+pub fn parse_example_command<I, S>(args: I) -> Result<ExampleArgs, String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let mut args = args.into_iter();
-    let _program = args.next();
+    let mut args = args.into_iter().skip(1);
+    let mut command = ExampleCommand::Interactive;
+    let mut seed = None;
+    let mut help = false;
+    let mut named = false;
 
-    let Some(first) = args.next() else {
-        return Ok(ExampleCommand::Interactive);
-    };
-
-    match first.as_ref() {
-        "-h" | "--help" => {
-            if let Some(extra) = args.next() {
-                return Err(format!(
-                    "Unexpected argument '{}'.\n\n{}",
-                    extra.as_ref(),
-                    usage()
-                ));
+    while let Some(arg) = args.next() {
+        let refused = |message: String| Err(format!("{message}\n\n{}", usage()));
+        match arg.as_ref() {
+            "-h" | "--help" if !help && !named && seed.is_none() => help = true,
+            "--example" if !help && !named => {
+                let Some(file_name) = args.next() else {
+                    return refused("Missing JSON filename after --example.".into());
+                };
+                command = ExampleCommand::RunByName(file_name.as_ref().to_string());
+                named = true;
             }
-            Ok(ExampleCommand::Help)
-        }
-        "--example" => {
-            let Some(file_name) = args.next() else {
-                return Err(format!(
-                    "Missing JSON filename after --example.\n\n{}",
-                    usage()
-                ));
-            };
-            if let Some(extra) = args.next() {
-                return Err(format!(
-                    "Unexpected argument '{}'.\n\n{}",
-                    extra.as_ref(),
-                    usage()
-                ));
+            "--seed" if !help && seed.is_none() => {
+                let Some(value) = args.next() else {
+                    return refused("Missing number after --seed.".into());
+                };
+                let Ok(value) = value.as_ref().parse::<u64>() else {
+                    let value = value.as_ref();
+                    return refused(format!("--seed takes a whole number, not '{value}'."));
+                };
+                seed = Some(value);
             }
-            Ok(ExampleCommand::RunByName(file_name.as_ref().to_string()))
+            other if help || named || seed.is_some() => {
+                return refused(format!("Unexpected argument '{other}'."));
+            }
+            other => return refused(format!("Unknown argument '{other}'.")),
         }
-        other => Err(format!("Unknown argument '{other}'.\n\n{}", usage())),
     }
+
+    if help {
+        command = ExampleCommand::Help;
+    }
+    Ok(ExampleArgs { command, seed })
 }
 
 pub fn usage() -> String {
@@ -282,7 +293,11 @@ pub fn usage() -> String {
         "Usage:
   cargo run --example examples
   cargo run --example examples -- --example <json-file>
-  cargo run --example examples -- --help",
+  cargo run --example examples -- --example <json-file> --seed <n>
+  cargo run --example examples -- --help
+
+  --seed <n>  play every unseeded random source (melody, chance, noise)
+              from a stream derived from n, so a run repeats",
     )
 }
 
@@ -301,7 +316,7 @@ pub fn valid_examples_message() -> String {
 mod tests {
     use super::{
         parse_example_command, playable_examples, resolve_example, valid_examples_message,
-        ExampleCommand,
+        ExampleArgs, ExampleCommand,
     };
 
     #[test]
@@ -390,19 +405,48 @@ mod tests {
 
     #[test]
     fn parse_example_command_defaults_to_interactive() {
-        let command = parse_example_command(["examples"]).unwrap();
-        assert_eq!(command, ExampleCommand::Interactive);
+        let args = parse_example_command(["examples"]).unwrap();
+        assert_eq!(args.command, ExampleCommand::Interactive);
+        assert_eq!(args.seed, None);
     }
 
     #[test]
     fn parse_example_command_supports_direct_run() {
-        let command =
-            parse_example_command(["examples", "--example", "step_sequencer.json"]).unwrap();
+        let args = parse_example_command(["examples", "--example", "step_sequencer.json"]).unwrap();
 
         assert_eq!(
-            command,
+            args.command,
             ExampleCommand::RunByName(String::from("step_sequencer.json"))
         );
+        assert_eq!(args.seed, None);
+    }
+
+    #[test]
+    fn parse_example_command_takes_a_seed_before_or_after_the_example() {
+        let run = ExampleCommand::RunByName(String::from("in_c.json"));
+        let expected = ExampleArgs {
+            command: run,
+            seed: Some(42),
+        };
+        let after = ["examples", "--example", "in_c.json", "--seed", "42"];
+        let before = ["examples", "--seed", "42", "--example", "in_c.json"];
+        assert_eq!(parse_example_command(after).unwrap(), expected);
+        assert_eq!(parse_example_command(before).unwrap(), expected);
+        let interactive = parse_example_command(["examples", "--seed", "7"]).unwrap();
+        assert_eq!(interactive.command, ExampleCommand::Interactive);
+        assert_eq!(interactive.seed, Some(7));
+    }
+
+    #[test]
+    fn parse_example_command_refuses_a_bad_or_repeated_seed() {
+        for args in [
+            vec!["examples", "--seed"],
+            vec!["examples", "--seed", "-1"],
+            vec!["examples", "--seed", "x"],
+            vec!["examples", "--seed", "1", "--seed", "2"],
+        ] {
+            assert!(parse_example_command(&args).is_err(), "{args:?}");
+        }
     }
 
     #[test]

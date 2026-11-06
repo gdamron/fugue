@@ -12,18 +12,19 @@ use std::thread;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let command = parse_example_command(std::env::args()).map_err(io::Error::other)?;
+    let args = parse_example_command(std::env::args()).map_err(io::Error::other)?;
+    let seed = args.seed;
 
-    match command {
+    match args.command {
         ExampleCommand::Help => {
             println!("{}", usage());
             println!();
             println!("{}", valid_examples_message());
             return Ok(());
         }
-        ExampleCommand::Interactive => run_example(select_example_interactively()?)?,
+        ExampleCommand::Interactive => run_example(select_example_interactively()?, seed)?,
         ExampleCommand::RunByName(file_name) => {
-            run_example(resolve_example(&file_name).map_err(io::Error::other)?)?
+            run_example(resolve_example(&file_name).map_err(io::Error::other)?, seed)?
         }
     }
 
@@ -78,7 +79,7 @@ fn select_example_interactively() -> Result<ExampleDefinition, Box<dyn Error>> {
     }
 }
 
-fn run_example(example: ExampleDefinition) -> Result<(), Box<dyn Error>> {
+fn run_example(example: ExampleDefinition, seed: Option<u64>) -> Result<(), Box<dyn Error>> {
     let sample_rate = default_sample_rate()?;
     let path = example.path();
     let invention =
@@ -100,9 +101,15 @@ fn run_example(example: ExampleDefinition) -> Result<(), Box<dyn Error>> {
     }
 
     println!("Sample rate: {} Hz", sample_rate);
+    if let Some(seed) = seed {
+        println!("Seed: {seed} (unseeded random sources repeat)");
+    }
     println!();
 
-    let builder = InventionBuilder::new(sample_rate);
+    let mut builder = InventionBuilder::new(sample_rate);
+    if let Some(seed) = seed {
+        builder = builder.with_seed(seed);
+    }
     let (runtime, handles) = builder.build(invention)?;
 
     println!("Available handles:");

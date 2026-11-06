@@ -85,6 +85,19 @@ Nested curated examples work the same way:
 cargo run --example examples -- --example developments/voice_library_trio.json
 ```
 
+Many examples are generative: a melody, chance or noise module with no seed
+plays a different performance every run. Pass `--seed <n>` to repeat one:
+every unseeded random source then plays a stream derived from `n` and its
+module id, and modules with a seed of their own keep it.
+```bash
+cargo run --example examples -- --example chance_groove.json --seed 7
+```
+Offline renders take the same seed through `RenderEngine::set_seed`, set
+before loading the invention; test renders can also stub agent backends with
+`RenderEngine::stub_agent_backends`, so no service or local process is
+contacted. `code` and `agent` modules run on wall-clock time, so an invention
+using them (such as `in_c.json`) still varies under a seed.
+
 Current playable examples include:
 
 - `simple_tone.json`

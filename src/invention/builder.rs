@@ -38,6 +38,10 @@ pub struct InventionBuilder {
     /// The developments the document being built declares, as loaded, for
     /// a nested build; `None` for a document's own build, which loads them.
     loaded: Option<Arc<LoadedDevelopments>>,
+    /// The invention seed for random sources left unseeded (see
+    /// [`Self::with_seed`]); `None` builds them from entropy, or under the
+    /// seed of the build this one is nested in.
+    seed: Option<u64>,
 }
 
 impl InventionBuilder {
@@ -48,6 +52,7 @@ impl InventionBuilder {
             registry: ModuleRegistry::default(),
             registered: Arc::new(Mutex::new(HashSet::new())),
             loaded: None,
+            seed: None,
         }
     }
 
@@ -58,6 +63,7 @@ impl InventionBuilder {
             registry,
             registered: Arc::new(Mutex::new(HashSet::new())),
             loaded: None,
+            seed: None,
         }
     }
 
@@ -76,7 +82,19 @@ impl InventionBuilder {
             registry,
             registered,
             loaded: Some(loaded),
+            seed: None,
         }
+    }
+
+    /// Builds under the invention seed `seed`: every melody, chance and
+    /// noise module the document leaves unseeded, here and inside its
+    /// developments, plays a stream derived from `seed` and its module id
+    /// rather than one from entropy, so two builds play alike. Modules with
+    /// a seed of their own keep it, and the document is left as written.
+    /// Modules a later edit or reload builds are not covered.
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.seed = Some(seed);
+        self
     }
 
     /// Builds from the developments already loaded for the document (its own
@@ -121,6 +139,13 @@ impl InventionBuilder {
     /// tempo.set_bpm(140.0);
     /// ```
     pub fn build(
+        self,
+        invention: Invention,
+    ) -> Result<(InventionRuntime, InventionHandles), Box<dyn std::error::Error>> {
+        super::seeding::seeded(self.seed, || self.build_seeded(invention))
+    }
+
+    fn build_seeded(
         mut self,
         invention: Invention,
     ) -> Result<(InventionRuntime, InventionHandles), Box<dyn std::error::Error>> {
@@ -276,10 +301,11 @@ impl InventionBuilder {
         for spec in &invention.modules {
             // Build module via factory; a refusal names the module, and
             // refuses the whole document before anything plays.
-            let result = self
-                .registry
-                .build(&spec.module_type, self.sample_rate, &spec.config)
-                .map_err(|error| format!("module '{}': {error}", spec.id))?;
+            let result = super::seeding::within_module(&spec.id, || {
+                self.registry
+                    .build(&spec.module_type, self.sample_rate, &spec.config)
+            })
+            .map_err(|error| format!("module '{}': {error}", spec.id))?;
 
             // If this is a sink, track its module id for output collection.
             if matches!(result.module, GraphModule::Sink(_)) {

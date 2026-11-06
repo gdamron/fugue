@@ -48,6 +48,15 @@ pub(super) fn call_backend(
     }
 }
 
+/// Answers a request in a render whose agent backends are stubbed (see
+/// [`AgentManager::set_stubbed`]): always refused, naming the backend that
+/// was not contacted.
+pub(super) fn stubbed_backend(backend: &str) -> Result<BackendResult, String> {
+    Err(format!(
+        "agent backends are stubbed in this render; '{backend}' was not contacted"
+    ))
+}
+
 pub(super) fn call_local_command(config: &Value, packet: &Value) -> Result<BackendResult, String> {
     let command = config
         .get("command")

@@ -204,7 +204,8 @@ impl MelodyGenerator {
         degrees: Degrees,
         cells: Arc<ControlCells>,
     ) -> Self {
-        let mut entropy: StdRng = rand::make_rng();
+        // Entropy, or the invention seed's stream for this module.
+        let mut entropy = StdRng::seed_from_u64(crate::invention::seeding::entropy());
         let rng = match seed {
             Some(seed) => StdRng::seed_from_u64(seed),
             None => StdRng::seed_from_u64(entropy.random()),

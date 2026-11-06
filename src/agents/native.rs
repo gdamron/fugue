@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
@@ -41,9 +42,21 @@ struct AgentHost {
 #[derive(Default)]
 pub struct AgentManager {
     hosts: Mutex<HashMap<String, AgentHost>>,
+    /// Whether workers started from now on answer every request from a
+    /// stub rather than their backend (see [`Self::set_stubbed`]).
+    stubbed: AtomicBool,
 }
 
 impl AgentManager {
+    /// Stubs every agent backend for workers started from now on: a request
+    /// is refused as stubbed, contacting no network service and starting no
+    /// local process, and the agent reports that as its `last_error`, so
+    /// the invention plays as it does with no backend available. For test
+    /// renders; agents call their backends unless this is set.
+    pub fn set_stubbed(&self, stubbed: bool) {
+        self.stubbed.store(stubbed, Ordering::Relaxed);
+    }
+
     /// Starts workers for every `agent` module in the current runtime.
     pub fn start_all(&self, controller: RuntimeController) {
         for module in controller.snapshot.list_modules() {
@@ -67,8 +80,10 @@ impl AgentManager {
         self.stop_module(&module.id);
         let module_id = module.id.clone();
         let (command_tx, command_rx) = mpsc::channel();
-        let join =
-            thread::spawn(move || run_host(module_id, module.config, controller, command_rx));
+        let stubbed = self.stubbed.load(Ordering::Relaxed);
+        let join = thread::spawn(move || {
+            run_host(module_id, module.config, controller, command_rx, stubbed)
+        });
         self.hosts
             .lock()
             .unwrap()
@@ -97,6 +112,7 @@ fn run_host(
     config: Value,
     controller: RuntimeController,
     command_rx: mpsc::Receiver<HostCommand>,
+    stubbed: bool,
 ) {
     set_string(&controller, &module_id, "status", "idle");
     set_string(&controller, &module_id, "last_error", "");
@@ -156,7 +172,8 @@ fn run_host(
         }
         last_request_at = Some(Instant::now());
 
-        if let Err(error) = service_request(&module_id, &config, &controller, &mut history) {
+        if let Err(error) = service_request(&module_id, &config, &controller, &mut history, stubbed)
+        {
             eprintln!("[agent:{}] error: {}", module_id, error);
             set_string(&controller, &module_id, "status", "error");
             set_string(&controller, &module_id, "last_error", &error);
@@ -175,6 +192,7 @@ fn service_request(
     config: &Value,
     controller: &RuntimeController,
     history: &mut Vec<Value>,
+    stubbed: bool,
 ) -> Result<(), String> {
     set_string(controller, module_id, "status", "building_context");
     set_string(controller, module_id, "last_error", "");
@@ -188,7 +206,10 @@ fn service_request(
         .or_else(|| string_config(config, "backend"))
         .unwrap_or_else(|| "local:auto".to_string());
     eprintln!("[agent:{}] requesting via backend '{}'", module_id, backend);
-    let result = call_backend(&backend, config, &packet)?;
+    let result = match stubbed {
+        true => stubbed_backend(&backend)?,
+        false => call_backend(&backend, config, &packet)?,
+    };
 
     set_string(controller, module_id, "status", "parsing");
     set_string(controller, module_id, "last_response", &result.text);

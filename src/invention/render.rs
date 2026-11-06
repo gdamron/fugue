@@ -17,6 +17,7 @@ use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, Runti
 mod audio_file_sink;
 mod code_modules;
 mod editing;
+mod options;
 mod replay;
 
 pub use code_modules::CodeModuleRuntimeInfo;
@@ -42,6 +43,8 @@ pub struct RenderEngine {
     event_sink: super::orchestration::EventSinkSlot,
     /// A live session's requests still to apply (see [`Self::replay`]).
     replay: replay::Replay,
+    /// The invention seed loads build under (see [`Self::set_seed`]).
+    seed: Option<u64>,
 }
 
 impl RenderEngine {
@@ -63,6 +66,7 @@ impl RenderEngine {
             agents: AgentManager::default(),
             event_sink: Arc::new(Mutex::new(None)),
             replay: replay::Replay::default(),
+            seed: None,
         }
     }
 
@@ -108,7 +112,10 @@ impl RenderEngine {
         &mut self,
         invention: Invention,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let builder = InventionBuilder::new(self.sample_rate);
+        let mut builder = InventionBuilder::new(self.sample_rate);
+        if let Some(seed) = self.seed {
+            builder = builder.with_seed(seed);
+        }
         let (runtime, handles) = builder.build(invention)?;
         *self.handles.lock().unwrap() = handles;
         self.install_runtime(runtime);
