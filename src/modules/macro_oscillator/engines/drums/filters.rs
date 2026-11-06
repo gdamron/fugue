@@ -130,7 +130,7 @@ impl OnePoleFilter {
     #[inline]
     pub fn lowpass(&mut self, x: f32) -> f32 {
         let lp = (self.g * x + self.state) * self.gi;
-        self.state = self.g * (x - lp) + lp;
+        self.state = flush(self.g * (x - lp) + lp);
         lp
     }
 

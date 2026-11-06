@@ -5,7 +5,7 @@
 //! triangles for the shell, swept by a pitch blip, beside band-limited
 //! noise that holds a moment before it decays.
 
-use super::filters::{tan_fast, BlockGlide, ModeFilter, OnePoleFilter, Rate};
+use super::filters::{flush, tan_fast, BlockGlide, ModeFilter, OnePoleFilter, Rate};
 use crate::dsp::Rng;
 use crate::modules::macro_oscillator::engine::semitones_to_ratio;
 
@@ -110,14 +110,14 @@ impl SyntheticSnareDrum {
             } else {
                 // The drum's long tail decays on every other sample.
                 if self.drum_amplitude > 0.03 || (size - 1 - i).is_multiple_of(2) {
-                    self.drum_amplitude *= drum_decay;
+                    self.drum_amplitude = flush(self.drum_amplitude * drum_decay);
                 }
                 if self.hold > 0 {
                     self.hold -= 1;
                 } else {
-                    self.snare_amplitude *= snare_decay;
+                    self.snare_amplitude = flush(self.snare_amplitude * snare_decay);
                 }
-                self.fm *= fm_decay;
+                self.fm = flush(self.fm * fm_decay);
             }
 
             // The oscillators reset each other a little, as the circuit's

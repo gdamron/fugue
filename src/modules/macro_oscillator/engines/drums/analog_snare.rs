@@ -6,7 +6,7 @@
 //! tuned shell modes, beside a burst of filtered noise for the snares.
 //! Un-triggered, sines stand in for the modes.
 
-use super::filters::{soft_clip, tan_fast, BlockGlide, ModeFilter, Rate};
+use super::filters::{flush, soft_clip, tan_fast, BlockGlide, ModeFilter, Rate};
 use crate::dsp::{sine, Rng};
 use crate::modules::macro_oscillator::engine::semitones_to_ratio;
 
@@ -136,7 +136,7 @@ impl AnalogSnareDrum {
                 };
                 self.pulse
             } else {
-                self.pulse *= self.pulse_decay;
+                self.pulse = flush(self.pulse * self.pulse_decay);
                 self.pulse
             };
             let gain = self.sustain_gain.next();
@@ -169,7 +169,7 @@ impl AnalogSnareDrum {
             let shell = soft_clip(shell);
 
             let noise = (2.0 * self.rng.unit() - 1.0).max(0.0) * self.noise_gain;
-            self.noise_envelope *= noise_decay;
+            self.noise_envelope = flush(self.noise_envelope * noise_decay);
             let envelope = if s.sustain { gain } else { self.noise_envelope };
             let noise = self
                 .noise_filter
