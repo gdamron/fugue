@@ -2,6 +2,7 @@
 
 use std::f32::consts::TAU;
 
+use super::shape::EqDesign;
 use super::*;
 
 const RATE: u32 = 48_000;
@@ -141,6 +142,7 @@ fn switching_to_the_steep_slope_starts_from_rest() {
     filter.set_control("slope", 1.0).unwrap();
     assert_eq!(
         filter
+            .playing
             .second_stage
             .tick(&Coefficients::stage(0.0, 1.0), 0.0),
         (0.0, 0.0)
