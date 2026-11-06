@@ -12,10 +12,10 @@
 
 use crate::dsp::{cosine, exp2, tan_quarter_turn};
 
-use super::tuning::t60_seconds;
+use super::t60_seconds;
 
 /// The most partials one voice rings.
-pub(super) const MAX_MODES: usize = 64;
+pub(crate) const MAX_MODES: usize = 64;
 /// Modes run in groups of this many, so the compiler can vectorise them.
 const LANES: usize = 8;
 const GROUPS: usize = MAX_MODES / LANES;
@@ -30,7 +30,7 @@ const FLUSH: f32 = 1.0e-15;
 /// The partials' stretch per mode for `structure`: below 0.25 the partials
 /// crowd together, from 0.25 to 0.3 they are harmonic, above that they
 /// spread out to bells and, near 1, metal.
-pub(super) fn stiffness(structure: f32) -> f32 {
+pub(crate) fn stiffness(structure: f32) -> f32 {
     let g = structure.clamp(0.0, 1.0);
     if g < 0.25 {
         -(0.25 - g) * 0.25
@@ -48,7 +48,7 @@ pub(super) fn stiffness(structure: f32) -> f32 {
 
 /// One block's settings for a modal voice.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct ModalSettings {
+pub(crate) struct ModalSettings {
     /// The fundamental, as a fraction of the sample rate.
     pub frequency: f32,
     pub structure: f32,
@@ -76,7 +76,7 @@ struct Group {
 }
 
 /// One voice's bank of modes.
-pub(super) struct ModalVoice {
+pub(crate) struct ModalVoice {
     sample_rate: f32,
     groups: [Group; GROUPS],
     /// How many modes the excitation feeds (set at each strike).
@@ -86,7 +86,7 @@ pub(super) struct ModalVoice {
 }
 
 impl ModalVoice {
-    pub(super) fn new(sample_rate: u32) -> Self {
+    pub(crate) fn new(sample_rate: u32) -> Self {
         Self {
             sample_rate: sample_rate.max(1) as f32,
             groups: [Group::default(); GROUPS],
@@ -98,18 +98,18 @@ impl ModalVoice {
     /// How many modes a strike feeds from now on (made even, at most
     /// [`MAX_MODES`]). Modes beyond it keep ringing until the voice falls
     /// quiet, so a smaller resolution never cuts a tail.
-    pub(super) fn set_resolution(&mut self, modes: usize) {
+    pub(crate) fn set_resolution(&mut self, modes: usize) {
         self.resolution = (modes - modes % 2).clamp(2, MAX_MODES);
     }
 
     /// How many modes a strike feeds.
     #[cfg(test)]
-    pub(super) fn resolution(&self) -> usize {
+    pub(crate) fn resolution(&self) -> usize {
         self.resolution
     }
 
     /// Silences the voice at once.
-    pub(super) fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.groups = [Group::default(); GROUPS];
         self.running = 0;
     }
@@ -176,7 +176,7 @@ impl ModalVoice {
     /// silent.
     // The lanes index several arrays at once, which is what vectorises.
     #[allow(clippy::needless_range_loop)]
-    pub(super) fn process(
+    pub(crate) fn process(
         &mut self,
         settings: &ModalSettings,
         input: &[f32],

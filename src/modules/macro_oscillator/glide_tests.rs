@@ -5,7 +5,7 @@ use serde_json::json;
 
 const SR: u32 = 48_000;
 
-fn render(module: &mut dyn Module, frames: usize, block: usize) -> Vec<f32> {
+pub(super) fn render(module: &mut dyn Module, frames: usize, block: usize) -> Vec<f32> {
     let mut out = Vec::with_capacity(frames);
     while out.len() < frames {
         let n = block.min(frames - out.len());
@@ -16,7 +16,7 @@ fn render(module: &mut dyn Module, frames: usize, block: usize) -> Vec<f32> {
 }
 
 /// A macro oscillator built from `config`, as its concrete type.
-fn concrete(config: serde_json::Value) -> MacroOscillator {
+pub(super) fn concrete(config: serde_json::Value) -> MacroOscillator {
     let cells = Arc::new(ControlCells::new(controls::defaults()));
     let surface = DeclaredSurface::new(TABLE.clone(), cells.clone());
     apply_control_keys(&surface, &config, |key| TABLE.resolve(key).is_some()).expect("config");
@@ -82,11 +82,16 @@ fn sharpest_turn(x: &[f32]) -> f32 {
 /// smooth waveform (waveshaping fails it without the glide); in one with
 /// hard edges (saws, sync) the edges set the bound, so it is a smoke test
 /// there and the glide itself is checked above.
+///
+/// The physical and percussive models excite themselves, so a macro write
+/// changes how loud and how bright the steady sound is: a quiet string
+/// made bright swells before its limiter settles. Those are checked for
+/// steps at the engine block edges in `block_edge_tests` instead.
 #[test]
 fn macro_writes_do_not_put_corners_in_any_model() {
     const HOST_BLOCK: usize = 512;
     const SETTLE: usize = 48 * HOST_BLOCK;
-    for model in 0..MODEL_COUNT {
+    for model in 0..block_edge_tests::first_excited_model() {
         for key in ["harmonics", "timbre", "morph"] {
             // Wavetable's harmonics passes through the sync and bit-reduced
             // banks on its way from 0.1 to 0.9, whose edges are sharper

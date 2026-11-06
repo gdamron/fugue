@@ -51,6 +51,65 @@ fn a_plain_string_repeats_at_its_period() {
     }
 }
 
+/// How far, in cents, the Hann-windowed spectral peak of `x` near `hz`
+/// lies from it.
+fn spectral_cents(x: &[f32], hz: f32) -> f32 {
+    let n = x.len() as f64;
+    let magnitude = |cents: f64| {
+        let w = std::f64::consts::TAU * f64::from(hz) * (cents / 1200.0).exp2() / f64::from(RATE);
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for (i, v) in x.iter().enumerate() {
+            let window = 0.5 - 0.5 * (std::f64::consts::TAU * i as f64 / n).cos();
+            let v = f64::from(*v) * window;
+            re += v * (w * i as f64).cos();
+            im -= v * (w * i as f64).sin();
+        }
+        re.hypot(im)
+    };
+    let best = |lo: f64, step: f64, steps: i32| {
+        (0..=steps)
+            .map(|i| lo + f64::from(i) * step)
+            .max_by(|a, b| magnitude(*a).total_cmp(&magnitude(*b)))
+            .unwrap()
+    };
+    let coarse = best(-30.0, 1.0, 60);
+    best(coarse - 1.0, 0.1, 20) as f32
+}
+
+/// A loop that blocks DC holds no offset from one-signed impulses, and the
+/// blocker's phase lead is taken up so the string stays in tune.
+#[test]
+fn a_dc_blocked_loop_holds_no_offset_and_stays_in_tune() {
+    for hz in [55.0f32, 110.0, 440.0] {
+        let mut string = KarplusString::new(RATE, false, 1).with_dc_blocked_loop();
+        string.glide_to(hz / RATE as f32, 1.0);
+        let x = pluck(&mut string, &settings(0.0), RATE as usize * 2);
+        // Pitch is where the spectrum peaks: the blocker advances the phase
+        // but delays the envelope, so a lag measure would read it the wrong
+        // way.
+        let cents = spectral_cents(&x[4800..], hz);
+        assert!(cents.abs() < 2.0, "{hz} Hz: {cents} cents");
+
+        let mut out = Vec::new();
+        for b in 0..RATE as usize / 12 {
+            let mut input = [0.0f32; 24];
+            if b % 4 == 0 {
+                input[b % 24] = 0.5;
+            }
+            let (mut o, mut a) = ([0.0f32; 24], [0.0f32; 24]);
+            string.process(&settings(0.0), &input, &mut o, &mut a);
+            out.extend_from_slice(&o);
+        }
+        let tail = &out[out.len() / 2..];
+        let mean = tail.iter().sum::<f32>() / tail.len() as f32;
+        let rms = (tail.iter().map(|x| x * x).sum::<f32>() / tail.len() as f32).sqrt();
+        assert!(
+            mean.abs() < 0.05 * rms,
+            "{hz} Hz: mean {mean} against rms {rms}"
+        );
+    }
+}
+
 /// A reset string is silent at once, with no allocation needed.
 #[test]
 fn reset_silences_the_string() {

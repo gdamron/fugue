@@ -420,6 +420,37 @@ mod tests {
         (sum / (12 * blocks) as f32).sqrt()
     }
 
+    /// A struck string shapes its own decay, so the low-pass gate leaves it
+    /// be: pinged, it plays exactly as with the gate open. An oscillator is
+    /// gated.
+    #[test]
+    fn the_gate_leaves_an_enveloped_model_be() {
+        let string = super::super::engines::MODELS
+            .iter()
+            .position(|m| *m == "string")
+            .unwrap();
+        let play = |model: usize, ping: bool| {
+            let mut voice = Voice::new(48_000, 0);
+            let (mut audio, mut aux) = ([0.0f32; 12], [0.0f32; 12]);
+            let mut out = Vec::new();
+            for i in 0..4_000 {
+                let gate = if ping {
+                    Gate::Ping { rising: i == 0 }
+                } else {
+                    Gate::Open
+                };
+                let mut b = block(model, gate);
+                b.trigger = i == 0;
+                b.untriggered = false;
+                voice.render(&b, &mut audio, &mut aux);
+                out.extend_from_slice(&audio);
+            }
+            out
+        };
+        assert!(play(string, true) == play(string, false));
+        assert!(play(0, true) != play(0, false));
+    }
+
     #[test]
     fn patching_a_trigger_fades_rather_than_cuts() {
         let mut voice = Voice::new(48_000, 0);

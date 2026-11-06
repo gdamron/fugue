@@ -46,6 +46,7 @@ mod halfband;
 mod limiter;
 mod one_pole;
 mod oversampler;
+pub(crate) mod physical;
 mod pink;
 mod ramp;
 mod rng;

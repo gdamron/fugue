@@ -14,7 +14,7 @@ use std::f32::consts::PI;
 
 use crate::dsp::{exp2, tan_quarter_turn, DcBlocker, DelayLine, Rng, Svf};
 
-use super::tuning::t60_seconds;
+use super::t60_seconds;
 
 /// The delay line: long enough for a string at the `frequency` control's
 /// lowest 20 Hz, where the reference's 2048 samples at 48 kHz stop at
@@ -22,6 +22,9 @@ use super::tuning::t60_seconds;
 const LINE_SECONDS: f32 = 0.0525;
 /// The shortest delay a read or the allpass may use.
 const MIN_DELAY: f32 = 4.0;
+/// The loop's DC blocker has its pole at `1 - LOOP_DC_CUTOFF / rate`, as
+/// in the reference: a corner near 3 Hz.
+const LOOP_DC_CUTOFF: f32 = 20.0;
 
 /// The string's loss filter: a three-tap low-pass whose gain at DC is the
 /// per-period loss, gliding across each block.
@@ -57,7 +60,7 @@ impl DampingFilter {
 
 /// One block's settings for a string.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct StringSettings {
+pub(crate) struct StringSettings {
     /// Below 0 the bridge curves (buzz), above 0 the string stiffens.
     pub dispersion: f32,
     pub brightness: f32,
@@ -85,7 +88,7 @@ impl Glide {
 }
 
 /// One string.
-pub(super) struct KarplusString {
+pub(crate) struct KarplusString {
     sample_rate: f32,
     dispersive: bool,
     line: DelayLine,
@@ -103,10 +106,22 @@ pub(super) struct KarplusString {
     curved_bridge: f32,
     /// The frequency the string is playing, for a glide to a new one.
     frequency: f32,
+    /// Whether the main delay takes up the stiffness allpass's own delay at
+    /// the fundamental, so a stiff string stays in tune.
+    tuned_stiffness: bool,
+    /// How much longer than its length the allpass delays the fundamental.
+    allpass_excess: Glide,
+    /// The loop's DC blocker, when it has one: its pole, and its last input
+    /// and output.
+    loop_dc: Option<f32>,
+    loop_dc_in: f32,
+    loop_dc_out: f32,
+    /// How far, in samples, the loop's DC blocker advances the fundamental.
+    loop_dc_lead: Glide,
 }
 
 impl KarplusString {
-    pub(super) fn new(sample_rate: u32, dispersive: bool, seed: u64) -> Self {
+    pub(crate) fn new(sample_rate: u32, dispersive: bool, seed: u64) -> Self {
         let rate = sample_rate.max(1) as f32;
         let length = (LINE_SECONDS * rate).ceil() as usize + 4;
         let mut string = Self {
@@ -125,24 +140,49 @@ impl KarplusString {
             dispersion_noise: 0.0,
             curved_bridge: 0.0,
             frequency: 220.0 / rate,
+            tuned_stiffness: false,
+            allpass_excess: Glide::default(),
+            loop_dc: None,
+            loop_dc_in: 0.0,
+            loop_dc_out: 0.0,
+            loop_dc_lead: Glide::default(),
         };
         string.delay.value = 1.0 / string.frequency;
         string
     }
 
+    /// Keeps the fundamental in tune when the string is stiff, by taking the
+    /// stiffness allpass's delay at the fundamental out of the main delay.
+    /// Without it the stiffness flattens the pitch, as in the reference.
+    pub(crate) fn with_tuned_stiffness(mut self) -> Self {
+        self.tuned_stiffness = true;
+        self
+    }
+
+    /// Blocks DC inside the loop, for an excitation that is not zero-mean
+    /// (a stream of one-signed impulses), which would otherwise pile up
+    /// into an offset the loop holds. The line is lengthened by the
+    /// blocker's phase lead at the fundamental, so it stays in tune.
+    pub(crate) fn with_dc_blocked_loop(mut self) -> Self {
+        self.loop_dc = Some(1.0 - LOOP_DC_CUTOFF / self.sample_rate);
+        self
+    }
+
     /// The frequency the string glides to, as a fraction of the sample rate;
     /// `glide` 1 jumps there, smaller values move part of the way each block.
-    pub(super) fn glide_to(&mut self, frequency: f32, glide: f32) {
+    pub(crate) fn glide_to(&mut self, frequency: f32, glide: f32) {
         self.frequency += glide * (frequency - self.frequency);
     }
 
     /// Silences the string at once.
-    pub(super) fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         clear(&mut self.line);
         clear(&mut self.stretch);
         self.damping_filter = DampingFilter::default();
         self.loop_filter.reset();
         self.dc_blocker.reset();
+        self.loop_dc_in = 0.0;
+        self.loop_dc_out = 0.0;
         self.dispersion_noise = 0.0;
         self.curved_bridge = 0.0;
     }
@@ -150,7 +190,7 @@ impl KarplusString {
     /// Plays one block: `input` excites the string, its sound is added into
     /// `out` and its pickup at `position` into `aux`. Returns the largest
     /// sample written into the loop, for telling when it has fallen quiet.
-    pub(super) fn process(
+    pub(crate) fn process(
         &mut self,
         settings: &StringSettings,
         input: &[f32],
@@ -189,6 +229,15 @@ impl KarplusString {
         // ratio of the pitch to the cutoff. Shorten the line to match.
         let omega = tan_quarter_turn(PI * self.frequency) / tan_quarter_turn(PI * cutoff);
         self.compensation.start(1.0 - omega.atan() / PI, frames);
+        if self.tuned_stiffness && self.dispersive {
+            let loop_delay = delay * (1.0 - omega.atan() / PI) - 1.0;
+            let excess = self.allpass_excess_at(loop_delay, dispersion);
+            self.allpass_excess.start(excess, frames);
+        }
+        if let Some(pole) = self.loop_dc {
+            self.loop_dc_lead
+                .start(dc_lead(pole, 2.0 * PI * self.frequency), frames);
+        }
 
         let mut largest = 0.0f32;
         for i in 0..frames {
@@ -196,12 +245,21 @@ impl KarplusString {
             let comb_delay = period * self.position.next();
             // The loss filter's own one sample, then the loop filter's phase.
             let mut delay = period * self.compensation.next() - 1.0;
+            if self.loop_dc.is_some() {
+                delay += self.loop_dc_lead.next();
+            }
             let mut s = if self.dispersive {
                 self.disperse(&mut delay, noise_filter)
             } else {
                 self.line.read_fractional(delay)
             };
             s += input[i];
+            if let Some(pole) = self.loop_dc {
+                let x = s;
+                s = x - self.loop_dc_in + pole * self.loop_dc_out;
+                self.loop_dc_in = x;
+                self.loop_dc_out = s;
+            }
             s = self.damping_filter.process(s);
             s = self.loop_filter.process(s).lowpass;
             self.line.write_and_advance(s);
@@ -247,7 +305,11 @@ impl KarplusString {
             .min((self.stretch.len() - 1) as f32)
             .floor();
         let ap_gain = ap_gain * (raw / MIN_DELAY).min(1.0);
-        let main = (*delay - ap_delay).max(1.0);
+        let main = if self.tuned_stiffness {
+            (*delay - ap_delay - self.allpass_excess.next()).max(1.0)
+        } else {
+            (*delay - ap_delay).max(1.0)
+        };
         let s = self.line.read_fractional(main);
         let read = self.stretch.read(ap_delay as usize);
         let write = s + ap_gain * read;
@@ -261,6 +323,38 @@ impl KarplusString {
         self.curved_bridge = (value.abs() + value) * sign;
         s
     }
+}
+
+impl KarplusString {
+    /// How much longer than its length, in samples, the stiffness allpass
+    /// delays the fundamental for a loop of `delay` samples at
+    /// `dispersion`: its phase delay there, less its length. Worked out
+    /// once per block.
+    fn allpass_excess_at(&self, delay: f32, dispersion: f32) -> f32 {
+        if dispersion <= 0.0 {
+            return 0.0;
+        }
+        let stretch_point = dispersion * (2.0 - dispersion) * 0.475;
+        let raw = delay * stretch_point;
+        let length = raw
+            .max(MIN_DELAY)
+            .min((self.stretch.len() - 1) as f32)
+            .floor();
+        let gain = -0.618 * dispersion / (0.15 + dispersion) * (raw / MIN_DELAY).min(1.0);
+        // H = (z^-D - g) / (1 - g·z^-D), at the fundamental.
+        let omega = 2.0 * PI * self.frequency;
+        let (sin, cos) = (omega * length).sin_cos();
+        let phase = (-sin).atan2(cos - gain) - (gain * sin).atan2(1.0 - gain * cos);
+        -phase / omega - length
+    }
+}
+
+/// The phase lead, in samples, of the DC blocker `(1 - z^-1)/(1 - p·z^-1)`
+/// at `omega` radians per sample.
+fn dc_lead(pole: f32, omega: f32) -> f32 {
+    let (sin, cos) = omega.sin_cos();
+    let phase = sin.atan2(1.0 - cos) - (pole * sin).atan2(1.0 - pole * cos);
+    phase / omega
 }
 
 /// Zeroes `line` in place.

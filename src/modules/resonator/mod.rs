@@ -30,9 +30,7 @@ pub use self::tuning::ring_seconds;
 
 mod controls;
 mod limiter;
-mod modal;
 mod plucker;
-mod string;
 mod sympathetic;
 #[cfg(test)]
 mod tests;
