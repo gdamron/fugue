@@ -5,7 +5,7 @@
 //! A hi-hat: clangorous metallic noise through a band-pass, roughened by
 //! a little clocked noise, then a decaying VCA and a high-pass.
 
-use super::filters::{tan_accurate, BlockGlide, ModeFilter, Rate};
+use super::filters::{flush, tan_accurate, BlockGlide, ModeFilter, Rate};
 use super::metallic_noise::{RingModNoise, SquareNoise};
 use crate::dsp::Rng;
 use crate::modules::macro_oscillator::engine::{semitones_to_ratio, ENGINE_BLOCK};
@@ -132,11 +132,14 @@ impl HiHat {
             }
             x += noisiness * (self.noise_sample - x);
 
-            self.envelope *= if self.envelope > 0.5 || !self.two_stage {
-                envelope_decay
-            } else {
-                cut_decay
-            };
+            self.envelope = flush(
+                self.envelope
+                    * if self.envelope > 0.5 || !self.two_stage {
+                        envelope_decay
+                    } else {
+                        cut_decay
+                    },
+            );
             let sustain_gain = self.sustain_gain.next();
             let gain = if s.sustain {
                 sustain_gain

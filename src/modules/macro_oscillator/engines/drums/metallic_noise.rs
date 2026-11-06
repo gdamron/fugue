@@ -163,7 +163,7 @@ mod tests {
             .collect();
         levels.sort_unstable();
         levels.dedup();
-        assert!(levels.len() >= 6, "{levels:?}");
+        assert_eq!(levels.len(), 7, "{levels:?}");
         assert!(out.iter().all(|s| (-1.0..=0.99).contains(s)));
     }
 
