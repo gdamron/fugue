@@ -202,3 +202,21 @@ fn a_configured_phase_starts_there() {
     module.process(1);
     assert!(module.get_output("bipolar").unwrap() > 0.999);
 }
+
+#[test]
+fn a_phase_change_takes_the_short_way_round() {
+    let mut lfo = Lfo::new(48_000);
+    lfo.set_rate(0.001);
+    lfo.set_control("phase", 0.9).unwrap();
+    lfo.offset.settle();
+    lfo.set_control("phase", 0.1).unwrap();
+    let mut lowest = 1.0f32;
+    for _ in 0..2_000 {
+        lfo.process(1);
+        lowest = lowest.min(lfo.get_output("bipolar").unwrap());
+    }
+    // Forward through 1.0 the sine stays above sin(2π·0.9); back the long
+    // way it would pass 0.75 and reach −1.
+    assert!(lowest > -0.6, "lowest {lowest}");
+    assert!(lfo.get_output("bipolar").unwrap() > 0.58);
+}

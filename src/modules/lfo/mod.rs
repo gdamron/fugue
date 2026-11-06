@@ -309,7 +309,11 @@ impl Module for Lfo {
             }
             (PHASE, RtValue::F32(phase)) => {
                 let phase = phase.clamp(0.0, 1.0);
-                self.offset.set_target(phase);
+                // The short way round: 0.9 to 0.1 glides forward 0.2, not
+                // back 0.8, and 0 to 1 does not move.
+                let from = self.offset.value();
+                let turn = phase - from;
+                self.offset.set_target(from + turn - (turn + 0.5).floor());
                 RtValue::F32(phase)
             }
             _ => return Err(Refusal::Unsupported),
