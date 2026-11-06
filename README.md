@@ -29,7 +29,9 @@ the platforms Claude Desktop runs on.
 ### Command line
 
 One-line install (macOS and Linux), no Rust toolchain required. This downloads
-the prebuilt `fugue` and `fugue-mcp` binaries into `~/.fugue/bin`:
+the prebuilt `fugue` and `fugue-mcp` binaries into `~/.fugue/bin` and the
+release's third-party license notices (`THIRD_PARTY_LICENSES.txt`) into
+`~/.fugue/share/doc`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/gdamron/fugue/main/install.sh | sh
@@ -53,8 +55,9 @@ claude mcp add fugue ~/.fugue/bin/fugue-mcp
 to play audio — the MCP finds its `fugue` daemon even if `~/.fugue/bin` is not on
 your `PATH`.
 
-Overrides: `FUGUE_BIN_DIR` (install location), `FUGUE_VERSION` (pin a specific
-release tag, default `latest`).
+Overrides: `FUGUE_BIN_DIR` (install location), `FUGUE_DOC_DIR` (where the
+license notices go), `FUGUE_VERSION` (pin a specific release tag, default
+`latest`).
 
 Prebuilt binaries are published for **macOS arm64**, **Linux x86_64 / arm64**
 (glibc), and **Windows x86_64**. Linux binaries dynamically link ALSA — install `libasound2`

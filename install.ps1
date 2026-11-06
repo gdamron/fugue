@@ -1,11 +1,14 @@
 param(
   [string]$FugueBinDir = $(if ($env:FUGUE_BIN_DIR) { $env:FUGUE_BIN_DIR } else { Join-Path $HOME ".fugue\bin" }),
-  [string]$FugueVersion = $(if ($env:FUGUE_VERSION) { $env:FUGUE_VERSION } else { "latest" })
+  [string]$FugueVersion = $(if ($env:FUGUE_VERSION) { $env:FUGUE_VERSION } else { "latest" }),
+  [string]$FugueDocDir = $(if ($env:FUGUE_DOC_DIR) { $env:FUGUE_DOC_DIR } else { Join-Path $HOME ".fugue\share\doc" })
 )
 
 $ErrorActionPreference = "Stop"
 $Repo = "gdamron/fugue"
 $Target = "x86_64-pc-windows-msvc"
+# The third-party license notices every release archive carries beside its binaries.
+$NoticesFile = "THIRD_PARTY_LICENSES.txt"
 
 function Write-Info([string]$Message) {
   Write-Host "==> $Message" -ForegroundColor Blue
@@ -37,6 +40,25 @@ function Install-FugueUnit([string]$Asset, [string[]]$Binaries) {
     }
     Copy-Item $Extracted (Join-Path $FugueBinDir $Binary) -Force
     Write-Info "Installed $Binary -> $FugueBinDir"
+  }
+  Install-FugueNotices $Asset
+}
+
+# The binaries carry third-party code whose licenses require their notices to
+# travel with them. A release without the file, or a doc directory that cannot
+# be written, warns rather than failing: the binaries are already installed.
+function Install-FugueNotices([string]$Asset) {
+  $Extracted = Join-Path $Temp $NoticesFile
+  if (-not (Test-Path $Extracted)) {
+    Write-Warning "archive $Asset did not contain $NoticesFile; license notices were not installed"
+    return
+  }
+  try {
+    New-Item -ItemType Directory -Force -Path $FugueDocDir | Out-Null
+    Copy-Item $Extracted (Join-Path $FugueDocDir $NoticesFile) -Force
+    Write-Info "Installed license notices -> $(Join-Path $FugueDocDir $NoticesFile)"
+  } catch {
+    Write-Warning "could not install $NoticesFile into ${FugueDocDir}: $_"
   }
 }
 
