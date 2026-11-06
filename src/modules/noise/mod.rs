@@ -7,9 +7,6 @@
 
 use std::sync::Arc;
 
-use rand::rngs::StdRng;
-use rand::RngExt;
-
 use crate::control_request::{
     apply_declared, local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable,
     Refusal, RtValue,
@@ -94,10 +91,8 @@ impl Noise {
     /// A noise source at `sample_rate`, its stream fixed by `seed` (or
     /// drawn from entropy), at `level` (clamped to 0 to 1).
     pub fn new(sample_rate: u32, seed: Option<u64>, level: f32) -> Self {
-        let seed = seed.unwrap_or_else(|| {
-            let mut entropy: StdRng = rand::make_rng();
-            entropy.random()
-        });
+        // Entropy, or the invention seed's stream for this module.
+        let seed = seed.unwrap_or_else(crate::invention::seeding::entropy);
         let mut noise = Self {
             rng: Rng::new(seed),
             pink: PinkFilter::new(sample_rate),

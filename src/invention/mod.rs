@@ -36,6 +36,7 @@ pub mod rpc_snapshot;
 pub mod runtime;
 pub mod save;
 pub mod score;
+pub(crate) mod seeding;
 pub mod state;
 pub mod taps;
 pub(crate) mod timelines;

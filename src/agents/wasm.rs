@@ -4,6 +4,7 @@ use crate::invention::{RuntimeController, RuntimeModuleInfo};
 pub struct AgentManager;
 
 impl AgentManager {
+    pub fn set_stubbed(&self, _stubbed: bool) {}
     pub fn start_all(&self, _controller: RuntimeController) {}
     pub fn start_module(&self, _controller: RuntimeController, _module: RuntimeModuleInfo) {}
     pub fn stop_module(&self, _module_id: &str) {}
