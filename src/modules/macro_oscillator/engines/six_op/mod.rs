@@ -7,4 +7,5 @@ mod lfo;
 mod operators;
 mod patch;
 mod patches;
+mod patches_held;
 mod patches_struck;

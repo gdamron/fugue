@@ -1,18 +1,22 @@
-//! The patches `harmonics` will choose between, in order.
+//! The 32 patches `harmonics` chooses between, in order.
 
 use super::patch::Patch;
+use super::patches_held::{HELD, PLUCKS};
 use super::patches_struck::{BELLS, KEYS};
 
 /// How many patches there are.
-pub(in crate::modules::macro_oscillator) const PATCH_COUNT: usize = 16;
+pub(in crate::modules::macro_oscillator) const PATCH_COUNT: usize = 32;
 
-/// Keys, then bells and mallets, eight of each.
+/// Keys, bells and mallets, basses and plucks, then organs, pads, winds
+/// and brass, eight of each.
 pub(in crate::modules::macro_oscillator) static PATCHES: [Patch; PATCH_COUNT] = {
     let mut all = [KEYS[0]; PATCH_COUNT];
     let mut i = 0;
     while i < 8 {
         all[i] = KEYS[i];
         all[8 + i] = BELLS[i];
+        all[16 + i] = PLUCKS[i];
+        all[24 + i] = HELD[i];
         i += 1;
     }
     all
@@ -41,6 +45,10 @@ mod tests {
                 "funky pluck keys", "quill keys", "toy piano", "music box",
                 "tubular bell", "glockenspiel", "vibraphone", "marimba",
                 "kalimba", "steel pan", "gong", "crystal bell",
+                "solid bass", "slap bass", "rubber bass", "sub pluck",
+                "harp", "plucked silk", "nylon guitar", "twang",
+                "drawbar organ", "reed organ", "warm pad", "glass pad",
+                "brass section", "flute", "reed lead", "metal drone",
             ]
         );
     }
