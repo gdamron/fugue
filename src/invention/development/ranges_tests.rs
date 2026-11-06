@@ -142,23 +142,25 @@ fn a_fan_out_whose_later_alias_starts_outside_its_range_starts_every_alias_withi
         ]
     }))
     .unwrap();
-    for config in [json!({})] {
-        let (runtime, _) = InventionBuilder::with_registry(48_000, registry())
-            .build(holding(&definition, config))
-            .unwrap();
-        let module = &runtime.modules["k"];
-        let mut values = Vec::new();
-        module
-            .module()
-            .for_each_alias(ControlIndex(0), &mut |table, cells, index| {
-                values.push(table.value(index, cells.load(index).unwrap()));
-            });
-        assert_eq!(
-            values,
-            vec![
-                Some(ControlValue::Number(2.0)),
-                Some(ControlValue::Number(2.0))
-            ]
-        );
-    }
+    let (runtime, _) = InventionBuilder::with_registry(48_000, registry())
+        .build(holding(&definition, json!({})))
+        .unwrap();
+    let module = &runtime.modules["k"];
+    let mut values = Vec::new();
+    module
+        .module()
+        .for_each_alias(ControlIndex(0), &mut |table, cells, index| {
+            values.push(table.value(index, cells.load(index).unwrap()));
+        });
+    assert_eq!(
+        values,
+        vec![
+            Some(ControlValue::Number(2.0)),
+            Some(ControlValue::Number(2.0))
+        ]
+    );
+    // A present null is still refused, as it is for every other control.
+    let refused = InventionBuilder::with_registry(48_000, registry())
+        .build(holding(&definition, json!({ "rate": null })));
+    assert!(refused.is_err());
 }
