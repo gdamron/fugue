@@ -44,6 +44,7 @@ fn factory(a: &str) -> DevelopmentFactory {
         registry,
         registered: Arc::new(Mutex::new(HashSet::new())),
         loaded: Arc::new(LoadedDevelopments::default()),
+        held_starts: Default::default(),
     }
 }
 

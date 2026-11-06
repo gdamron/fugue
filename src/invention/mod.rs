@@ -43,7 +43,7 @@ pub(crate) mod timelines;
 
 pub use builder::InventionBuilder;
 pub use format::{
-    AssetSpec, Connection, DevelopmentControl, DevelopmentInput, DevelopmentOutput,
+    AssetSpec, Connection, ControlRange, DevelopmentControl, DevelopmentInput, DevelopmentOutput,
     DevelopmentSpec, Invention, ModuleSpec, TimeSignature,
 };
 pub use graph::{feedback_chunks, set_feedback_chunks, MasterLevels, FEEDBACK_CHUNKS_ENV};

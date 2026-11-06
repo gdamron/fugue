@@ -44,6 +44,7 @@ fn voice_development() -> Invention {
             name: "waveform".to_string(),
             module: "osc".to_string(),
             control: "waveform".to_string(),
+            range: None,
         }],
         source_path: None,
     }
@@ -586,11 +587,13 @@ fn duplicate_development_control_keys_fan_out_writes() {
                 name: "decay".to_string(),
                 module: "env_a".to_string(),
                 control: "decay".to_string(),
+                range: None,
             },
             DevelopmentControl {
                 name: "decay".to_string(),
                 module: "env_b".to_string(),
                 control: "decay".to_string(),
+                range: None,
             },
         ],
         source_path: None,

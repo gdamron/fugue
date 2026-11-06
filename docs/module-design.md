@@ -158,6 +158,14 @@ A development names each exposed `inputs`, `outputs` and `controls` entry with
 the same rules, and use the musical gesture (`brightness`) rather than the
 inner module's key (`cutoff`).
 
+An exposed number control takes the range of the inner control it reaches.
+When that range runs past what sounds musical in the development (an lfo
+that reaches 100 Hz sweeping a chorus), give one of its entries a narrower
+`"range": { "min": 0.05, "max": 10 }`: the control lists it and holds its
+starting value and every write within it. A range must lie within the inner
+control's own; a definition starting the control outside it starts it at the
+nearest end.
+
 Formats that feed modules use the modules' names. A `fugue.score.v1` step has
 `velocity` and `gate_length`, and the score has `root_note`, as the sequencers
 do

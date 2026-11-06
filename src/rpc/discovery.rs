@@ -526,6 +526,7 @@ mod tests {
             registry: registry.clone(),
             registered: Arc::new(Mutex::new(Default::default())),
             loaded: Default::default(),
+            held_starts: Default::default(),
         };
         registry.register_boxed("recorder_development", Arc::new(factory));
         let result = registry

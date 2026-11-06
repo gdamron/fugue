@@ -51,6 +51,7 @@ impl DevelopmentControlSurface {
     /// Builds the surface over `directory`, the development's internal
     /// runtime directory, retaining it (see the type docs).
     pub(super) fn new(
+        name: &str,
         definition: &Invention,
         directory: SurfaceDirectory,
         declared: Option<DeclaredSurface>,
@@ -74,12 +75,13 @@ impl DevelopmentControlSurface {
                     )
                 })?;
 
+            let range = super::ranges::declared(name, definition, &control.name)?;
             controls.push(AliasedControl {
                 meta: ControlMeta {
                     key: control.name.clone(),
                     description: source.description,
-                    default: source.default,
-                    kind: source.kind,
+                    default: super::ranges::held(source.default, range),
+                    kind: super::ranges::listed(source.kind, range),
                 },
                 module_id: control.module.clone(),
                 key: control.control.clone(),

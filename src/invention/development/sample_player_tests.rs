@@ -60,6 +60,7 @@ fn pair(a: &str) -> DevelopmentFactory {
         registry: ModuleRegistry::default(),
         registered: Arc::new(Mutex::new(HashSet::new())),
         loaded: Arc::new(LoadedDevelopments::default()),
+        held_starts: Default::default(),
     }
 }
 

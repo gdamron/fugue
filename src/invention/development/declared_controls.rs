@@ -36,6 +36,7 @@ use crate::invention::runtime::ControlSurfaceInstance;
 use crate::payload::{Payload, Retired};
 
 use super::fan_out::apply_fanned_out;
+use super::ranges;
 use crate::{GraphModule, Invention};
 
 /// The events a development whose aliases queue them keeps for a block,
@@ -48,6 +49,10 @@ pub(super) struct DevelopmentControls {
     cells: Arc<ControlCells>,
     /// Per declared control, in table order: each declared alias.
     aliases: Vec<Vec<Alias>>,
+    /// Per declared control, in table order: the range it declares (see
+    /// `ranges`), which it holds each write within before its aliases
+    /// take it.
+    ranges: Vec<Option<(f32, f32)>>,
 }
 
 /// One inner declared control an exposed key reaches.
@@ -143,8 +148,10 @@ impl DevelopmentControls {
     /// Declares every exposed key with a declared alias, or `None` when no
     /// alias is declared. Also returns the development surface's declared
     /// part, sharing the cells. Fails when a later declared alias of a key
-    /// would refuse a value its first takes (see the module docs).
+    /// would refuse a value its first takes (see the module docs), or a
+    /// key's declared range does not narrow every alias (see `ranges`).
     pub(super) fn new(
+        development: &str,
         definition: &Invention,
         surfaces: &IndexMap<String, ControlSurfaceInstance>,
         module_indexes: &HashMap<String, usize>,
@@ -152,6 +159,7 @@ impl DevelopmentControls {
         let mut decls: Vec<ControlDecl> = Vec::new();
         let mut current = Vec::new();
         let mut aliases: Vec<Vec<Alias>> = Vec::new();
+        let mut ranges: Vec<Option<(f32, f32)>> = Vec::new();
         // Each key's first declared alias, for the build error.
         let mut firsts: Vec<String> = Vec::new();
         // Whether an event alias's module plays every event written.
@@ -161,8 +169,22 @@ impl DevelopmentControls {
                 .get(&control.module)
                 .and_then(|surface| surface.declaration(&control.control))
             else {
+                if let Some(range) = ranges::declared(development, definition, &control.name)? {
+                    let alias = format!("{}.{}", control.module, control.control);
+                    return Err(ranges::undeclared(
+                        development,
+                        &control.name,
+                        range,
+                        &alias,
+                    ));
+                }
                 continue;
             };
+            let range = ranges::declared(development, definition, &control.name)?;
+            if let Some(range) = range {
+                let alias = format!("{}.{}", control.module, control.control);
+                ranges::check(development, &control.name, range, &alias, &found.decl)?;
+            }
             let module = *module_indexes
                 .get(&control.module)
                 .ok_or_else(|| format!("Unknown control module: {}", control.module))?;
@@ -173,12 +195,28 @@ impl DevelopmentControls {
                         key: Cow::Owned(control.name.clone()),
                         indexed: false,
                         count: 1,
+                        // A declared range is the key's own, which it
+                        // holds writes within (only a number declares
+                        // one, see `ranges::check`).
+                        kind: match range {
+                            Some((min, max)) => DeclKind::Number { min, max },
+                            None => found.decl.kind,
+                        },
                         // Each alias clamps for itself as it applies; an
                         // integer keeps its clamp, so the key takes every
-                        // whole number its first alias does.
+                        // whole number its first alias does. A key
+                        // declaring a range clamps to it first.
                         clamp: match found.decl.kind {
+                            _ if range.is_some() => range,
                             DeclKind::Integer { .. } => found.decl.clamp,
                             _ => None,
+                        },
+                        // Its declared default, held within its range.
+                        default: match (range, found.decl.default) {
+                            (Some((min, max)), RtValue::F32(number)) => {
+                                RtValue::F32(number.max(min).min(max))
+                            }
+                            (_, default) => default,
                         },
                         // A key lists itself, whatever count its alias's
                         // module lists it below.
@@ -187,6 +225,7 @@ impl DevelopmentControls {
                     });
                     current.push(found.current);
                     aliases.push(Vec::new());
+                    ranges.push(range);
                     firsts.push(format!("{}.{}", control.module, control.control));
                     decls.len() - 1
                 }
@@ -260,6 +299,7 @@ impl DevelopmentControls {
             table,
             cells,
             aliases,
+            ranges,
         };
         Ok(Some((controls, surface)))
     }
@@ -277,8 +317,9 @@ impl DevelopmentControls {
         aliases.map(|alias| (alias.module, alias.index)).collect()
     }
 
-    /// Applies `value` to every declared alias of `control` in turn, each
-    /// as its own kind holds it, publishing each inner control's new value.
+    /// Applies `value`, held within the range `control` declares, to every
+    /// declared alias of `control` in turn, each as its own kind holds it,
+    /// publishing each inner control's new value.
     /// Returns what the first alias then holds. A value an alias cannot
     /// hold, or an alias whose module is gone, is refused before any alias
     /// changes; past that, an alias's own refusal (a module refusing what
@@ -295,6 +336,12 @@ impl DevelopmentControls {
             .aliases
             .get(usize::from(control.0))
             .ok_or(Refusal::Unsupported)?;
+        let value = match (self.ranges.get(usize::from(control.0)), value) {
+            (Some(Some((min, max))), RtValue::F32(number)) => {
+                RtValue::F32(number.max(*min).min(*max))
+            }
+            _ => value,
+        };
         for alias in aliases {
             if alias.module >= modules.len() {
                 return Err(Refusal::TargetGone);
