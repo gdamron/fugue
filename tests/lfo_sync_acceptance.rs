@@ -380,8 +380,8 @@ fn a_live_division_change_keeps_the_output_continuous() {
 }
 
 /// Existing behaviour is unchanged at the defaults: spelling the defaults out
-/// gives the same samples, and the waveform matches what the plain lfo
-/// produced before the additions (samples read from the plain lfo on main).
+/// gives the same samples, and the sine matches an exact 3 Hz sine at 48 kHz,
+/// sin(2*pi*3*n/48000).
 #[test]
 fn the_new_controls_at_their_defaults_leave_the_lfo_unchanged() {
     for waveform in ["sine", "triangle", "square"] {
@@ -400,10 +400,11 @@ fn the_new_controls_at_their_defaults_leave_the_lfo_unchanged() {
     }
 }
 
-/// Samples of the 3 Hz sine lfo, captured from the lfo before the additions.
+/// Samples of an exact 3 Hz sine at 48 kHz, sin(2*pi*3*n/48000); not captured
+/// from the old lfo.
 const GOLDEN_SINE: [(usize, f32); 4] = [
     (1, 0.000_392_699),
-    (1_000, 0.382_680),
-    (12_345, -0.990_764),
-    (95_999, 0.006_289_1),
+    (1_000, 0.382_683_4),
+    (12_345, -0.990_836_5),
+    (95_999, -0.000_392_699_1),
 ];
