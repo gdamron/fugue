@@ -1,0 +1,27 @@
+{
+  "version": "1.0.0",
+  "title": "Phaser: Sweeping Pad",
+  "description": "A sawtooth A major chord through an eight-stage phaser whose sweep is a whole note at the clock's tempo, so the notches rise and fall once a bar.",
+  "modules": [
+    { "id": "clock", "type": "clock", "config": { "bpm": 80.0 } },
+    { "id": "root", "type": "oscillator", "config": { "waveform": "sawtooth", "frequency": 110.0 } },
+    { "id": "fifth", "type": "oscillator", "config": { "waveform": "sawtooth", "frequency": 164.81 } },
+    { "id": "third", "type": "oscillator", "config": { "waveform": "sawtooth", "frequency": 277.18 } },
+    { "id": "chord", "type": "mixer", "config": { "levels": [0.3, 0.25, 0.2], "master": 0.8 } },
+    {
+      "id": "phaser",
+      "type": "phaser",
+      "config": { "stage_count": 8, "division": "whole_note", "feedback": 0.55 }
+    },
+    { "id": "dac", "type": "dac" }
+  ],
+  "connections": [
+    { "from": "clock", "from_port": "bpm", "to": "phaser", "to_port": "bpm" },
+    { "from": "root", "from_port": "audio", "to": "chord", "to_port": "audio.0" },
+    { "from": "fifth", "from_port": "audio", "to": "chord", "to_port": "audio.1" },
+    { "from": "third", "from_port": "audio", "to": "chord", "to_port": "audio.2" },
+    { "from": "chord", "from_port": "audio_left", "to": "phaser", "to_port": "audio_left" },
+    { "from": "phaser", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
+    { "from": "phaser", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
+  ]
+}

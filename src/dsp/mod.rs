@@ -41,6 +41,7 @@ mod delay_line;
 mod drive;
 #[cfg(feature = "spectrogram")]
 mod fft;
+mod first_order_allpass;
 mod grains;
 mod halfband;
 mod limiter;
@@ -68,6 +69,7 @@ pub use decibels::{decibels_to_level, exp2, level_to_decibels, log2, FLOOR_DECIB
 pub(crate) use declick::DECLICK_SECONDS;
 pub(crate) use declick::{declick_gain, declick_step};
 pub use delay_line::DelayLine;
+pub use first_order_allpass::FirstOrderAllpass;
 pub use drive::{DriveProcessor, DriveShape, REFERENCE_PEAK};
 #[cfg(feature = "spectrogram")]
 pub(crate) use fft::RealFft;
