@@ -4,10 +4,14 @@ mod additive;
 mod chord_bank;
 mod chord_waves;
 mod chords;
+mod dust;
 mod fm;
 mod grain_formant;
+mod limiter;
+mod modal;
 mod six_op;
 mod speech;
+mod string;
 mod tables;
 mod virtual_analog;
 mod wave_shapes;
@@ -19,8 +23,11 @@ use self::additive::AdditiveEngine;
 use self::chords::ChordsEngine;
 use self::fm::FmEngine;
 use self::grain_formant::GrainFormantEngine;
+use self::limiter::Limiter;
+use self::modal::ModalEngine;
 use self::six_op::SixOpEngine;
 use self::speech::SpeechEngine;
+use self::string::StringEngine;
 use self::virtual_analog::VirtualAnalogEngine;
 use self::waveshaping::WaveshapingEngine;
 use self::wavetable::WavetableEngine;
@@ -38,6 +45,8 @@ pub(super) const MODELS: &[&str] = &[
     "speech",
     "wavetable",
     "six_op_fm",
+    "string",
+    "modal",
 ];
 
 /// How many engines there are.
@@ -45,7 +54,9 @@ pub(super) const MODEL_COUNT: usize = MODELS.len();
 
 /// Each engine's output levels (`audio`, `aux`), so the models sit at
 /// about the same loudness. Speech limits its own `audio`; the wavetables
-/// are normalised, and peak below 1, when they are built.
+/// are normalised, and peak below 1, when they are built; a negative level
+/// is a limiter's drive, for an engine whose loudness swings widely with
+/// its settings.
 const LEVELS: [(f32, f32); MODEL_COUNT] = [
     (0.8, 0.8),
     (0.7, 0.6),
@@ -56,12 +67,15 @@ const LEVELS: [(f32, f32); MODEL_COUNT] = [
     (1.0, 0.8),
     (1.0, 1.0),
     (1.0, 1.0),
+    (-1.0, 0.8),
+    (-1.0, 0.8),
 ];
 
 /// Whether each engine shapes its own sound over time when struck by a
 /// trigger (a string, a body, a drum), so the low-pass gate leaves it be.
-pub(super) const ENVELOPED: [bool; MODEL_COUNT] =
-    [false, false, false, false, false, false, false, false, true];
+pub(super) const ENVELOPED: [bool; MODEL_COUNT] = [
+    false, false, false, false, false, false, false, false, true, true, true,
+];
 
 /// Every engine, built up front so switching allocates nothing.
 pub(super) struct Engines {
@@ -74,6 +88,10 @@ pub(super) struct Engines {
     speech: SpeechEngine,
     wavetable: WavetableEngine,
     six_op: SixOpEngine,
+    string: StringEngine,
+    modal: ModalEngine,
+    /// The `audio` and `aux` limiters of each engine with a negative level.
+    limiters: [[Limiter; 2]; MODEL_COUNT],
 }
 
 impl Engines {
@@ -91,6 +109,11 @@ impl Engines {
             speech: SpeechEngine::new(sample_rate),
             wavetable: WavetableEngine::new(),
             six_op: SixOpEngine::new(),
+            string: StringEngine::new(sample_rate),
+            modal: ModalEngine::new(sample_rate),
+            limiters: std::array::from_fn(|_| {
+                [Limiter::new(sample_rate), Limiter::new(sample_rate)]
+            }),
         }
     }
 
@@ -106,11 +129,21 @@ impl Engines {
             5 => self.chords.render(p, out, aux),
             6 => self.speech.render(p, out, aux),
             7 => self.wavetable.render(p, out, aux),
-            _ => self.six_op.render(p, out, aux),
+            8 => self.six_op.render(p, out, aux),
+            9 => self.string.render(p, out, aux),
+            _ => self.modal.render(p, out, aux),
         }
         let (out_level, aux_level) = LEVELS[model];
-        out.iter_mut().for_each(|s| *s *= out_level);
-        aux.iter_mut().for_each(|s| *s *= aux_level);
+        let [out_limiter, aux_limiter] = &mut self.limiters[model];
+        for (block, level, limiter) in
+            [(out, out_level, out_limiter), (aux, aux_level, aux_limiter)]
+        {
+            if level < 0.0 {
+                limiter.process(-level, block);
+            } else {
+                block.iter_mut().for_each(|s| *s *= level);
+            }
+        }
     }
 }
 
@@ -120,7 +153,7 @@ mod tests {
 
     /// The models that shape their own envelope, by name, so a model added
     /// out of step with `ENVELOPED` is caught rather than gated by mistake.
-    const STRUCK: &[&str] = &["six_op_fm"];
+    const STRUCK: &[&str] = &["six_op_fm", "string", "modal"];
 
     #[test]
     fn exactly_the_struck_models_shape_their_own_envelope() {

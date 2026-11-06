@@ -51,6 +51,71 @@ fn a_plain_string_repeats_at_its_period() {
     }
 }
 
+/// How far, in cents, the Hann-windowed spectral peak of `x` near `hz`
+/// lies from it.
+fn spectral_cents(x: &[f32], hz: f32) -> f32 {
+    let n = x.len() as f64;
+    let magnitude = |cents: f64| {
+        let w = std::f64::consts::TAU * f64::from(hz) * (cents / 1200.0).exp2() / f64::from(RATE);
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for (i, v) in x.iter().enumerate() {
+            let window = 0.5 - 0.5 * (std::f64::consts::TAU * i as f64 / n).cos();
+            let v = f64::from(*v) * window;
+            re += v * (w * i as f64).cos();
+            im -= v * (w * i as f64).sin();
+        }
+        re.hypot(im)
+    };
+    let best = |lo: f64, step: f64, steps: i32| {
+        (0..=steps)
+            .map(|i| lo + f64::from(i) * step)
+            .max_by(|a, b| magnitude(*a).total_cmp(&magnitude(*b)))
+            .unwrap()
+    };
+    let coarse = best(-30.0, 1.0, 60);
+    best(coarse - 1.0, 0.1, 20) as f32
+}
+
+/// A stiff string is kept in tune: the stiffness allpass's delay at the
+/// fundamental is taken out of the main delay, short loops included. (Past
+/// 0.75 the string's delay wobbles on purpose, so its pitch does too.)
+#[test]
+fn a_tuned_stiff_string_stays_in_tune() {
+    for dispersion in [0.3f32, 0.5, 0.7] {
+        for hz in [110.0f32, 440.0, 3_000.0] {
+            let mut string = KarplusString::new(RATE, true, 1).with_tuned_stiffness();
+            string.glide_to(hz / RATE as f32, 1.0);
+            let x = pluck(&mut string, &settings(dispersion), RATE as usize / 2);
+            let cents = spectral_cents(&x[2400..], hz);
+            assert!(
+                cents.abs() < 5.0,
+                "dispersion {dispersion} at {hz} Hz: {cents} cents"
+            );
+        }
+    }
+}
+
+/// The stiffness correction moves smoothly as a loop shortens past the
+/// point where its allpass, held at its shortest, delays the fundamental
+/// more than half a period (a loop of 8 samples, about 6 kHz).
+#[test]
+fn the_stiffness_correction_is_continuous_for_short_loops() {
+    let mut string = KarplusString::new(RATE, true, 1).with_tuned_stiffness();
+    let mut last = None;
+    // Loops of 5 to 9 samples, where the allpass stays at its shortest
+    // length, so the correction has no whole-sample steps of its own.
+    for step in 0..=40 {
+        let delay = 5.0 + step as f32 * 0.1;
+        string.frequency = 1.0 / delay;
+        let excess = string.allpass_excess_at(delay, 0.7);
+        if let Some(previous) = last {
+            let jump: f32 = excess - previous;
+            assert!(jump.abs() < 0.5, "jumps {jump} at a loop of {delay}");
+        }
+        last = Some(excess);
+    }
+}
+
 /// A reset string is silent at once, with no allocation needed.
 #[test]
 fn reset_silences_the_string() {

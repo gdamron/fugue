@@ -11,12 +11,12 @@
 
 use crate::dsp::{cosine, exp2, log2, DcBlocker, LinearRamp, Svf};
 
-use super::modal::{ModalSettings, ModalVoice, MAX_MODES};
 use super::plucker::Plucker;
-use super::string::{KarplusString, StringSettings};
 use super::sympathetic::{string_notes, MAX_STRINGS};
 use super::tuning::SYMPATHETIC_DAMPING;
 use super::ENGINE_BLOCK;
+use crate::dsp::physical::{KarplusString, StringSettings};
+use crate::dsp::physical::{ModalSettings, ModalVoice, MAX_MODES};
 
 /// The most voices the resonator plays at once.
 pub(super) const VOICES: usize = 4;

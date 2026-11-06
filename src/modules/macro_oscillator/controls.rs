@@ -63,15 +63,15 @@ const DECLS: &[ControlDecl] = &[
     .unit("Hz"),
     macro_control(
         "harmonics",
-        "Harmonic content; virtual analog: second oscillator detune; waveshaping: shaper curve (0.5 linear); fm: modulator ratio (0.5 an octave); grain_formant: second formant ratio, bare window below 0.5; additive: spectral bumps; chords: chord (octave, fifth, sus2, sus4, triad, sixth, seventh, ninth, eleventh, six-nine); speech: formant shift, ±1 octave; wavetable: bank (harmonic, formant, sync, bit-reduced), gliding through them to about 0.43, then stepping back with timbre and morph quantized too from about 0.57; six_op_fm: patch, 32 in four groups of eight (keys, bells and mallets, basses and plucks, organs, pads and leads)",
+        "Harmonic content; virtual analog: second oscillator detune; waveshaping: shaper curve (0.5 linear); fm: modulator ratio (0.5 an octave); grain_formant: second formant ratio, bare window below 0.5; additive: spectral bumps; chords: chord (octave, fifth, sus2, sus4, triad, sixth, seventh, ninth, eleventh, six-nine); speech: formant shift, ±1 octave; wavetable: bank (harmonic, formant, sync, bit-reduced), gliding through them to about 0.43, then stepping back with timbre and morph quantized too from about 0.57; six_op_fm: patch, 32 in four groups of eight (keys, bells and mallets, basses and plucks, organs, pads and leads); string: stiffness (inharmonic below and above 0.5); modal: material and inharmonicity",
     ),
     macro_control(
         "timbre",
-        "Brightness; virtual analog: pulse width and sync; waveshaping: fold amount; fm: modulation index; grain_formant: formant frequency; additive: spectral peak position; chords: inversion (two octaves down to two up, root position at 0.5); speech: vocal register, low to high voice; wavetable: position along the bank, dark to bright; six_op_fm: modulator levels, about 12 dB darker to 12 dB brighter",
+        "Brightness; virtual analog: pulse width and sync; waveshaping: fold amount; fm: modulation index; grain_formant: formant frequency; additive: spectral peak position; chords: inversion (two octaves down to two up, root position at 0.5); speech: vocal register, low to high voice; wavetable: position along the bank, dark to bright; six_op_fm: modulator levels, about 12 dB darker to 12 dB brighter; string: brightness; modal: brightness",
     ),
     macro_control(
         "morph",
-        "Waveform morph; virtual analog: saw to triangle; waveshaping: triangle to saw; fm: feedback (below 0.5 rough, above noisy); grain_formant: grain window; additive: narrows the spectral peak; chords: organ registrations, bright to hollow, to about 0.47, then the notes turn one by one to wavetable voices that scan soft to bright; speech: vowel; wavetable: the bank's second axis of waves; six_op_fm: envelope length, up to 8 times shorter to 8 times longer, or with trigger unpatched, how far into the note the drone holds",
+        "Waveform morph; virtual analog: saw to triangle; waveshaping: triangle to saw; fm: feedback (below 0.5 rough, above noisy); grain_formant: grain window; additive: narrows the spectral peak; chords: organ registrations, bright to hollow, to about 0.47, then the notes turn one by one to wavetable voices that scan soft to bright; speech: vowel; wavetable: the bank's second axis of waves; six_op_fm: envelope length, up to 8 times shorter to 8 times longer, or with trigger unpatched, how far into the note the drone holds; string: decay; modal: decay",
     ),
     ControlDecl::new(
         "level",
@@ -87,7 +87,7 @@ const DECLS: &[ControlDecl] = &[
             max: MAX_DECAY,
         },
         RtValue::F32(1.0),
-        "Time for the low-pass gate to fall 60 dB after a trigger, in seconds; six_op_fm shapes its own envelopes and ignores it",
+        "Time for the low-pass gate to fall 60 dB after a trigger, in seconds; six_op_fm shapes its own envelopes and ignores it, and string, modal and the drums shape their own decay with morph",
     )
     .unit("s")
     .log()

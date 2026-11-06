@@ -14,7 +14,7 @@ use std::f32::consts::PI;
 
 use crate::dsp::{exp2, tan_quarter_turn, DcBlocker, DelayLine, Rng, Svf};
 
-use super::tuning::t60_seconds;
+use super::t60_seconds;
 
 /// The delay line: long enough for a string at the `frequency` control's
 /// lowest 20 Hz, where the reference's 2048 samples at 48 kHz stop at
@@ -57,7 +57,7 @@ impl DampingFilter {
 
 /// One block's settings for a string.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct StringSettings {
+pub(crate) struct StringSettings {
     /// Below 0 the bridge curves (buzz), above 0 the string stiffens.
     pub dispersion: f32,
     pub brightness: f32,
@@ -85,7 +85,7 @@ impl Glide {
 }
 
 /// One string.
-pub(super) struct KarplusString {
+pub(crate) struct KarplusString {
     sample_rate: f32,
     dispersive: bool,
     line: DelayLine,
@@ -103,10 +103,18 @@ pub(super) struct KarplusString {
     curved_bridge: f32,
     /// The frequency the string is playing, for a glide to a new one.
     frequency: f32,
+    /// Whether the main delay takes up the stiffness allpass's own delay at
+    /// the fundamental, so a stiff string stays in tune.
+    tuned_stiffness: bool,
+    /// How much longer than its length the allpass delays the fundamental.
+    allpass_excess: Glide,
+    /// The excess last worked out, and the loop and stiffness it is for.
+    excess: f32,
+    excess_key: (u32, u32),
 }
 
 impl KarplusString {
-    pub(super) fn new(sample_rate: u32, dispersive: bool, seed: u64) -> Self {
+    pub(crate) fn new(sample_rate: u32, dispersive: bool, seed: u64) -> Self {
         let rate = sample_rate.max(1) as f32;
         let length = (LINE_SECONDS * rate).ceil() as usize + 4;
         let mut string = Self {
@@ -125,19 +133,31 @@ impl KarplusString {
             dispersion_noise: 0.0,
             curved_bridge: 0.0,
             frequency: 220.0 / rate,
+            tuned_stiffness: false,
+            allpass_excess: Glide::default(),
+            excess: 0.0,
+            excess_key: (u32::MAX, u32::MAX),
         };
         string.delay.value = 1.0 / string.frequency;
         string
     }
 
+    /// Keeps the fundamental in tune when the string is stiff, by taking the
+    /// stiffness allpass's delay at the fundamental out of the main delay.
+    /// Without it the stiffness sharpens the pitch, as in the reference.
+    pub(crate) fn with_tuned_stiffness(mut self) -> Self {
+        self.tuned_stiffness = true;
+        self
+    }
+
     /// The frequency the string glides to, as a fraction of the sample rate;
     /// `glide` 1 jumps there, smaller values move part of the way each block.
-    pub(super) fn glide_to(&mut self, frequency: f32, glide: f32) {
+    pub(crate) fn glide_to(&mut self, frequency: f32, glide: f32) {
         self.frequency += glide * (frequency - self.frequency);
     }
 
     /// Silences the string at once.
-    pub(super) fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         clear(&mut self.line);
         clear(&mut self.stretch);
         self.damping_filter = DampingFilter::default();
@@ -150,7 +170,7 @@ impl KarplusString {
     /// Plays one block: `input` excites the string, its sound is added into
     /// `out` and its pickup at `position` into `aux`. Returns the largest
     /// sample written into the loop, for telling when it has fallen quiet.
-    pub(super) fn process(
+    pub(crate) fn process(
         &mut self,
         settings: &StringSettings,
         input: &[f32],
@@ -189,6 +209,16 @@ impl KarplusString {
         // ratio of the pitch to the cutoff. Shorten the line to match.
         let omega = tan_quarter_turn(PI * self.frequency) / tan_quarter_turn(PI * cutoff);
         self.compensation.start(1.0 - omega.atan() / PI, frames);
+        if self.tuned_stiffness && self.dispersive {
+            let loop_delay = delay * (1.0 - omega.atan() / PI) - 1.0;
+            // Worked out again only when the loop or its stiffness moves.
+            let key = (loop_delay.to_bits(), dispersion.to_bits());
+            if key != self.excess_key {
+                self.excess_key = key;
+                self.excess = self.allpass_excess_at(loop_delay, dispersion);
+            }
+            self.allpass_excess.start(self.excess, frames);
+        }
 
         let mut largest = 0.0f32;
         for i in 0..frames {
@@ -247,7 +277,11 @@ impl KarplusString {
             .min((self.stretch.len() - 1) as f32)
             .floor();
         let ap_gain = ap_gain * (raw / MIN_DELAY).min(1.0);
-        let main = (*delay - ap_delay).max(1.0);
+        let main = if self.tuned_stiffness {
+            (*delay - ap_delay - self.allpass_excess.next()).max(1.0)
+        } else {
+            (*delay - ap_delay).max(1.0)
+        };
         let s = self.line.read_fractional(main);
         let read = self.stretch.read(ap_delay as usize);
         let write = s + ap_gain * read;
@@ -260,6 +294,31 @@ impl KarplusString {
         let sign = if s > 0.0 { 1.0 } else { -1.5 };
         self.curved_bridge = (value.abs() + value) * sign;
         s
+    }
+}
+
+impl KarplusString {
+    /// How much longer than its length, in samples, the stiffness allpass
+    /// delays the fundamental for a loop of `delay` samples at
+    /// `dispersion`: its phase delay there, less its length. Worked out
+    /// once per block.
+    fn allpass_excess_at(&self, delay: f32, dispersion: f32) -> f32 {
+        if dispersion <= 0.0 {
+            return 0.0;
+        }
+        let stretch_point = dispersion * (2.0 - dispersion) * 0.475;
+        let raw = delay * stretch_point;
+        let length = raw
+            .max(MIN_DELAY)
+            .min((self.stretch.len() - 1) as f32)
+            .floor();
+        let gain = -0.618 * dispersion / (0.15 + dispersion) * (raw / MIN_DELAY).min(1.0);
+        // H = (z^-D - g) / (1 - g·z^-D), at the fundamental.
+        let omega = 2.0 * PI * self.frequency;
+        let (sin, cos) = (omega * length).sin_cos();
+        // Its phase is -ωD - 2·atan2(g·sin ωD, 1 - g·cos ωD), unwrapped, so
+        // a short loop (ωD past π) does not jump a whole period.
+        2.0 * (gain * sin).atan2(1.0 - gain * cos) / omega
     }
 }
 

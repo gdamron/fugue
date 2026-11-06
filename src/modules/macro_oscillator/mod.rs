@@ -29,6 +29,8 @@ use self::engines::MODEL_COUNT;
 use self::voice::{Block, Gate, Voice};
 use crate::music::scales::{KEY_NAMES, SCALE_NAMES};
 
+#[cfg(test)]
+mod block_edge_tests;
 mod controls;
 mod engine;
 mod engines;
