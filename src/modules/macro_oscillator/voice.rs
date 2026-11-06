@@ -234,10 +234,11 @@ impl Voice {
         }
         let from = self.bypass.value();
         let travel = self.bypass_step * size as f32;
+        // Toward the target, never past it: a resting bypass stays put.
         let to = if bypass_target > from {
-            (from + travel).min(1.0)
+            (from + travel).min(bypass_target)
         } else {
-            (from - travel).max(0.0)
+            (from - travel).max(bypass_target)
         };
         match gate {
             // The gate opens with the bypass, so an unpatch fades in at the
@@ -426,6 +427,36 @@ mod tests {
         rms(&mut voice, Gate::Open, 40);
         let back = rms(&mut voice, Gate::Open, 8);
         assert!(back > 0.8 * open, "{back}, open {open}");
+    }
+
+    #[test]
+    fn an_unpatched_voice_is_the_engine_untouched() {
+        // With the gate bypassed, the voice passes the engine's output
+        // through exactly, block after block: none of the gate leaks in.
+        let mut voice = Voice::new(48_000, 0);
+        let mut engines = Engines::new(48_000);
+        let (mut audio, mut aux) = ([0.0; 12], [0.0; 12]);
+        let (mut out, mut side) = ([0.0; 12], [0.0; 12]);
+        let b = block(0, Gate::Open);
+        for _ in 0..200 {
+            voice.render(&b, &mut audio, &mut aux);
+            let p = EngineParameters {
+                note: b.note,
+                sample_period: 1.0 / 48_000.0,
+                harmonics: b.harmonics,
+                harmonics_target: b.harmonics_target,
+                timbre: b.timbre,
+                morph: b.morph,
+                accent: 0.8,
+                trigger: false,
+                untriggered: true,
+                key: 0,
+                scale: 0,
+            };
+            engines.render(0, &p, &mut out, &mut side);
+            assert_eq!(audio, out);
+            assert_eq!(aux, side);
+        }
     }
 
     #[test]
