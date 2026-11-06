@@ -5,7 +5,7 @@
 //! towards a soft triangle by `dirtiness`, swept down from a pitch blip
 //! through a transistor VCA, with a click and a breath of noise on top.
 
-use super::filters::{one_pole, tan_fast, BlockGlide, ModeFilter, Rate};
+use super::filters::{one_pole, slope, tan_fast, BlockGlide, ModeFilter, Rate};
 use crate::dsp::{sine, Rng};
 use crate::modules::macro_oscillator::engine::semitones_to_ratio;
 
@@ -49,8 +49,7 @@ impl Click {
 
     #[inline]
     fn process(&mut self, x: f32) -> f32 {
-        let error = x - self.lp;
-        self.lp += if error > 0.0 { self.rise } else { self.fall } * error;
+        slope(&mut self.lp, x, self.rise, self.fall);
         one_pole(&mut self.hp, self.lp, self.high_pass);
         self.filter.process(self.lp - self.hp).lowpass
     }
@@ -59,6 +58,7 @@ impl Click {
 pub(super) struct SyntheticBassDrum {
     rate: Rate,
     rng: Rng,
+    noise_gain: f32,
     transient_decay: f32,
     envelope_lp_f: f32,
     phase_noise_f: f32,
@@ -113,6 +113,7 @@ impl SyntheticBassDrum {
         Self {
             rate,
             rng: Rng::new(0xba55),
+            noise_gain: rate.noise_gain(),
             transient_decay: 1.0 - rate.per_second(0.005),
             envelope_lp_f: rate.coefficient(0.1),
             phase_noise_f: rate.coefficient(0.002),
@@ -170,7 +171,7 @@ impl SyntheticBassDrum {
         self.sustain_gain.start(s.accent * decay, size);
 
         for o in out.iter_mut() {
-            let noise = self.rng.unit() - 0.5;
+            let noise = (self.rng.unit() - 0.5) * self.noise_gain;
             one_pole(&mut self.phase_noise, noise, self.phase_noise_f);
             let f0 = self.f0.next();
             let dirtiness = self.dirtiness.next();
@@ -213,7 +214,7 @@ impl SyntheticBassDrum {
                 } else {
                     1.0
                 };
-                let breath = self.rng.unit();
+                let breath = self.rng.unit() * self.noise_gain;
                 one_pole(&mut self.noise_lp, breath, self.noise_lp_f);
                 one_pole(&mut self.noise_hp, self.noise_lp, self.noise_hp_f);
                 let transient = self.click.process(step) + self.noise_lp - self.noise_hp;

@@ -73,7 +73,9 @@ impl BassDrumEngine {
 
 #[cfg(test)]
 mod tests {
-    use super::super::filters::testing::{params, peak, play, strike, RATE};
+    use super::super::filters::testing::{
+        assert_rate_independent, loudness_over_time, params, peak, play, strike, RATE,
+    };
     use super::*;
 
     fn engine() -> BassDrumEngine {
@@ -88,7 +90,7 @@ mod tests {
             &params(36.0, false, false),
             400,
         );
-        assert_eq!(peak(&out) + peak(&aux), 0.0);
+        assert!(peak(&out) + peak(&aux) < 1e-9);
         let (out, aux) = strike(
             |p, o, a| drum.render(p, o, a),
             params(36.0, false, false),
@@ -134,14 +136,11 @@ mod tests {
     }
 
     #[test]
-    fn it_plays_at_another_rate() {
-        let mut drum = BassDrumEngine::new(44_100);
-        let p = EngineParameters {
-            sample_period: 1.0 / 44_100.0,
-            ..params(36.0, false, false)
-        };
-        let (out, aux) = strike(|p, o, a| drum.render(p, o, a), p, 1.0);
-        assert!(out.iter().chain(&aux).all(|s| s.is_finite()));
-        assert!(peak(&out) > 0.1 && peak(&aux) > 0.1);
+    fn it_sounds_alike_at_any_rate() {
+        assert_rate_independent(|rate| {
+            loudness_over_time(rate, 36.0, BassDrumEngine::new, |d, p, o, a| {
+                d.render(p, o, a)
+            })
+        });
     }
 }

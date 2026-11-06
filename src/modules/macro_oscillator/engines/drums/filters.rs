@@ -1,6 +1,7 @@
 //! Ported from Mutable Instruments' `stmlib/dsp/filter.h` (`Svf` and its
-//! `tan` approximations) and `stmlib/dsp/dsp.h` (`SoftLimit`,
-//! `SoftClip` and the `ONE_POLE` macro) (MIT, Copyright 2014 Emilie Gillet). See
+//! `tan` approximations; MIT, Copyright 2014 Emilie Gillet) and
+//! `stmlib/dsp/dsp.h` (`SoftLimit`, `SoftClip` and the `ONE_POLE` and
+//! `SLOPE` macros; MIT, Copyright 2012 Emilie Gillet). See
 //! THIRD_PARTY_NOTICES.md.
 //!
 //! The filters the drums are built from. A drum's modes ring for seconds at
@@ -105,6 +106,15 @@ pub(super) fn one_pole(state: &mut f32, x: f32, coefficient: f32) -> f32 {
     *state
 }
 
+/// Moves `state` toward `x` by `rise` of the way when `x` is above it and
+/// by `fall` when below, and returns it: the reference's `SLOPE`.
+#[inline]
+pub(super) fn slope(state: &mut f32, x: f32, rise: f32, fall: f32) -> f32 {
+    let error = x - *state;
+    *state += if error > 0.0 { rise } else { fall } * error;
+    *state
+}
+
 /// A per-sample one-pole coefficient given at 48 kHz, moved to `rate`, so
 /// a smoothing or decay takes the same time at any sample rate.
 pub(super) fn per_sample(coefficient: f32, rate: f32) -> f32 {
@@ -130,9 +140,17 @@ impl Rate {
         (seconds * self.rate) as usize
     }
 
-    /// The per-sample step of something that takes `seconds`.
+    /// The per-sample step of something that takes `seconds`: the
+    /// reference's `1 / (seconds · 48 kHz)`, moved to this rate so it stays
+    /// between 0 and 1 however low the rate.
     pub fn per_second(self, seconds: f32) -> f32 {
-        1.0 / (seconds * self.rate)
+        self.coefficient((1.0 / (seconds * 48_000.0)).min(1.0))
+    }
+
+    /// The gain that keeps white noise as loud through filters fixed in
+    /// hertz: its power spreads over a band that widens with the rate.
+    pub fn noise_gain(self) -> f32 {
+        (self.rate / 48_000.0).sqrt()
     }
 
     /// A one-pole coefficient given at 48 kHz, at this rate.
@@ -231,6 +249,57 @@ pub(super) mod testing {
 
     pub fn peak(x: &[f32]) -> f32 {
         x.iter().fold(0.0f32, |m, s| m.max(s.abs()))
+    }
+
+    /// A strike at `note` rendered at `rate` by `engine`, as the loudness
+    /// (dB RMS, `audio` and `aux`) of 25 ms windows across its first second.
+    pub fn loudness_over_time<E>(
+        rate: u32,
+        note: f32,
+        new: impl Fn(u32) -> E,
+        mut render: impl FnMut(&mut E, &EngineParameters, &mut [f32], &mut [f32]),
+    ) -> Vec<(f32, f32)> {
+        let mut engine = new(rate);
+        let p = EngineParameters {
+            sample_period: 1.0 / rate as f32,
+            ..params(note, false, false)
+        };
+        let blocks = rate as usize / ENGINE_BLOCK;
+        let mut out = Vec::new();
+        let mut aux = Vec::new();
+        let (mut o, mut a) = ([0.0; ENGINE_BLOCK], [0.0; ENGINE_BLOCK]);
+        for block in 0..blocks {
+            let p = EngineParameters {
+                trigger: block == 0,
+                ..p
+            };
+            render(&mut engine, &p, &mut o, &mut a);
+            out.extend_from_slice(&o);
+            aux.extend_from_slice(&a);
+        }
+        let window = rate as usize / 40;
+        let db = |x: &[f32]| 10.0 * (x.iter().map(|s| s * s).sum::<f32>() / x.len() as f32).log10();
+        [0.0f32, 0.05, 0.1, 0.2, 0.4]
+            .iter()
+            .map(|t| {
+                let start = (t * rate as f32) as usize;
+                let span = start..start + window;
+                (db(&out[span.clone()]), db(&aux[span]))
+            })
+            .collect()
+    }
+
+    /// Asserts that a drum sounds alike at 44.1 and 96 kHz as at 48 kHz.
+    pub fn assert_rate_independent(at: impl Fn(u32) -> Vec<(f32, f32)>) {
+        let reference = at(48_000);
+        for rate in [44_100, 96_000] {
+            for (window, (got, want)) in at(rate).iter().zip(&reference).enumerate() {
+                assert!(
+                    (got.0 - want.0).abs() < 1.0 && (got.1 - want.1).abs() < 1.0,
+                    "at {rate} Hz, window {window}: {got:?} against {want:?} at 48 kHz"
+                );
+            }
+        }
     }
 }
 
