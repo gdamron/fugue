@@ -1,5 +1,6 @@
 //! Ported from Mutable Instruments' `plaits/dsp/drums/analog_snare_drum.h`
-//! (MIT, Copyright 2016 Emilie Gillet). See THIRD_PARTY_NOTICES.md.
+//! and `plaits/dsp/oscillator/sine_oscillator.h` (MIT, Copyright 2016
+//! Emilie Gillet). See THIRD_PARTY_NOTICES.md.
 //!
 //! A model of a classic analog snare circuit: a trigger pulse rings a few
 //! tuned shell modes, beside a burst of filtered noise for the snares.
@@ -29,6 +30,7 @@ pub(super) struct AnalogSnareSettings {
 pub(super) struct AnalogSnareDrum {
     rate: Rate,
     rng: Rng,
+    noise_gain: f32,
     trigger_pulse: usize,
     pulse_decay: f32,
     pulse_filter: f32,
@@ -73,9 +75,10 @@ impl AnalogSnareDrum {
         Self {
             rate,
             rng: Rng::new(0x5a4e),
+            noise_gain: rate.noise_gain(),
             trigger_pulse: rate.samples(1.0e-3),
             pulse_decay: 1.0 - rate.per_second(0.1e-3),
-            pulse_filter: rate.coefficient(0.75),
+            pulse_filter: rate.lag(0.75),
             pulse_remaining: 0,
             pulse: 0.0,
             pulse_height: 0.0,
@@ -165,7 +168,7 @@ impl AnalogSnareDrum {
             }
             let shell = soft_clip(shell);
 
-            let noise = (2.0 * self.rng.unit() - 1.0).max(0.0);
+            let noise = (2.0 * self.rng.unit() - 1.0).max(0.0) * self.noise_gain;
             self.noise_envelope *= noise_decay;
             let envelope = if s.sustain { gain } else { self.noise_envelope };
             let noise = self

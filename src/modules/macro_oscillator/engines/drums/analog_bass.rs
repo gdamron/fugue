@@ -65,7 +65,7 @@ impl AnalogBassDrum {
             trigger_pulse: rate.samples(1.0e-3),
             fm_pulse: rate.samples(6.0e-3),
             pulse_decay: 1.0 - rate.per_second(0.2e-3),
-            pulse_filter: rate.per_second(0.1e-3),
+            pulse_filter: rate.lag(1.0 / (0.1e-3 * 48_000.0)),
             retrig_decay: 1.0 - rate.per_second(0.05),
             pulse_remaining: 0,
             fm_pulse_remaining: 0,

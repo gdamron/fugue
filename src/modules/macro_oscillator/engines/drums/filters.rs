@@ -189,6 +189,17 @@ impl Rate {
         self.coefficient((1.0 / (seconds * 48_000.0)).min(1.0))
     }
 
+    /// A one-pole coefficient given at 48 kHz, at this rate, keeping its
+    /// lag (`(1 − c) / c` samples, its delay at low frequencies) the same
+    /// in seconds. For a fast smoother whose difference from its input is
+    /// the signal, this keeps that difference as loud;
+    /// [`Rate::coefficient`] keeps its pole instead, which differs only for
+    /// a coefficient far from zero.
+    pub fn lag(self, at_48k: f32) -> f32 {
+        let ratio = self.rate / 48_000.0;
+        at_48k / (at_48k + ratio * (1.0 - at_48k))
+    }
+
     /// The gain that keeps white noise as loud through filters fixed in
     /// hertz: its power spreads over a band that widens with the rate.
     pub fn noise_gain(self) -> f32 {
@@ -393,6 +404,15 @@ mod tests {
         // Half the samples per second: twice the step, near enough.
         let c = per_sample(0.01, 24_000.0);
         assert!(((1.0 - c) - 0.99f32 * 0.99).abs() < 1e-6);
+    }
+
+    /// A fast smoother keeps its lag in seconds at another rate.
+    #[test]
+    fn a_fast_smoother_keeps_its_lag_at_another_rate() {
+        let lag_seconds = |c: f32, rate: f32| (1.0 - c) / c / rate;
+        let fast = Rate::new(96_000).lag(0.75);
+        assert!((lag_seconds(fast, 96_000.0) / lag_seconds(0.75, 48_000.0) - 1.0).abs() < 1e-5);
+        assert_eq!(Rate::new(48_000).lag(0.75), 0.75);
     }
 
     #[test]

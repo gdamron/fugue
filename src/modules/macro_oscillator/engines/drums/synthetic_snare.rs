@@ -24,6 +24,7 @@ pub(super) struct SyntheticSnareSettings {
 pub(super) struct SyntheticSnareDrum {
     rate: Rate,
     rng: Rng,
+    noise_gain: f32,
     phases: [f32; 2],
     drum_amplitude: f32,
     snare_amplitude: f32,
@@ -46,9 +47,11 @@ fn distorted_sine(phase: f32) -> f32 {
 
 impl SyntheticSnareDrum {
     pub fn new(sample_rate: u32) -> Self {
+        let rate = Rate::new(sample_rate);
         Self {
-            rate: Rate::new(sample_rate),
+            rate,
             rng: Rng::new(0x5e1f),
+            noise_gain: rate.noise_gain(),
             phases: [0.0; 2],
             drum_amplitude: 0.0,
             snare_amplitude: 0.0,
@@ -143,7 +146,7 @@ impl SyntheticSnareDrum {
             drum *= self.drum_amplitude * self.drum_level.next();
             let drum = self.drum_lp.lowpass(drum);
 
-            let noise = self.rng.unit();
+            let noise = self.rng.unit() * self.noise_gain;
             let snare = self.snare_lp.process(noise).lowpass;
             let snare = self.snare_hp.highpass(snare);
             let snare = (snare + 0.1) * (self.snare_amplitude + self.fm) * self.snare_level.next();

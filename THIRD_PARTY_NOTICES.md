@@ -68,7 +68,7 @@ where they live in Fugue, then the full license text:
   - `plaits/dsp/drums/synthetic_bass_drum.h` → `src/modules/macro_oscillator/engines/drums/synthetic_bass.rs`
   - `plaits/dsp/engine/bass_drum_engine.cc` → `src/modules/macro_oscillator/engines/drums/bass.rs`
   - `plaits/dsp/fx/overdrive.h` → `src/modules/macro_oscillator/engines/drums/overdrive.rs`
-  - `plaits/dsp/drums/analog_snare_drum.h` → `src/modules/macro_oscillator/engines/drums/analog_snare.rs`
+  - `plaits/dsp/drums/analog_snare_drum.h`, `plaits/dsp/oscillator/sine_oscillator.h` → `src/modules/macro_oscillator/engines/drums/analog_snare.rs`
   - `plaits/dsp/drums/synthetic_snare_drum.h` → `src/modules/macro_oscillator/engines/drums/synthetic_snare.rs`
   - `plaits/dsp/engine/snare_drum_engine.cc` → `src/modules/macro_oscillator/engines/drums/snare.rs`
   - `tides2/ramp_shaper.h` → `src/modules/contour/shaper.rs`

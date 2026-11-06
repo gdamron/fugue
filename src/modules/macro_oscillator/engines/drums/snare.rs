@@ -54,7 +54,9 @@ impl SnareDrumEngine {
 
 #[cfg(test)]
 mod tests {
-    use super::super::filters::testing::{params, peak, play, strike, RATE};
+    use super::super::filters::testing::{
+        assert_rate_independent, loudness_over_time, params, peak, play, strike, RATE,
+    };
     use super::*;
 
     fn engine() -> SnareDrumEngine {
@@ -69,7 +71,7 @@ mod tests {
             &params(50.0, false, false),
             400,
         );
-        assert_eq!(peak(&out) + peak(&aux), 0.0);
+        assert!(peak(&out) + peak(&aux) < 1e-9);
         let (out, aux) = strike(
             |p, o, a| drum.render(p, o, a),
             params(50.0, false, false),
@@ -102,6 +104,15 @@ mod tests {
         let (shell, snares) = (crossings(0.1), crossings(0.9));
         assert!(snares[0] > 2 * shell[0], "{shell:?} {snares:?}");
         assert!(snares[1] > 2 * shell[1], "{shell:?} {snares:?}");
+    }
+
+    #[test]
+    fn it_sounds_alike_at_any_rate() {
+        assert_rate_independent(|rate| {
+            loudness_over_time(rate, 50.0, SnareDrumEngine::new, |d, p, o, a| {
+                d.render(p, o, a)
+            })
+        });
     }
 
     #[test]
