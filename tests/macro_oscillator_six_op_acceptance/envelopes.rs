@@ -73,11 +73,10 @@ fn morph_stretches_the_decay_of_struck_patches() {
     for patch in [9usize, 11, 20] {
         let time = |morph: f32| {
             let mut v = triggered(patch, &[("morph", morph)]);
-            let t = fall_time_40_db(&play(
+            fall_time_40_db(&play(
                 &mut v,
                 &gate(seconds(15.0), &[(EDGE, EDGE + seconds(0.005))]),
-            ));
-            t
+            ))
         };
         let (short, normal, long) = (time(0.2), time(0.5), time(0.8));
         assert!(
@@ -154,7 +153,7 @@ fn patch_changes_between_triggers_are_click_free() {
             let since = frame.wrapping_sub(480) % PERIOD;
             if frame >= 480 && since / HOST_BLOCK == 4800 / HOST_BLOCK {
                 let note = (frame - 480) / PERIOD;
-                let patch = if note % 2 == 0 { other } else { 10 };
+                let patch = if note.is_multiple_of(2) { other } else { 10 };
                 v.set("harmonics", patch_harmonics(patch));
             }
         });
