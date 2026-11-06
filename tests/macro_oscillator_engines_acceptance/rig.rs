@@ -8,8 +8,8 @@ pub const SR: u32 = 48_000;
 pub const SRF: f64 = SR as f64;
 pub const BLOCK: usize = 256;
 
-/// The seven models that exist before the engines under test, in order.
-pub const EXISTING: [&str; 7] = [
+/// The nine models already on main before the engines under test, in order.
+pub const EXISTING: [&str; 9] = [
     "virtual_analog",
     "waveshaping",
     "fm",
@@ -17,6 +17,8 @@ pub const EXISTING: [&str; 7] = [
     "additive",
     "chords",
     "speech",
+    "wavetable",
+    "six_op_fm",
 ];
 /// The engines under test, in the order the spec appends them.
 pub const NEW: [&str; 7] = [
