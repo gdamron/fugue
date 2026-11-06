@@ -6,6 +6,9 @@ mod chord_waves;
 mod chords;
 mod fm;
 mod grain_formant;
+// The six_op_fm model's synthesizer, registered once its engine lands.
+#[allow(dead_code)]
+mod six_op;
 mod speech;
 mod tables;
 mod virtual_analog;
