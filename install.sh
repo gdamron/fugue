@@ -1,7 +1,8 @@
 #!/bin/sh
 # Fugue installer — downloads the prebuilt Fugue install unit from the public
 # Fugue release and installs the `fugue` (incl. `fugue serve`) and `fugue-mcp`
-# binaries into ~/.fugue/bin. No Rust toolchain required.
+# binaries into ~/.fugue/bin, with the archive's third-party license notices
+# beside them in ~/.fugue/share/doc. No Rust toolchain required.
 #
 #   curl -fsSL https://raw.githubusercontent.com/gdamron/fugue/main/install.sh | sh
 #
@@ -10,6 +11,7 @@
 #
 # Environment overrides:
 #   FUGUE_BIN_DIR   install location          (default: $HOME/.fugue/bin)
+#   FUGUE_DOC_DIR   license notices location  (default: $HOME/.fugue/share/doc)
 #   FUGUE_VERSION   release tag to install     (default: latest, e.g. 2026.6.0 or v2026.6.0)
 #
 # Supported platforms: macOS arm64, Linux x86_64 (glibc), Linux arm64 (glibc),
@@ -20,6 +22,9 @@ set -eu
 REPO="gdamron/fugue"
 
 BIN_DIR="${FUGUE_BIN_DIR:-$HOME/.fugue/bin}"
+DOC_DIR="${FUGUE_DOC_DIR:-$HOME/.fugue/share/doc}"
+# The third-party license notices every release archive carries beside its binaries.
+NOTICES_FILE="THIRD_PARTY_LICENSES.txt"
 VERSION="${FUGUE_VERSION:-latest}"
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$1"; }
@@ -113,6 +118,24 @@ install_unit() {
       || { mkdir -p "$BIN_DIR" && cp "$TMP/$bin" "$BIN_DIR/$bin" && chmod 0755 "$BIN_DIR/$bin"; }
     info "Installed $bin → $BIN_DIR/$bin"
   done
+  install_notices "$asset"
+}
+
+# The binaries carry third-party code whose licenses require their notices to
+# travel with them, so keep the archive's notices file where the user can find
+# it. A release without the file, or a doc directory that cannot be written,
+# warns rather than failing: the binaries are already installed.
+install_notices() {
+  # $1 = asset basename, for the message
+  if [ ! -f "$TMP/$NOTICES_FILE" ]; then
+    warn "archive $1 did not contain $NOTICES_FILE; license notices were not installed"
+    return 0
+  fi
+  if mkdir -p "$DOC_DIR" && cp "$TMP/$NOTICES_FILE" "$DOC_DIR/$NOTICES_FILE" && chmod 0644 "$DOC_DIR/$NOTICES_FILE"; then
+    info "Installed license notices → $DOC_DIR/$NOTICES_FILE"
+  else
+    warn "could not install $NOTICES_FILE into $DOC_DIR"
+  fi
 }
 
 TARGET="$(detect_target)"
