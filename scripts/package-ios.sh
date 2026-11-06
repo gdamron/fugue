@@ -28,6 +28,8 @@ xcodebuild -create-xcframework \
 rm -f "$SIM_LIB"
 
 cp "$ROOT/LICENSE" "$STAGE_DIR/"
+bash "$ROOT/scripts/generate-licenses.sh" "$STAGE_DIR/THIRD_PARTY_LICENSES.txt" \
+  aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 
 cat > "$STAGE_DIR/README.md" <<EOF
 # Fugue $VERSION for iOS
@@ -36,6 +38,7 @@ Contents:
 
 - \`Fugue.xcframework\`
 - \`LICENSE\`
+- \`THIRD_PARTY_LICENSES.txt\`
 
 The xcframework contains the static Fugue render engine for device and simulator
 architectures, plus the public C header needed to call the API.

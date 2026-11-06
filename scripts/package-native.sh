@@ -7,7 +7,7 @@ VERSION="${2:?version required}"
 OUT_DIR="${3:?output directory required}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILD_DIR="$ROOT/target/$TARGET/release"
+BUILD_DIR="${FUGUE_TARGET_DIR:-$ROOT/target}/$TARGET/release"
 STAGE_DIR="$OUT_DIR/fugue-$VERSION-$TARGET"
 
 mkdir -p "$STAGE_DIR/lib"
@@ -45,6 +45,7 @@ if [[ -n "$IMPORT_LIB" ]]; then
 fi
 cp "$ROOT/include/fugue.h" "$STAGE_DIR/"
 cp "$ROOT/LICENSE" "$STAGE_DIR/"
+bash "$ROOT/scripts/generate-licenses.sh" "$STAGE_DIR/THIRD_PARTY_LICENSES.txt" "$TARGET"
 
 cat > "$STAGE_DIR/README.md" <<EOF
 # Fugue $VERSION for $TARGET
@@ -56,6 +57,7 @@ Contents:
 $IMPORT_LIB_CONTENT
 - \`fugue.h\`
 - \`LICENSE\`
+- \`THIRD_PARTY_LICENSES.txt\`
 
 This package exposes the host-driven render API declared in \`fugue.h\`.
 Render interleaved stereo \`f32\` frames from caller-owned buffers and set

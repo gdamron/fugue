@@ -13,6 +13,7 @@ mkdir -p "$STAGE_DIR"
 
 cp -R "$WASM_DIR"/. "$STAGE_DIR/"
 cp "$ROOT/LICENSE" "$STAGE_DIR/"
+bash "$ROOT/scripts/generate-licenses.sh" "$STAGE_DIR/THIRD_PARTY_LICENSES.txt" wasm32-unknown-unknown
 cp "$ROOT/web/fugue-code-host.js" "$STAGE_DIR/"
 
 cat > "$STAGE_DIR/README.md" <<EOF
@@ -24,6 +25,7 @@ Contents:
 - \`fugue-code-host.js\` helper for running \`code\` modules in host JavaScript
 - \`.wasm\` binary
 - \`LICENSE\`
+- \`THIRD_PARTY_LICENSES.txt\`
 
 Use the exported \`FugueEngine\` class to load invention JSON, inspect and mutate
 the graph (\`listModules\`, \`addModule\`, \`connect\`, etc.), set controls, and

@@ -61,6 +61,7 @@ jobs:
               - '!install.sh'
               - '!install.ps1'
               - '!.github/workflows/release.yml'
+              - '!.github/workflows/release-notices.yml'
 
   test:
     name: Run Unit Tests (ubuntu-latest)
