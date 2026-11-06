@@ -198,6 +198,7 @@ mod tests {
             accent: 0.8,
             trigger,
             untriggered,
+            trigger_held: false,
             key: 0,
             scale: 0,
         }
