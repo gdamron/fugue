@@ -32,8 +32,10 @@ pub(super) struct EngineParameters {
     pub trigger: bool,
     /// Whether `trigger` is unpatched: an engine with its own excitation
     /// then excites itself continuously instead of waiting for a strike.
-    #[allow(dead_code)]
     pub untriggered: bool,
+    /// Whether `trigger` is patched and still high at the block's end: a
+    /// key held down, for an engine that sustains its notes.
+    pub trigger_held: bool,
     /// The key (0 is C) and the position in `music::scales::SCALE_NAMES`
     /// that chords are built in.
     pub key: u8,
@@ -100,6 +102,7 @@ mod tests {
             accent: 0.8,
             trigger: false,
             untriggered: true,
+            trigger_held: false,
             key: 0,
             scale: 0,
         };

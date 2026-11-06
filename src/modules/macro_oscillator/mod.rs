@@ -284,6 +284,7 @@ impl MacroOscillator {
             decay: self.decay,
             trigger: self.rising,
             untriggered: !self.connected[TRIGGER_IN],
+            trigger_held: self.connected[TRIGGER_IN] && self.voice.trigger_is_high(),
             key: self.key,
             scale: self.scale,
         };

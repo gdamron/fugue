@@ -155,6 +155,7 @@ mod tests {
             accent: 0.8,
             trigger: false,
             untriggered: true,
+            trigger_held: false,
             key: 0,
             scale: 0,
         };
@@ -197,6 +198,7 @@ mod tests {
             accent: 0.8,
             trigger: false,
             untriggered: true,
+            trigger_held: false,
             key: 0,
             scale: 0,
         };

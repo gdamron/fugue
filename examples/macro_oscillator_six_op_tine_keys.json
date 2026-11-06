@@ -1,0 +1,53 @@
+{
+  "version": "1.0.0",
+  "title": "Macro Oscillator Six-Operator Tine Keys",
+  "description": "A slow minor-key line on the macro oscillator's six-operator FM model, playing its soft tine keys patch. The sequencer's gate drives the trigger input, so each step strikes a note, a high gate holds it on its sustain, and the two voices let each note ring into the next.",
+  "modules": [
+    { "id": "clock", "type": "clock", "config": { "bpm": 84.0 } },
+    {
+      "id": "seq",
+      "type": "step_sequencer",
+      "config": {
+        "root_note": 57,
+        "step_count": 16,
+        "gate_length": 0.6,
+        "pattern": [
+          { "note": 0 },
+          { "note": 7 },
+          { "note": 10 },
+          { "note": 12, "gate_length": 1.0 },
+          { "held": true },
+          { "note": 15 },
+          { "note": 14 },
+          { "note": 10 },
+          { "note": 7, "gate_length": 1.0 },
+          { "note": null },
+          { "note": 5 },
+          { "note": 7 },
+          { "note": 3, "gate_length": 1.0 },
+          { "held": true },
+          { "held": true },
+          { "note": null }
+        ]
+      }
+    },
+    {
+      "id": "keys",
+      "type": "macro_oscillator",
+      "config": {
+        "model": "six_op_fm",
+        "harmonics": 0.047,
+        "timbre": 0.45,
+        "morph": 0.5,
+        "level": 0.8
+      }
+    },
+    { "id": "dac", "type": "dac" }
+  ],
+  "connections": [
+    { "from": "clock", "from_port": "beat_x2", "to": "seq", "to_port": "clock" },
+    { "from": "seq", "from_port": "frequency", "to": "keys", "to_port": "frequency" },
+    { "from": "seq", "from_port": "gate", "to": "keys", "to_port": "trigger" },
+    { "from": "keys", "from_port": "audio", "to": "dac", "to_port": "audio" }
+  ]
+}
