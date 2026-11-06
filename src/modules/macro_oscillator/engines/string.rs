@@ -30,7 +30,7 @@ const EXCITATION_DC_CUTOFF_HZ: f32 = 20.0;
 /// How long ago, in seconds, the pitch a string keeps ringing at when the
 /// next one takes over was read: a pitch that arrives a little before its
 /// trigger then belongs to the new note, not the old one.
-const PITCH_DELAY_SECONDS: f32 = 0.007;
+const PITCH_DELAY_SECONDS: f32 = 0.0035;
 /// Blocks of pitch history kept, at least `PITCH_DELAY_SECONDS` at any
 /// sample rate up to 192 kHz.
 const PITCH_HISTORY: usize = 128;
@@ -48,6 +48,9 @@ pub(in crate::modules::macro_oscillator) struct StringEngine {
     history_at: usize,
     /// How many blocks back the pitch kept by a string left ringing is.
     pitch_delay: usize,
+    /// Blocks rendered, and the block each string was last struck in.
+    blocks: usize,
+    struck_at: [usize; STRINGS],
     /// How many frames of noise burst each string has left.
     noise_left: [usize; STRINGS],
     /// Whether each string is ringing (else it is skipped).
@@ -72,6 +75,8 @@ impl StringEngine {
             pitches: [220.0 / sample_rate.max(1) as f32; STRINGS],
             history: [220.0 / sample_rate.max(1) as f32; PITCH_HISTORY],
             history_at: 0,
+            blocks: 0,
+            struck_at: [0; STRINGS],
             pitch_delay: ((PITCH_DELAY_SECONDS * sample_rate as f32 / ENGINE_BLOCK as f32).round()
                 as usize)
                 .clamp(1, PITCH_HISTORY - 1),
@@ -89,11 +94,16 @@ impl StringEngine {
         out.fill(0.0);
         aux.fill(0.0);
         if p.trigger {
-            // The string left ringing keeps the pitch from a moment ago.
-            let back = (self.history_at + PITCH_HISTORY - self.pitch_delay) % PITCH_HISTORY;
-            self.pitches[self.active] = self.history[back];
+            // The string left ringing keeps the pitch from a moment ago, but
+            // never one from before it was struck (a fast roll or flam).
+            let since_struck = self.blocks - self.struck_at[self.active];
+            let back = self.pitch_delay.min(since_struck.saturating_sub(1));
+            let at = (self.history_at + PITCH_HISTORY - back) % PITCH_HISTORY;
+            self.pitches[self.active] = self.history[at];
             self.active = (self.active + 1) % STRINGS;
+            self.struck_at[self.active] = self.blocks;
         }
+        self.blocks += 1;
         let f0 = p.note_to_frequency(p.note).min(0.49);
         self.pitches[self.active] = f0;
         self.history_at = (self.history_at + 1) % PITCH_HISTORY;
@@ -241,6 +251,21 @@ mod tests {
         let old_pitch = params(57.0, false, false).note_to_frequency(57.0);
         assert_ne!(engine.active, old);
         assert_eq!(engine.pitches[old], old_pitch);
+    }
+
+    /// Struck twice a block apart, the first string keeps the pitch it was
+    /// struck at, not the one before it.
+    #[test]
+    fn a_flam_keeps_each_string_at_its_own_pitch() {
+        let mut engine = StringEngine::new(RATE);
+        play(&mut engine, &params(45.0, true, false), 1);
+        play(&mut engine, &params(45.0, false, false), 100);
+        play(&mut engine, &params(57.0, true, false), 1);
+        let first = engine.active;
+        play(&mut engine, &params(64.0, true, false), 1);
+        let pitch = |note: f32| params(note, false, false).note_to_frequency(note);
+        assert_eq!(engine.pitches[first], pitch(57.0));
+        assert_eq!(engine.pitches[engine.active], pitch(64.0));
         assert_eq!(
             engine.pitches[engine.active],
             params(64.0, false, false).note_to_frequency(64.0)

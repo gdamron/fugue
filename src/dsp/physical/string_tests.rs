@@ -95,6 +95,27 @@ fn a_tuned_stiff_string_stays_in_tune() {
     }
 }
 
+/// The stiffness correction moves smoothly as a loop shortens past the
+/// point where its allpass, held at its shortest, delays the fundamental
+/// more than half a period (a loop of 8 samples, about 6 kHz).
+#[test]
+fn the_stiffness_correction_is_continuous_for_short_loops() {
+    let mut string = KarplusString::new(RATE, true, 1).with_tuned_stiffness();
+    let mut last = None;
+    // Loops of 5 to 9 samples, where the allpass stays at its shortest
+    // length, so the correction has no whole-sample steps of its own.
+    for step in 0..=40 {
+        let delay = 5.0 + step as f32 * 0.1;
+        string.frequency = 1.0 / delay;
+        let excess = string.allpass_excess_at(delay, 0.7);
+        if let Some(previous) = last {
+            let jump: f32 = excess - previous;
+            assert!(jump.abs() < 0.5, "jumps {jump} at a loop of {delay}");
+        }
+        last = Some(excess);
+    }
+}
+
 /// A reset string is silent at once, with no allocation needed.
 #[test]
 fn reset_silences_the_string() {
