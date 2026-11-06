@@ -71,6 +71,9 @@ where they live in Fugue, then the full license text:
   - `plaits/dsp/drums/analog_snare_drum.h`, `plaits/dsp/oscillator/sine_oscillator.h` → `src/modules/macro_oscillator/engines/drums/analog_snare.rs`
   - `plaits/dsp/drums/synthetic_snare_drum.h` → `src/modules/macro_oscillator/engines/drums/synthetic_snare.rs`
   - `plaits/dsp/engine/snare_drum_engine.cc` → `src/modules/macro_oscillator/engines/drums/snare.rs`
+  - `plaits/dsp/drums/hi_hat.h` (`SquareNoise`, `RingModNoise`), `plaits/dsp/oscillator/oscillator.h` (square and saw shapes) → `src/modules/macro_oscillator/engines/drums/metallic_noise.rs`
+  - `plaits/dsp/drums/hi_hat.h` (`HiHat`, `SwingVCA`, `LinearVCA`) → `src/modules/macro_oscillator/engines/drums/hats.rs`
+  - `plaits/dsp/engine/hi_hat_engine.cc` → `src/modules/macro_oscillator/engines/drums/hi_hat.rs`
   - `tides2/ramp_shaper.h` → `src/modules/contour/shaper.rs`
   - `tides2/ramp_generator.h` → `src/modules/contour/ramp.rs`
   - `tides2/poly_slope_generator.h` → `src/modules/contour/generator.rs`
