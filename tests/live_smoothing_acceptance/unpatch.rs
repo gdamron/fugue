@@ -67,17 +67,27 @@ pub fn amplitude_mod(connected: bool) -> Value {
 
 pub const CUTOFF_MOD: Edge = Edge("src", "audio", "flt", "cutoff_mod");
 
-/// A sine through a low-pass at 100 Hz whose `cutoff_mod` of 1.0 opens it
-/// fully (20 kHz), and unpatched (0) leaves it at 100 Hz.
+/// A sine through a low-pass at 500 Hz whose `cutoff_mod` of 1.0 opens it
+/// fully (20 kHz), and unpatched (0) leaves it at 500 Hz.
+///
+/// The resting cutoff sits at 500 Hz so the filter's own settling stays
+/// well inside the 15 ms the parameter has to arrive in: a pole at 500 Hz
+/// has a time constant of 1/(2*pi*500) = 0.32 ms, so five of them are
+/// 1.6 ms. (At 100 Hz they are 8 ms, and the test would measure the
+/// filter's ringing down, not the cutoff.) The tone is 1687.5 Hz, 3.4x the
+/// resting cutoff, so it is clearly attenuated at rest (about 22 dB for the
+/// 2nd-order low-pass, 10.7 dB for a single pole) and a jump in the cutoff
+/// would show. 1687.5 Hz is 9 cycles per 256 samples, so its peaks still
+/// fall on the sample where the edit lands.
 pub fn cutoff_mod(connected: bool) -> Value {
     document(
         vec![
-            tone("tone", json!({})),
+            tone("tone", json!({ "frequency": 1687.5 })),
             constant("src"),
             module(
                 "flt",
                 "filter",
-                json!({ "filter_type": "lowpass", "cutoff": 100.0,
+                json!({ "filter_type": "lowpass", "cutoff": 500.0,
                         "resonance": 0.0, "cutoff_mod_depth": 20000.0 }),
             ),
             dac(),
