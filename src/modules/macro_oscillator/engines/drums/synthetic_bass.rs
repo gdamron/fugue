@@ -5,7 +5,7 @@
 //! towards a soft triangle by `dirtiness`, swept down from a pitch blip
 //! through a transistor VCA, with a click and a breath of noise on top.
 
-use super::filters::{one_pole, slope, tan_fast, BlockGlide, ModeFilter, Rate};
+use super::filters::{flush, one_pole, slope, tan_fast, BlockGlide, ModeFilter, Rate};
 use crate::dsp::{sine, Rng};
 use crate::modules::macro_oscillator::engine::semitones_to_ratio;
 
@@ -189,7 +189,7 @@ impl SyntheticBassDrum {
                     self.fm_pulse_remaining -= 1;
                     self.phase = 0.25;
                 } else {
-                    self.fm *= fm_decay;
+                    self.fm = flush(self.fm * fm_decay);
                     let fm = 1.0 + s.fm_amount * 3.5 * self.fm_lp;
                     self.phase += (f0 * fm).min(0.5);
                     self.phase -= self.phase.floor();
@@ -197,8 +197,8 @@ impl SyntheticBassDrum {
                 if self.body_pulse_remaining > 0 {
                     self.body_pulse_remaining -= 1;
                 } else {
-                    self.body_env *= body_env_decay;
-                    self.transient_env *= self.transient_decay;
+                    self.body_env = flush(self.body_env * body_env_decay);
+                    self.transient_env = flush(self.transient_env * self.transient_decay);
                 }
                 one_pole(&mut self.body_env_lp, self.body_env, self.envelope_lp_f);
                 one_pole(

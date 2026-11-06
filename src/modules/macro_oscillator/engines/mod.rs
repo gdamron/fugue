@@ -168,4 +168,50 @@ mod tests {
             assert_eq!(ENVELOPED[model], STRUCK.contains(name), "{name}");
         }
     }
+
+    /// A struck model rings out to silence, never to subnormal numbers:
+    /// a decay in `f32` sticks in them unless it is flushed.
+    #[test]
+    fn every_model_rings_out_to_zero_not_subnormals() {
+        use crate::modules::macro_oscillator::engine::ENGINE_BLOCK;
+        for (model, name) in MODELS.iter().enumerate() {
+            for (note, shape) in [
+                (36.0, 0.2),
+                (60.0, 0.5),
+                (84.0, 0.9),
+                (48.0, 0.0),
+                (48.0, 1.0),
+            ] {
+                let mut engines = Engines::new(48_000);
+                let mut p = EngineParameters {
+                    note,
+                    sample_period: 1.0 / 48_000.0,
+                    harmonics: 1.0 - shape,
+                    harmonics_target: 1.0 - shape,
+                    timbre: 0.5,
+                    morph: shape,
+                    accent: 0.8,
+                    trigger: true,
+                    untriggered: false,
+                    key: 0,
+                    scale: 0,
+                };
+                let (mut out, mut aux) = ([0.0; ENGINE_BLOCK], [0.0; ENGINE_BLOCK]);
+                // Twenty seconds: long enough for all but the most open
+                // decays, which ring out through the same flushes.
+                for block in 0..20 * 48_000 / ENGINE_BLOCK {
+                    engines.render(model, &p, &mut out, &mut aux);
+                    p.trigger = false;
+                    let bad = out
+                        .iter()
+                        .chain(&aux)
+                        .find(|v| **v != 0.0 && !v.is_normal());
+                    assert!(
+                        bad.is_none(),
+                        "{name} at {note}/{shape}, block {block}: {bad:?}"
+                    );
+                }
+            }
+        }
+    }
 }

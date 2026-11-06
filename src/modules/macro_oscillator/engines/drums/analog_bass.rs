@@ -5,7 +5,7 @@
 //! bridged-T resonator whose pitch the pulse itself bends at the attack.
 //! Un-triggered, a sine stands in for the resonator.
 
-use super::filters::{one_pole, tan_dirty, BlockGlide, ModeFilter, Rate};
+use super::filters::{flush, one_pole, tan_dirty, BlockGlide, ModeFilter, Rate};
 use crate::dsp::sine;
 use crate::modules::macro_oscillator::engine::semitones_to_ratio;
 
@@ -112,7 +112,7 @@ impl AnalogBassDrum {
                 };
                 self.pulse
             } else {
-                self.pulse *= self.pulse_decay;
+                self.pulse = flush(self.pulse * self.pulse_decay);
                 self.pulse
             };
             if s.sustain {
@@ -131,7 +131,7 @@ impl AnalogBassDrum {
                     -0.8
                 };
             } else {
-                self.retrig_pulse *= self.retrig_decay;
+                self.retrig_pulse = flush(self.retrig_pulse * self.retrig_decay);
             }
             if s.sustain {
                 fm_pulse = 0.0;

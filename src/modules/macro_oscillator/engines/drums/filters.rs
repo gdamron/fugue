@@ -11,6 +11,18 @@
 
 use std::f32::consts::PI;
 
+/// `x`, or 0 once it has decayed far below hearing. A decaying envelope
+/// or filter state never reaches 0 in `f32`: it sticks in subnormal
+/// numbers, which are slow and which a module must not output.
+#[inline]
+pub(super) fn flush(x: f32) -> f32 {
+    if x.abs() < 1.0e-20 {
+        0.0
+    } else {
+        x
+    }
+}
+
 /// `tan(π·f)` for `f` a fraction of the sample rate, accurate below about
 /// 8 kHz at 48 kHz: one multiply-add, for a cutoff that moves every sample.
 #[inline]
@@ -91,9 +103,9 @@ impl ModeFilter {
     pub fn process(&mut self, x: f32) -> Modes {
         let highpass = (x - self.r * self.first - self.g * self.first - self.second) * self.h;
         let bandpass = self.g * highpass + self.first;
-        self.first = self.g * highpass + bandpass;
+        self.first = flush(self.g * highpass + bandpass);
         let lowpass = self.g * bandpass + self.second;
-        self.second = self.g * bandpass + lowpass;
+        self.second = flush(self.g * bandpass + lowpass);
         Modes { lowpass, bandpass }
     }
 }
@@ -102,7 +114,7 @@ impl ModeFilter {
 /// the reference's `ONE_POLE`.
 #[inline]
 pub(super) fn one_pole(state: &mut f32, x: f32, coefficient: f32) -> f32 {
-    *state += coefficient * (x - *state);
+    *state = flush(*state + coefficient * (x - *state));
     *state
 }
 
@@ -111,7 +123,7 @@ pub(super) fn one_pole(state: &mut f32, x: f32, coefficient: f32) -> f32 {
 #[inline]
 pub(super) fn slope(state: &mut f32, x: f32, rise: f32, fall: f32) -> f32 {
     let error = x - *state;
-    *state += if error > 0.0 { rise } else { fall } * error;
+    *state = flush(*state + if error > 0.0 { rise } else { fall } * error);
     *state
 }
 
