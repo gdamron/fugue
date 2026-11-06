@@ -4,6 +4,7 @@ mod additive;
 mod chord_bank;
 mod chord_waves;
 mod chords;
+mod drums;
 mod dust;
 mod fm;
 mod grain_formant;
@@ -21,6 +22,7 @@ mod wavetables;
 
 use self::additive::AdditiveEngine;
 use self::chords::ChordsEngine;
+use self::drums::BassDrumEngine;
 use self::fm::FmEngine;
 use self::grain_formant::GrainFormantEngine;
 use self::limiter::Limiter;
@@ -47,6 +49,7 @@ pub(super) const MODELS: &[&str] = &[
     "six_op_fm",
     "string",
     "modal",
+    "bass_drum",
 ];
 
 /// How many engines there are.
@@ -69,12 +72,13 @@ const LEVELS: [(f32, f32); MODEL_COUNT] = [
     (1.0, 1.0),
     (-1.0, 0.8),
     (-1.0, 0.8),
+    (0.8, 0.8),
 ];
 
 /// Whether each engine shapes its own sound over time when struck by a
 /// trigger (a string, a body, a drum), so the low-pass gate leaves it be.
 pub(super) const ENVELOPED: [bool; MODEL_COUNT] = [
-    false, false, false, false, false, false, false, false, true, true, true,
+    false, false, false, false, false, false, false, false, true, true, true, true,
 ];
 
 /// Every engine, built up front so switching allocates nothing.
@@ -90,6 +94,7 @@ pub(super) struct Engines {
     six_op: SixOpEngine,
     string: StringEngine,
     modal: ModalEngine,
+    bass_drum: BassDrumEngine,
     /// The `audio` and `aux` limiters of each engine with a negative level.
     limiters: [[Limiter; 2]; MODEL_COUNT],
 }
@@ -111,6 +116,7 @@ impl Engines {
             six_op: SixOpEngine::new(),
             string: StringEngine::new(sample_rate),
             modal: ModalEngine::new(sample_rate),
+            bass_drum: BassDrumEngine::new(sample_rate),
             limiters: std::array::from_fn(|_| {
                 [Limiter::new(sample_rate), Limiter::new(sample_rate)]
             }),
@@ -131,7 +137,8 @@ impl Engines {
             7 => self.wavetable.render(p, out, aux),
             8 => self.six_op.render(p, out, aux),
             9 => self.string.render(p, out, aux),
-            _ => self.modal.render(p, out, aux),
+            10 => self.modal.render(p, out, aux),
+            _ => self.bass_drum.render(p, out, aux),
         }
         let (out_level, aux_level) = LEVELS[model];
         let [out_limiter, aux_limiter] = &mut self.limiters[model];
@@ -153,12 +160,59 @@ mod tests {
 
     /// The models that shape their own envelope, by name, so a model added
     /// out of step with `ENVELOPED` is caught rather than gated by mistake.
-    const STRUCK: &[&str] = &["six_op_fm", "string", "modal"];
+    const STRUCK: &[&str] = &["six_op_fm", "string", "modal", "bass_drum"];
 
     #[test]
     fn exactly_the_struck_models_shape_their_own_envelope() {
         for (model, name) in MODELS.iter().enumerate() {
             assert_eq!(ENVELOPED[model], STRUCK.contains(name), "{name}");
+        }
+    }
+
+    /// A struck model rings out to silence, never to subnormal numbers:
+    /// a decay in `f32` sticks in them unless it is flushed.
+    #[test]
+    fn every_model_rings_out_to_zero_not_subnormals() {
+        use crate::modules::macro_oscillator::engine::ENGINE_BLOCK;
+        for (model, name) in MODELS.iter().enumerate() {
+            for (note, shape) in [
+                (36.0, 0.2),
+                (60.0, 0.5),
+                (84.0, 0.9),
+                (48.0, 0.0),
+                (48.0, 1.0),
+            ] {
+                let mut engines = Engines::new(48_000);
+                let mut p = EngineParameters {
+                    note,
+                    sample_period: 1.0 / 48_000.0,
+                    harmonics: 1.0 - shape,
+                    harmonics_target: 1.0 - shape,
+                    timbre: 0.5,
+                    morph: shape,
+                    accent: 0.8,
+                    trigger: true,
+                    untriggered: false,
+                    trigger_held: false,
+                    key: 0,
+                    scale: 0,
+                };
+                let (mut out, mut aux) = ([0.0; ENGINE_BLOCK], [0.0; ENGINE_BLOCK]);
+                // Twenty seconds: long enough for all but the most open
+                // decays, which ring out through the same flushes.
+                for block in 0..20 * 48_000 / ENGINE_BLOCK {
+                    engines.render(model, &p, &mut out, &mut aux);
+                    p.trigger = false;
+                    let bad = out
+                        .iter()
+                        .chain(&aux)
+                        .find(|v| **v != 0.0 && !v.is_normal());
+                    assert!(
+                        bad.is_none(),
+                        "{name} at {note}/{shape}, block {block}: {bad:?}"
+                    );
+                }
+            }
         }
     }
 }
