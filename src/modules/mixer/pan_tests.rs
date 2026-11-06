@@ -11,10 +11,14 @@ const LAW_TOLERANCE: f32 = 1e-5;
 const HARD_LEFT: f32 = -1.0;
 const HARD_RIGHT: f32 = 1.0;
 
-/// The left and right gains of the equal-power pan law at `pan`.
+/// The left and right gains of the equal-power pan law at `pan`, with the
+/// far side of a hard pan exactly silent.
 fn law(pan: f32) -> (f32, f32) {
     let angle = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
-    (angle.cos(), angle.sin())
+    (
+        if pan >= 1.0 { 0.0 } else { angle.cos() },
+        if pan <= -1.0 { 0.0 } else { angle.sin() },
+    )
 }
 
 /// Plays `frames` single frames of a constant 1.0 on channel 0 and returns
@@ -119,4 +123,45 @@ fn the_factory_times_the_pan_glide_from_the_sample_rate() {
     let (hard_right_left, _) = law(HARD_RIGHT);
     assert!(outputs[frames - 2] > hard_right_left, "{outputs:?}");
     assert!(outputs[frames - 1..].iter().all(|&v| v == hard_right_left));
+}
+
+/// One frame of `input` on channel 0 at `pan`, as (left, right).
+fn one_frame(pan: f32, input: f32) -> (f32, f32) {
+    let mut mixer = Mixer::new(1).with_pan(0, pan);
+    mixer.set_input("audio.0", input).unwrap();
+    mixer.process(1);
+    (
+        mixer.get_output("audio_left").unwrap(),
+        mixer.get_output("audio_right").unwrap(),
+    )
+}
+
+#[test]
+fn a_hard_pan_leaves_exact_silence_on_the_far_side() {
+    for input in [1.0f32, -1.0, 0.5, 1e-3, 2.0] {
+        let (_, right) = one_frame(HARD_LEFT, input);
+        let (left, _) = one_frame(HARD_RIGHT, input);
+        assert_eq!(left, 0.0, "hard right, input {input}");
+        assert_eq!(right, 0.0, "hard left, input {input}");
+    }
+}
+
+#[test]
+fn a_pan_cv_past_the_end_is_clamped_to_exact_silence() {
+    let mut mixer = Mixer::new(1).with_pan(0, 0.5);
+    mixer.set_input("audio.0", 1.0).unwrap();
+    mixer.set_input("pan.0", 0.75).unwrap();
+    stereo_outputs(&mut mixer, 1);
+    assert_eq!(stereo_outputs(&mut mixer, 1)[0].0, 0.0);
+}
+
+#[test]
+fn the_pan_law_inside_the_ends_is_unchanged() {
+    let just_inside = 1.0 - f32::EPSILON;
+    for pan in [-0.999, -0.5, 0.0, 0.3, 0.999, just_inside, -just_inside] {
+        let (left, right) = one_frame(pan, 1.0);
+        let (want_left, want_right) = law(pan);
+        assert!((left - want_left).abs() <= 1e-6, "pan {pan}: {left}");
+        assert!((right - want_right).abs() <= 1e-6, "pan {pan}: {right}");
+    }
 }
