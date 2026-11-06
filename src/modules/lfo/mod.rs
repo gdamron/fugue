@@ -98,8 +98,10 @@ pub struct Lfo {
     /// Whether a block has run: a phase written before then (a
     /// development's starting value) is where the LFO starts, not a glide.
     started: bool,
-    /// The phase while synced, kept in `f64` so a cycle lasts its note
-    /// value to the sample (an `f32` phase drifts by a few samples a cycle).
+    /// The phase the LFO advances, kept in `f64` so a cycle lasts its rate or
+    /// note value to the sample, however slow (an `f32` phase drifts by a few
+    /// samples a cycle, and off rate by a percent below 0.1 Hz). `phase` is
+    /// its `f32` copy, which the waveforms read.
     precise: f64,
     cells: Arc<ControlCells>,
 
@@ -218,17 +220,16 @@ impl Lfo {
         };
 
         // Advance phase
-        if let Some(hz) = self.synced {
+        let freq = if let Some(hz) = self.synced {
             let rate_mod = f64::from(self.inputs.rate_mod(i) * rate_mod_depth);
-            let freq = (hz + rate_mod).clamp(0.001, 100.0);
-            self.precise += freq / f64::from(self.sample_rate);
-            self.precise -= self.precise.floor();
-            // A phase a hair below a whole cycle can round up to exactly one.
-            self.phase = (self.precise as f32).min(1.0 - f32::EPSILON);
+            (hz + rate_mod).clamp(0.001, 100.0)
         } else {
-            self.phase += effective_freq / self.sample_rate as f32;
-            self.phase -= self.phase.floor();
-        }
+            f64::from(effective_freq)
+        };
+        self.precise += freq / f64::from(self.sample_rate);
+        self.precise -= self.precise.floor();
+        // A phase a hair below a whole cycle can round up to exactly one.
+        self.phase = (self.precise as f32).min(1.0 - f32::EPSILON);
 
         sample
     }
@@ -246,9 +247,6 @@ impl Module for Lfo {
         }
         let tempo = note_division::tempo(self.inputs.bpm(), self.bpm);
         let synced = note_division::division_seconds(self.division, tempo).map(|s| 1.0 / s);
-        if self.synced.is_none() && synced.is_some() {
-            self.precise = f64::from(self.phase);
-        }
         self.synced = synced;
         for i in 0..frames {
             let out = self.generate(i);
