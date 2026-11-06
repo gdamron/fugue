@@ -185,10 +185,11 @@ fn a_connected_input_follows_its_source_and_resets_when_disconnected() {
     assert!(osc1.iter().any(|v| *v != 0.0));
     assert_eq!(output_block(&rig, "vca"), osc1);
 
-    // Disconnecting it clears the routed samples from the whole buffer
-    // rather than holding the last block; the write was superseded.
+    // Disconnecting it glides it to rest (see `releases`), then clears the
+    // routed samples from the whole buffer rather than holding the last
+    // block; the write was superseded.
     rig.live.disconnect(osc1_to_vca).unwrap();
-    rig.graph.ensure_process_order();
+    rig.render(8);
     assert!(input_block(&mut rig, "vca", "audio")
         .iter()
         .all(|v| *v == 0.0));

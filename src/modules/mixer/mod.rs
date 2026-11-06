@@ -458,6 +458,19 @@ impl Module for Mixer {
         self.input_state.set_connected(index, connected);
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        let n = self.channels;
+        if index < n {
+            // A channel's audio leaves through its own tail.
+            None
+        } else if index < 2 * n || index == 3 * n {
+            // Unpatched level CV holds the level at unity.
+            Some(1.0)
+        } else {
+            Some(0.0)
+        }
+    }
+
     fn as_any(&self) -> Option<&dyn Any> {
         Some(self)
     }

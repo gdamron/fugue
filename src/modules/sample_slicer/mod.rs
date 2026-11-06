@@ -294,6 +294,11 @@ impl Module for SampleSlicer {
         &inputs::INPUTS
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        // `slice` selects a slice rather than sets a value.
+        (index != 1).then_some(0.0)
+    }
+
     fn outputs(&self) -> &[&str] {
         &outputs::OUTPUTS
     }

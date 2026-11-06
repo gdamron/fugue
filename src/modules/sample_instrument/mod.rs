@@ -628,6 +628,11 @@ impl Module for SampleInstrument {
         self.inputs.set_connected(index, connected);
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        // Unpatched, `velocity` is full.
+        Some(if index == 2 { 1.0 } else { 0.0 })
+    }
+
     #[allow(private_interfaces)]
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         Some((&self.table, &self.cells))

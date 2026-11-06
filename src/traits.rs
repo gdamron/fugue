@@ -16,13 +16,13 @@ use crate::payload::{Payload, Retired};
 mod control_hints;
 mod control_meta;
 mod control_validation;
-mod feedback_cut;
 pub(crate) mod exact_number;
+mod feedback_cut;
 
 pub use control_hints::{ControlScale, NumberHints};
 pub use control_validation::ControlSurfaceMap;
-pub use feedback_cut::FeedbackCut;
 pub(crate) use control_validation::{check_finite, check_listed_control, read_only};
+pub use feedback_cut::FeedbackCut;
 
 /// Maximum number of frames the engine processes in a single block.
 ///
@@ -538,6 +538,27 @@ pub trait Module: Send {
     /// The default ignores it — most modules simply read their input buffers
     /// (silence when unconnected, unless written).
     fn set_input_connected(&mut self, _index: usize, _connected: bool) {}
+
+    /// Where input port `index` comes to rest once an edit unpatches it:
+    /// what the module reads from it unconnected, in the input's own units.
+    ///
+    /// Unpatching an input would step what the module hears from the value
+    /// the connection last carried to this one, a click on audio and a jump
+    /// on a modulated parameter. Instead the signal graph holds the input
+    /// there and glides it here over a few milliseconds, the port still
+    /// declared connected, and only then lets it go (see
+    /// [`Module::set_input_connected`]). Called on the audio thread as an
+    /// edit installs: it must not allocate, lock or free.
+    ///
+    /// The default, 0, is what an unconnected input holds. A port that
+    /// yields to a control when unconnected (an oscillator's `frequency`)
+    /// rests at that control's value. `None` lets the port go at once, as
+    /// before: for one whose value selects rather than sets (a key, a cell,
+    /// a tempo), or whose unconnected meaning no value reaches (a right
+    /// input that falls back to the left).
+    fn input_rest(&self, _index: usize) -> Option<f32> {
+        Some(0.0)
+    }
 
     /// Ids of modules whose controls this module writes during
     /// [`Module::process`] (e.g. the control scheduler's targets).

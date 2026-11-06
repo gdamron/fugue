@@ -369,6 +369,12 @@ impl Module for WasmModule {
         }
     }
 
+    fn input_rest(&self, _index: usize) -> Option<f32> {
+        // A plugin told of its connections may read an unpatched input as
+        // it likes: it lets go at once.
+        self.set_input_connected.is_none().then_some(0.0)
+    }
+
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
         let (result,) = self
             .set_control

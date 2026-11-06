@@ -9,6 +9,7 @@
 use indexmap::IndexMap;
 
 use super::chunks::{plan_groups, Edge};
+use super::releases::Previous;
 use super::scc::{is_back_edge, positions, process_groups, topological_order};
 use super::{CompiledRoute, ProcessGroup, RoutingConnection, SignalGraph};
 use crate::invention::runtime::ModuleInstance;
@@ -335,11 +336,18 @@ impl SignalGraph {
             watch.refresh(&self.modules);
         }
         // `topology` now holds the previous derived state.
-        let previous = &topology.connected_in_ports;
-        let same_order = previous.len() == self.modules.len();
+        let same_order = topology.connected_in_ports.len() == self.modules.len();
+        if !same_order {
+            self.releases.clear();
+        }
         for mi in 0..self.modules.len() {
-            let was = previous.get(mi).filter(|_| same_order);
-            self.reset_module_inputs(mi, was.map(Vec::as_slice));
+            let was = topology.connected_in_ports.get(mi).filter(|_| same_order);
+            let was = was.map(|ports| Previous {
+                ports,
+                routes: topology.compiled_routes.get(mi).map_or(&[], Vec::as_slice),
+                carry: &topology.out_prev,
+            });
+            self.reset_module_inputs(mi, was);
         }
         self.topo_dirty = false;
     }
@@ -368,33 +376,49 @@ impl SignalGraph {
     }
 
     /// Brings module `mi`'s inputs in line with the graph's connectivity.
-    /// `was` is the ports connected before, for the same instance; `None`
+    /// `was` is its connections before, for the same instance; `None`
     /// treats the module as starting fresh.
     ///
     /// A port connected now is declared connected; routing fills it each
-    /// block. A port unconnected now is cleared and declared unconnected,
-    /// unless `was` shows it unconnected before too: that port is left as it
-    /// is, keeping any value written to it (see [`crate::Module::set_input`]).
+    /// block. A port `was` shows connected that is unconnected now glides to
+    /// rest (see [`super::releases`]) where it can, and is otherwise cleared
+    /// and declared unconnected at once, as every port unconnected now is on
+    /// a module starting fresh. A port unconnected before and now is left as
+    /// it is, keeping any value written to it (see
+    /// [`crate::Module::set_input`]) or the release it is in.
     ///
     /// Clearing covers the whole buffer, not just the active span, so an
     /// unconnected input never holds routed samples beyond it that a larger
     /// block size would later expose. Only ports that change are cleared, so
     /// this costs nothing for the modules an edit leaves alone.
     /// Allocation-free: it runs on the audio thread at each install.
-    pub(super) fn reset_module_inputs(&mut self, mi: usize, was: Option<&[usize]>) {
-        let Some((_, inst)) = self.modules.get_index_mut(mi) else {
-            return;
-        };
-        let now = self
-            .connected_in_ports
-            .get(mi)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        let module = inst.module_mut();
-        for p in 0..module.inputs().len() {
-            if now.contains(&p) {
+    pub(super) fn reset_module_inputs(&mut self, mi: usize, was: Option<Previous>) {
+        let ports = self
+            .modules
+            .get_index(mi)
+            .map_or(0, |(_, inst)| inst.module().inputs().len());
+        for p in 0..ports {
+            let connected = self
+                .connected_in_ports
+                .get(mi)
+                .is_some_and(|now| now.contains(&p));
+            let changed = was.is_none_or(|was| was.ports.contains(&p));
+            if !connected && !changed {
+                continue;
+            }
+            if !self.releases.is_empty() {
+                self.releases.cancel(mi, p);
+            }
+            if !connected && was.is_some_and(|was| self.release_input(mi, p, was)) {
+                continue;
+            }
+            let Some((_, inst)) = self.modules.get_index_mut(mi) else {
+                return;
+            };
+            let module = inst.module_mut();
+            if connected {
                 module.set_input_connected(p, true);
-            } else if was.is_none_or(|was| was.contains(&p)) {
+            } else {
                 module.input_block_mut(p).fill(0.0);
                 module.set_input_connected(p, false);
             }

@@ -57,6 +57,7 @@ mod master;
 pub(crate) mod notes;
 mod process;
 mod publication;
+mod releases;
 mod requests;
 pub(crate) mod scc;
 mod staging;
@@ -250,6 +251,8 @@ pub(crate) struct SignalGraph {
     /// The module outputs views tap (see [`taps`]); `None` for offline
     /// render.
     pub(crate) output_taps: Option<taps::OutputTaps>,
+    /// Unpatched inputs gliding to rest (see [`releases`]).
+    pub(crate) releases: releases::Releases,
 }
 
 impl SignalGraph {
@@ -301,6 +304,7 @@ impl SignalGraph {
             note_taps: Default::default(),
             note_out: None,
             output_taps: None,
+            releases: Default::default(),
         }
     }
 

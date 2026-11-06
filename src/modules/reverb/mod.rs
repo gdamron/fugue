@@ -293,6 +293,11 @@ impl Module for Reverb {
         self.inputs.set_connected(index, connected);
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        // An unpatched right input falls back to the left.
+        (index != 1).then_some(0.0)
+    }
+
     #[allow(private_interfaces)]
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         Some((&TABLE, &self.cells))

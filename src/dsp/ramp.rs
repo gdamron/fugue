@@ -80,6 +80,12 @@ impl LinearRamp {
         self.current
     }
 
+    /// Where the value is going (where it rests, once still).
+    #[inline]
+    pub fn target(&self) -> f32 {
+        self.target
+    }
+
     /// Whether the value is still moving.
     pub fn is_gliding(&self) -> bool {
         self.remaining > 0

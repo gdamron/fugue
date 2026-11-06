@@ -355,6 +355,16 @@ impl Module for Contour {
         }
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        match index {
+            FREQUENCY_IN => Some(self.frequency.target()),
+            // A clock sets the rate while patched: there is no value to
+            // glide to.
+            CLOCK_IN => None,
+            _ => Some(0.0),
+        }
+    }
+
     #[allow(private_interfaces)]
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         Some((&TABLE, &self.cells))

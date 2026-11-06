@@ -3,7 +3,7 @@
 use crate::MAX_BLOCK;
 
 pub(super) const INPUTS: [&str; 3] = ["audio", "time_mod", "bpm"];
-const BPM: usize = 2;
+pub(super) const BPM: usize = 2;
 
 pub(super) struct DelayInputs {
     pub(super) audio: [f32; MAX_BLOCK],

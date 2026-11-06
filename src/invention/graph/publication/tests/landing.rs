@@ -62,9 +62,12 @@ fn a_timed_edit_lands_on_its_sample_mid_block_without_touching_the_allocator() {
     assert_eq!(fate.settled(), Some(true));
     assert_eq!(ids(&graph), ["dac"]);
     assert_eq!(ends.applied.load(Ordering::Relaxed), 1);
-    // Playing up to the sample it is due on, silent from it on.
+    // Playing up to the sample it is due on, fading from it on: the dac's
+    // input, unpatched, glides to rest (see `releases`).
     assert_ne!(left[9], 0.0);
-    assert!(left[10..].iter().all(|v| *v == 0.0), "{:?}", &left[8..14]);
+    assert!(left[10].abs() < left[9].abs(), "{:?}", &left[8..14]);
+    let fading = left[10..].windows(2).all(|w| w[1].abs() < w[0].abs());
+    assert!(fading, "{:?}", &left[8..14]);
     // The retired publication stays as the bridge, not yet retired.
     assert!(ends.retired.pop().is_none());
 }

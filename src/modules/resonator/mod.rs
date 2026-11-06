@@ -360,6 +360,15 @@ impl Module for Resonator {
         }
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        // An unpatched `frequency` gives way to the control.
+        Some(if index == FREQUENCY_IN {
+            self.frequency
+        } else {
+            0.0
+        })
+    }
+
     #[allow(private_interfaces)]
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         Some((&TABLE, &self.cells))

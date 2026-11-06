@@ -312,6 +312,17 @@ impl Module for Adsr {
         self.inputs.set_connected(index, connected);
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        // Each unpatched stage input gives way to its control.
+        Some(match index {
+            1 => self.attack,
+            2 => self.decay,
+            3 => self.sustain,
+            4 => self.release,
+            _ => 0.0,
+        })
+    }
+
     #[allow(private_interfaces)]
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         Some((&TABLE, &self.cells))

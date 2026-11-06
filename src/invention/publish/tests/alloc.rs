@@ -180,6 +180,8 @@ fn installs_that_keep_written_inputs_stay_clean() {
     assert_clean_install(&mut rig, "connecting a written port");
     rig.live.disconnect(osc3_to_osc2).unwrap();
     assert_clean_install(&mut rig, "disconnecting it");
+    // Past the unpatched input's glide to rest.
+    rig.render(8);
     assert_eq!(input_value(&mut rig, "osc1", "frequency"), 0.5);
     assert_eq!(input_value(&mut rig, "osc2", "frequency"), 0.0);
 

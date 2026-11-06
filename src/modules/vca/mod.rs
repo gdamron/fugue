@@ -193,6 +193,11 @@ impl Module for Vca {
         self.inputs.set_connected(index, connected);
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        // An unpatched `level` gives way to the level control.
+        Some(if index == 1 { self.level.target() } else { 0.0 })
+    }
+
     #[allow(private_interfaces)]
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         Some((&TABLE, &self.cells))
