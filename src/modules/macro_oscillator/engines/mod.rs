@@ -2,6 +2,7 @@
 
 mod additive;
 mod chord_bank;
+mod chord_waves;
 mod chords;
 mod fm;
 mod grain_formant;

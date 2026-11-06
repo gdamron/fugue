@@ -82,6 +82,27 @@ fn fast_wavetable_sweeps_do_not_step_at_block_edges() {
 }
 
 #[test]
+fn a_fast_chords_morph_sweep_does_not_step_at_block_edges() {
+    // Across both halves, organ to wavetables and back, in 50 ms each way.
+    let sweep = SR as usize / 20;
+    let blocks = sweep / HOST_BLOCK;
+    for hz in [110.0, 440.0] {
+        let mut m = module(json!({ "model": "chords", "frequency": hz, "morph": 0.0 }));
+        render(&mut m, SR as usize / 10, |_, _| {});
+        let (x, _) = render(&mut m, 2 * sweep, |m, block| {
+            let t = (block as f32 / blocks as f32).min(2.0);
+            m.set_control("morph", if t <= 1.0 { t } else { 2.0 - t })
+                .unwrap();
+        });
+        let (edge, elsewhere) = edge_and_other_steps(&x);
+        assert!(
+            edge <= 1.5 * elsewhere,
+            "chords morph sweep at {hz} Hz: edge step {edge} vs {elsewhere}"
+        );
+    }
+}
+
+#[test]
 fn wavetable_aux_is_five_bit() {
     let mut m = module(json!({ "model": "wavetable", "frequency": 220.0, "timbre": 0.7 }));
     let (_, aux) = render(&mut m, SR as usize / 2, |_, _| {});
