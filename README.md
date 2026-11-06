@@ -14,55 +14,48 @@ indexes, configured inspection, live metadata, and response limits.
 
 ## Install
 
-### Claude Desktop (no terminal required)
+This repository is the Fugue core: the Rust library and runtime that play
+inventions. The Fugue CLI and MCP app are distributed separately from this
+repository.
 
-Download `fugue-<version>-<target>.mcpb` for your platform from the
-[latest release](https://github.com/gdamron/fugue/releases/latest) and
-double-click it. Claude Desktop installs the extension and registers the Fugue
-MCP server itself — there is no terminal step, no `PATH` to edit, and nothing
-else to install.
+### Use the library
 
-The bundle carries the same signed `fugue` and `fugue-mcp` binaries as the
-archives below. Bundles are published for **macOS arm64** and **Windows x86_64**,
-the platforms Claude Desktop runs on.
+Add the crate as a git dependency (the `fugue` name on crates.io belongs to a
+different project). Releases are tagged `v<year>.<month>.<patch>`; add
+`tag = "v<version>"` to pin one.
 
-### Command line
-
-One-line install (macOS and Linux), no Rust toolchain required. This downloads
-the prebuilt `fugue` and `fugue-mcp` binaries into `~/.fugue/bin` and the
-release's third-party license notices (`THIRD_PARTY_LICENSES.txt`) into
-`~/.fugue/share/doc`:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/gdamron/fugue/main/install.sh | sh
+```toml
+[dependencies]
+fugue = { git = "https://github.com/gdamron/fugue" }
 ```
 
-Windows PowerShell install:
+Optional cargo features, all off by default:
 
-```powershell
-iwr https://raw.githubusercontent.com/gdamron/fugue/main/install.ps1 -useb | iex
-```
+| Feature | Adds |
+|---|---|
+| `ffi` | The C ABI over the render engine (`include/fugue.h`), used by the native, iOS and Android archives. |
+| `plugins` | Hosting for WebAssembly component modules (see [Wasm modules](docs/wasm-modules.md)). |
+| `rpc-schema` | JSON Schema generation for the runtime RPC types. |
+| `score-import` | Importing scores from MusicXML. |
+| `spectrogram` | Spectrogram analysis of running audio. |
 
-Then add `~/.fugue/bin` to your `PATH` (the installer prints the exact line) and
-register the MCP server with Claude Code:
+See [Run an Invention](#run-an-invention) for loading and playing one from Rust.
 
-```sh
-claude mcp add fugue ~/.fugue/bin/fugue-mcp
-```
+### Build and run the examples
 
-`fugue-mcp` auto-spawns `fugue serve` from the binary installed alongside it
-(falling back to your `PATH`), so installing the one unit is all that's required
-to play audio — the MCP finds its `fugue` daemon even if `~/.fugue/bin` is not on
-your `PATH`.
+From a checkout with a Rust toolchain, `cargo run --example examples` plays the
+curated inventions in `examples/` (see [Quick Start](#quick-start)). Linux
+builds need the ALSA development headers (Debian/Ubuntu:
+`sudo apt-get install libasound2-dev pkg-config`).
 
-Overrides: `FUGUE_BIN_DIR` (install location), `FUGUE_DOC_DIR` (where the
-license notices go), `FUGUE_VERSION` (pin a specific release tag, default
-`latest`).
+### Release archives
 
-Prebuilt binaries are published for **macOS arm64**, **Linux x86_64 / arm64**
-(glibc), and **Windows x86_64**. Linux binaries dynamically link ALSA — install `libasound2`
-(Debian/Ubuntu: `sudo apt-get install libasound2`) if it is not already present.
-**Intel Macs** are not yet prebuilt; build from source for those.
+Each [GitHub release](https://github.com/gdamron/fugue/releases) carries
+per-target library archives named `fugue-<version>-<target>.tar.gz` for native
+(macOS arm64, Linux x86_64, Windows x86_64), iOS, Android and wasm builds.
+Every archive includes `THIRD_PARTY_LICENSES.txt`, the license notices for the
+dependencies built into it; keep that file with any copy you redistribute.
+`SHA256SUMS.txt` on the release lists the checksums.
 
 ## Quick Start
 
@@ -230,9 +223,10 @@ cannot exist and read the list in the error.
 
 ## CLI and REPL
 
-The `fugue` command-line host ships in the install unit (see [Install](#install)).
-It provides playback, rendering, daemon, and interactive REPL commands, while this
-repository stays focused on the core library and runtime.
+The `fugue` command-line host is distributed separately from this repository
+(see [Install](#install)). It provides playback, rendering, daemon, and
+interactive REPL commands, while this repository stays focused on the core
+library and runtime.
 
 ```bash
 fugue repl
@@ -325,7 +319,7 @@ FUGUE_YOUTUBE_SINK_REAL_FFMPEG=1 \
 
 ## MCP Server (AI-Driven Composition)
 
-The `fugue-mcp` server ships in the install unit beside `fugue` (see
+The `fugue-mcp` server is distributed separately with the CLI (see
 [Install](#install)). It exposes the runtime API as tools and talks to
 `fugue serve` over the shared runtime RPC protocol.
 
