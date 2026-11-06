@@ -22,7 +22,7 @@ mod wavetables;
 
 use self::additive::AdditiveEngine;
 use self::chords::ChordsEngine;
-use self::drums::BassDrumEngine;
+use self::drums::{BassDrumEngine, SnareDrumEngine};
 use self::fm::FmEngine;
 use self::grain_formant::GrainFormantEngine;
 use self::limiter::Limiter;
@@ -50,6 +50,7 @@ pub(super) const MODELS: &[&str] = &[
     "string",
     "modal",
     "bass_drum",
+    "snare_drum",
 ];
 
 /// How many engines there are.
@@ -73,12 +74,13 @@ const LEVELS: [(f32, f32); MODEL_COUNT] = [
     (-1.0, 0.8),
     (-1.0, 0.8),
     (0.8, 0.8),
+    (0.8, 0.8),
 ];
 
 /// Whether each engine shapes its own sound over time when struck by a
 /// trigger (a string, a body, a drum), so the low-pass gate leaves it be.
 pub(super) const ENVELOPED: [bool; MODEL_COUNT] = [
-    false, false, false, false, false, false, false, false, true, true, true, true,
+    false, false, false, false, false, false, false, false, true, true, true, true, true,
 ];
 
 /// Every engine, built up front so switching allocates nothing.
@@ -95,6 +97,7 @@ pub(super) struct Engines {
     string: StringEngine,
     modal: ModalEngine,
     bass_drum: BassDrumEngine,
+    snare_drum: SnareDrumEngine,
     /// The `audio` and `aux` limiters of each engine with a negative level.
     limiters: [[Limiter; 2]; MODEL_COUNT],
 }
@@ -117,6 +120,7 @@ impl Engines {
             string: StringEngine::new(sample_rate),
             modal: ModalEngine::new(sample_rate),
             bass_drum: BassDrumEngine::new(sample_rate),
+            snare_drum: SnareDrumEngine::new(sample_rate),
             limiters: std::array::from_fn(|_| {
                 [Limiter::new(sample_rate), Limiter::new(sample_rate)]
             }),
@@ -138,7 +142,8 @@ impl Engines {
             8 => self.six_op.render(p, out, aux),
             9 => self.string.render(p, out, aux),
             10 => self.modal.render(p, out, aux),
-            _ => self.bass_drum.render(p, out, aux),
+            11 => self.bass_drum.render(p, out, aux),
+            _ => self.snare_drum.render(p, out, aux),
         }
         let (out_level, aux_level) = LEVELS[model];
         let [out_limiter, aux_limiter] = &mut self.limiters[model];
@@ -160,7 +165,7 @@ mod tests {
 
     /// The models that shape their own envelope, by name, so a model added
     /// out of step with `ENVELOPED` is caught rather than gated by mistake.
-    const STRUCK: &[&str] = &["six_op_fm", "string", "modal", "bass_drum"];
+    const STRUCK: &[&str] = &["six_op_fm", "string", "modal", "bass_drum", "snare_drum"];
 
     #[test]
     fn exactly_the_struck_models_shape_their_own_envelope() {

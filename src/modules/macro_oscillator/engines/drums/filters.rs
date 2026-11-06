@@ -1,5 +1,5 @@
-//! Ported from Mutable Instruments' `stmlib/dsp/filter.h` (`Svf` and its
-//! `tan` approximations; MIT, Copyright 2014 Emilie Gillet) and
+//! Ported from Mutable Instruments' `stmlib/dsp/filter.h` (`Svf`, `OnePole`
+//! and their `tan` approximations; MIT, Copyright 2014 Emilie Gillet) and
 //! `stmlib/dsp/dsp.h` (`SoftLimit`, `SoftClip` and the `ONE_POLE` and
 //! `SLOPE` macros; MIT, Copyright 2012 Emilie Gillet). See
 //! THIRD_PARTY_NOTICES.md.
@@ -110,6 +110,36 @@ impl ModeFilter {
     }
 }
 
+/// A one-pole filter in the same trapezoidal form: low-pass, and the
+/// high-pass that is what the low-pass leaves.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct OnePoleFilter {
+    g: f32,
+    gi: f32,
+    state: f32,
+}
+
+impl OnePoleFilter {
+    /// Sets the cutoff from `g = tan(π·f)`.
+    #[inline]
+    pub fn set_g(&mut self, g: f32) {
+        self.g = g;
+        self.gi = 1.0 / (1.0 + g);
+    }
+
+    #[inline]
+    pub fn lowpass(&mut self, x: f32) -> f32 {
+        let lp = (self.g * x + self.state) * self.gi;
+        self.state = flush(self.g * (x - lp) + lp);
+        lp
+    }
+
+    #[inline]
+    pub fn highpass(&mut self, x: f32) -> f32 {
+        x - self.lowpass(x)
+    }
+}
+
 /// Moves `state` by `coefficient` of the way toward `x`, and returns it:
 /// the reference's `ONE_POLE`.
 #[inline]
@@ -157,6 +187,17 @@ impl Rate {
     /// between 0 and 1 however low the rate.
     pub fn per_second(self, seconds: f32) -> f32 {
         self.coefficient((1.0 / (seconds * 48_000.0)).min(1.0))
+    }
+
+    /// A one-pole coefficient given at 48 kHz, at this rate, keeping its
+    /// lag (`(1 − c) / c` samples, its delay at low frequencies) the same
+    /// in seconds. For a fast smoother whose difference from its input is
+    /// the signal, this keeps that difference as loud;
+    /// [`Rate::coefficient`] keeps its pole instead, which differs only for
+    /// a coefficient far from zero.
+    pub fn lag(self, at_48k: f32) -> f32 {
+        let ratio = self.rate / 48_000.0;
+        at_48k / (at_48k + ratio * (1.0 - at_48k))
     }
 
     /// The gain that keeps white noise as loud through filters fixed in
@@ -302,16 +343,30 @@ pub(super) mod testing {
             .collect()
     }
 
-    /// Asserts that a drum sounds alike at 44.1 and 96 kHz as at 48 kHz.
+    /// Asserts that a drum sounds alike at 44.1 and 96 kHz as at 48 kHz:
+    /// within 1 dB on average across the windows, and 2 dB in each. The
+    /// average is the test, since a noisy drum's single 25 ms windows move
+    /// by most of a decibel with the noise alone; a gain off with the rate
+    /// moves every window the same way.
     pub fn assert_rate_independent(at: impl Fn(u32) -> Vec<(f32, f32)>) {
         let reference = at(48_000);
         for rate in [44_100, 96_000] {
-            for (window, (got, want)) in at(rate).iter().zip(&reference).enumerate() {
+            let got = at(rate);
+            let mut drift = (0.0f32, 0.0f32);
+            for (window, (got, want)) in got.iter().zip(&reference).enumerate() {
+                let delta = (got.0 - want.0, got.1 - want.1);
                 assert!(
-                    (got.0 - want.0).abs() < 1.0 && (got.1 - want.1).abs() < 1.0,
+                    delta.0.abs() < 2.0 && delta.1.abs() < 2.0,
                     "at {rate} Hz, window {window}: {got:?} against {want:?} at 48 kHz"
                 );
+                drift = (drift.0 + delta.0, drift.1 + delta.1);
             }
+            let n = reference.len() as f32;
+            let drift = (drift.0 / n, drift.1 / n);
+            assert!(
+                drift.0.abs() < 1.0 && drift.1.abs() < 1.0,
+                "at {rate} Hz the drum is {drift:?} dB off 48 kHz on average"
+            );
         }
     }
 }
@@ -363,6 +418,15 @@ mod tests {
         // Half the samples per second: twice the step, near enough.
         let c = per_sample(0.01, 24_000.0);
         assert!(((1.0 - c) - 0.99f32 * 0.99).abs() < 1e-6);
+    }
+
+    /// A fast smoother keeps its lag in seconds at another rate.
+    #[test]
+    fn a_fast_smoother_keeps_its_lag_at_another_rate() {
+        let lag_seconds = |c: f32, rate: f32| (1.0 - c) / c / rate;
+        let fast = Rate::new(96_000).lag(0.75);
+        assert!((lag_seconds(fast, 96_000.0) / lag_seconds(0.75, 48_000.0) - 1.0).abs() < 1e-5);
+        assert_eq!(Rate::new(48_000).lag(0.75), 0.75);
     }
 
     #[test]
