@@ -9,6 +9,7 @@ mod example_catalog;
 pub mod factory;
 #[cfg(feature = "ffi")]
 pub mod ffi;
+mod flush_to_zero;
 #[cfg(not(target_arch = "wasm32"))]
 mod hex;
 #[cfg(not(target_arch = "wasm32"))]
@@ -38,6 +39,8 @@ mod test_support;
 pub mod traits;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
+
+pub use flush_to_zero::flush_to_zero_enabled;
 
 // Re-export core traits
 pub use traits::{
