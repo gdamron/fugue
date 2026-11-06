@@ -30,6 +30,10 @@ pub(super) struct EngineParameters {
     pub accent: f32,
     /// Whether a trigger rose during the block.
     pub trigger: bool,
+    /// Whether `trigger` is unpatched: an engine with its own excitation
+    /// then excites itself continuously instead of waiting for a strike.
+    #[allow(dead_code)]
+    pub untriggered: bool,
     /// The key (0 is C) and the position in `music::scales::SCALE_NAMES`
     /// that chords are built in.
     pub key: u8,
@@ -95,6 +99,7 @@ mod tests {
             morph: 0.5,
             accent: 0.8,
             trigger: false,
+            untriggered: true,
             key: 0,
             scale: 0,
         };

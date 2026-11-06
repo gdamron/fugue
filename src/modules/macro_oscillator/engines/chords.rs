@@ -127,6 +127,7 @@ mod tests {
             morph: 0.5,
             accent: 0.8,
             trigger: false,
+            untriggered: true,
             key: 0,
             scale: 0,
         };

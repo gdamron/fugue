@@ -281,6 +281,7 @@ impl MacroOscillator {
             gate,
             decay: self.decay,
             trigger: self.rising,
+            untriggered: !self.connected[TRIGGER_IN],
             key: self.key,
             scale: self.scale,
         };

@@ -236,6 +236,7 @@ mod tests {
             morph,
             accent: 0.8,
             trigger: false,
+            untriggered: true,
             key: 0,
             scale: 0,
         }

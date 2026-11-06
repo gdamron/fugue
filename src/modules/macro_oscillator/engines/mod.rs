@@ -46,6 +46,10 @@ const LEVELS: [(f32, f32); MODEL_COUNT] = [
     (1.0, 0.8),
 ];
 
+/// Whether each engine shapes its own sound over time when struck by a
+/// trigger (a string, a body, a drum), so the low-pass gate leaves it be.
+pub(super) const ENVELOPED: [bool; MODEL_COUNT] = [false; MODEL_COUNT];
+
 /// Every engine, built up front so switching allocates nothing.
 pub(super) struct Engines {
     virtual_analog: VirtualAnalogEngine,
@@ -87,5 +91,21 @@ impl Engines {
         let (out_level, aux_level) = LEVELS[model];
         out.iter_mut().for_each(|s| *s *= out_level);
         aux.iter_mut().for_each(|s| *s *= aux_level);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The models that shape their own envelope, by name, so a model added
+    /// out of step with `ENVELOPED` is caught rather than gated by mistake.
+    const STRUCK: &[&str] = &[];
+
+    #[test]
+    fn exactly_the_struck_models_shape_their_own_envelope() {
+        for (model, name) in MODELS.iter().enumerate() {
+            assert_eq!(ENVELOPED[model], STRUCK.contains(name), "{name}");
+        }
     }
 }
