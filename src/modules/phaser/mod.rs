@@ -345,6 +345,12 @@ impl Module for Phaser {
         }
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        // An unpatched right input falls back to the left, and `bpm` to the
+        // tempo control.
+        (index != RIGHT && index != BPM_INPUT).then_some(0.0)
+    }
+
     #[allow(private_interfaces)]
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         Some((&TABLE, &self.cells))

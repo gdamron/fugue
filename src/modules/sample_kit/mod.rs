@@ -297,6 +297,11 @@ impl Module for SampleKit {
         self.inputs.set_connected(index, connected);
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        // `key` selects a slot rather than sets a value.
+        (index != 1).then_some(0.0)
+    }
+
     #[allow(private_interfaces)]
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         Some((&self.table, &self.cells))

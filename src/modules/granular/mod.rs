@@ -390,6 +390,12 @@ impl Module for Granular {
         }
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        // An unpatched right input falls back to the left, and a clock
+        // stops syncing: neither has a value to glide to.
+        (index != RIGHT_IN && index != CLOCK_IN).then_some(0.0)
+    }
+
     #[allow(private_interfaces)]
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         Some((&TABLE, &self.cells))

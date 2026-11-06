@@ -364,6 +364,15 @@ impl Module for MacroOscillator {
         }
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        match index {
+            FREQUENCY_IN => Some(self.frequency),
+            // Unpatching `level` fades the voice's own bypass in.
+            LEVEL_IN => None,
+            _ => Some(0.0),
+        }
+    }
+
     #[allow(private_interfaces)]
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         Some((&TABLE, &self.cells))

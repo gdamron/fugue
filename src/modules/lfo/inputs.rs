@@ -3,7 +3,7 @@
 use crate::MAX_BLOCK;
 
 pub const INPUTS: [&str; 3] = ["sync", "rate_mod", "bpm"];
-const BPM: usize = 2;
+pub(super) const BPM: usize = 2;
 
 pub struct LfoInputs {
     sync: [f32; MAX_BLOCK],

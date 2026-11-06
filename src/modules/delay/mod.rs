@@ -369,6 +369,11 @@ impl Module for Delay {
         self.inputs.set_connected(index, connected);
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        // An unpatched `bpm` gives way to the tempo control at once.
+        (index != inputs::BPM).then_some(0.0)
+    }
+
     #[allow(private_interfaces)]
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         Some((&TABLE, &self.cells))

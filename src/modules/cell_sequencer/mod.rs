@@ -74,12 +74,12 @@ pub(crate) use super::step_sequencer::grace::{
 };
 use super::step_sequencer::{parse_pattern, GraceChain, Step, StepError};
 
+pub use self::factory::CellSequencerFactory;
 use self::table::{
     Bank, CELL, CELLS, CELL_COUNT, ENDED, FOLLOW_CELL_LENGTH, GATE_LENGTH, GRACE_DURATION,
     GRACE_PLACEMENT, GRACE_VELOCITY, LOOP_COUNT, MODE, NEXT_CELL, ROOT_NOTE, SELECT_CELL,
     STEP_COUNT, TABLE, WAIT_FOR_CYCLE_END,
 };
-pub use self::factory::CellSequencerFactory;
 
 mod apply;
 mod factory;
@@ -943,6 +943,11 @@ impl Module for CellSequencer {
 
     fn set_input_connected(&mut self, index: usize, connected: bool) {
         self.inputs.set_connected(index, connected);
+    }
+
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        // `select_cell` and `wait_for_cycle_end` select rather than set.
+        (index != 4 && index != 5).then_some(0.0)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {

@@ -339,6 +339,16 @@ impl Module for SamplePlayer {
         self.inputs.set_connected(index, connected);
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        match index {
+            // `loop` switches rather than sets.
+            1 => None,
+            // An unpatched `pitch_ratio` gives way to the control.
+            2 => Some(self.pitch_ratio),
+            _ => Some(0.0),
+        }
+    }
+
     #[allow(private_interfaces)]
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         Some((self.table, &self.cells))

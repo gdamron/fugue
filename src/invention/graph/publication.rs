@@ -30,6 +30,7 @@ use std::sync::Arc;
 
 use super::compile::CompiledTopology;
 use super::notes::NoteTaps;
+use super::releases::Previous;
 use super::{RoutingConnection, SignalGraph};
 use crate::control_request::RampRoom;
 use crate::invention::runtime::ModuleInstance;
@@ -570,7 +571,9 @@ impl SignalGraph {
     /// connectivity (see [`Self::reset_module_inputs`]). Each survivor is
     /// compared with its connectivity in the retired topology, by the
     /// survivor remap, so its inputs that stay unconnected keep their
-    /// values; every other module starts fresh. Defensive: unless the remap
+    /// values and an input it unpatches glides to rest from what the retired
+    /// routes last carried; every other module starts fresh, and the
+    /// releases in flight follow their modules. Defensive: unless the remap
     /// covers the retired map and vouches, id for id, for every one of the
     /// `moved` survivors, every module starts fresh. Allocation-free.
     fn reset_installed_inputs(&mut self, retired: &Publication, moved: usize) {
@@ -580,6 +583,11 @@ impl SignalGraph {
             && remap
                 .survivors()
                 .all(|(old, new)| self.same_module(&retired.modules, old, new));
+        if vouched {
+            self.releases.remap(|old| remap.get(old));
+        } else {
+            self.releases.clear();
+        }
         for mi in 0..self.modules.len() {
             let survivor = retired.survivor.get(mi).copied().unwrap_or(false);
             if !(vouched && survivor) {
@@ -587,9 +595,14 @@ impl SignalGraph {
             }
         }
         if vouched {
+            let topology = &retired.topology;
             for (old, new) in remap.survivors() {
-                let was = retired.topology.connected_in_ports.get(old);
-                self.reset_module_inputs(new, was.map(Vec::as_slice));
+                let was = topology.connected_in_ports.get(old).map(|ports| Previous {
+                    ports,
+                    routes: topology.compiled_routes.get(old).map_or(&[], Vec::as_slice),
+                    carry: &topology.out_prev,
+                });
+                self.reset_module_inputs(new, was);
             }
         }
     }

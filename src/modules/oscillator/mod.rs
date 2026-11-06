@@ -330,6 +330,11 @@ impl Module for Oscillator {
         self.inputs.set_connected(index, connected);
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        // An unpatched `frequency` gives way to the control.
+        Some(if index == 0 { self.frequency } else { 0.0 })
+    }
+
     #[allow(private_interfaces)]
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         Some((&TABLE, &self.cells))

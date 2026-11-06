@@ -419,6 +419,7 @@ impl RenderEngine {
             // spectrum ring.
             super::graph::MasterObservers::default(),
         );
+        graph.set_sample_rate(self.sample_rate);
         graph.end_watch = Some(Default::default());
         // No request reaches it, but it plays the modules' tables.
         super::graph::offline_requests(&mut graph);

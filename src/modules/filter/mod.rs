@@ -365,6 +365,15 @@ impl Module for Filter {
         self.inputs.set_connected(index, connected);
     }
 
+    fn input_rest(&self, index: usize) -> Option<f32> {
+        // Unpatched, `cutoff` and `resonance` give way to their controls.
+        Some(match index {
+            1 => self.cutoff,
+            3 => self.resonance,
+            _ => 0.0,
+        })
+    }
+
     #[allow(private_interfaces)]
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         Some((&TABLE, &self.cells))
