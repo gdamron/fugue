@@ -44,7 +44,8 @@ fn build(name: &str, hz: f32, level: Option<f32>) -> Voice {
 /// - `aux` is judged the same way, but only where the untouched hit has a
 ///   measurable step (above 1e-3), since `aux` may be silent for an engine.
 /// - The exception is particle_noise's `aux`, which is judged by a no-clip
-///   check instead: its absolute peak over the retrigger window is at most 1.0.
+///   check instead: no sample over the retrigger window reaches full scale
+///   (|x| >= 1.0, the output being clamped at +-1).
 mod retrigger_steps_stay_within_one_and_a_half_times_steady_state {
     use super::*;
 
@@ -78,12 +79,16 @@ mod retrigger_steps_stay_within_one_and_a_half_times_steady_state {
                 // particle at once, so the retrigger is a fresh click by
                 // design rather than a decay-stack step. The step ratio does
                 // not apply there; the meaningful guarantee is that the burst
-                // does not clip.
-                let top = peak(&aux[from..]);
+                // does not clip. The output is clamped at +-1, so a clipped
+                // burst shows up as samples at full scale, not above it:
+                // none may reach it.
+                let window = &aux[from..];
+                let top = peak(window);
+                let at_full_scale = window.iter().filter(|v| v.abs() >= 1.0).count();
                 assert!(
-                    top <= 1.0,
-                    "{what}: retrigger at frame {t_r} ({:.3} s) on aux peaks at {top:.5}, \
-                     which clips",
+                    at_full_scale == 0,
+                    "{what}: retrigger at frame {t_r} ({:.3} s) on aux clips: \
+                     {at_full_scale} samples at full scale, peak {top:.5}",
                     t_r as f64 / SRF
                 );
                 continue;

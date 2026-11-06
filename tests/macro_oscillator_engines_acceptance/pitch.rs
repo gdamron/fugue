@@ -18,7 +18,7 @@ fn measured(x: &[f32], hz: f32) -> f64 {
 
 /// Seconds of un-triggered string averaged at `hz`: 40 s at the lowest
 /// pitch, where the resonance is closest to the noise, shortening in
-/// proportion to pitch down to 3 s. The reading is then steady to about a
+/// proportion to pitch down to 10 s. The reading is then steady to about a
 /// cent wherever the averaged span starts, and the test stays short.
 fn welch_span(hz: f32) -> f64 {
     (2200.0 / f64::from(hz)).clamp(10.0, 40.0)
