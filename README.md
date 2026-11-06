@@ -335,8 +335,9 @@ you are changing before you change it.
 - [Musical time](docs/musical-time.md): samples, conditions and clock beats,
   and where a score's notation ends and an invention's interpretation begins.
 - [Module design](docs/module-design.md): behaviour lives in modules with
-  ports, interfaces follow one naming convention, and views of running audio
-  show what is heard.
+  ports, interfaces follow one naming convention, views of running audio
+  show what is heard, modules see only their ports and controls, and when a
+  behaviour is a native module or a development.
 - [Wasm modules](docs/wasm-modules.md): the world a guest component
   implements, how it writes its outputs, and moving a guest to a new version.
 - [Shared runtime](docs/shared-runtime.md): how clients find, edit and

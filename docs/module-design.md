@@ -2,13 +2,17 @@
 
 This document is for contributors adding or changing a module type, a
 development, or a view of running audio, and for reviewers of those changes.
-It covers three standing rules:
+It covers five standing rules:
 
 1. [Behaviour lives in modules with ports](#behaviour-lives-in-modules-with-ports),
    not in properties that change how the graph is read.
 2. [Interfaces follow one naming convention](#interface-naming), enforced by
    tests.
 3. [Views of running audio show what is heard](#views-show-what-is-heard).
+4. [Modules see only their ports and controls](#modules-see-only-their-ports-and-controls),
+   never the invention or the graph around them.
+5. [A behaviour is native or a development](#native-module-or-development)
+   by a fixed test, and that decides where it lives.
 
 ## Behaviour lives in modules with ports
 
@@ -220,3 +224,52 @@ Two small differences from the device path are deliberate:
   the audio thread.
 - When no one is reading, do nothing beyond a single relaxed load. The
   spectrum tap does exactly that.
+
+## Modules see only their ports and controls
+
+A module exposes signal flow and controls. It doesn't reach into the
+invention or the graph to find out what it needs. Tempo, key, scale and sync
+arrive through inputs and controls, so a module behaves the same wherever it
+is patched, and changing what feeds it is an ordinary edit to a connection
+or a control.
+
+The `delay` module shows the pattern. Its `division` control times the delay
+as a note value, at the tempo on its `bpm` input when that is patched and at
+its `bpm` control otherwise
+([`src/modules/delay/controls.rs`](../src/modules/delay/controls.rs),
+[`src/modules/delay/inputs.rs`](../src/modules/delay/inputs.rs)). It never
+asks the invention for a tempo.
+
+Reasoning about the whole graph is left to the people and agents editing it,
+and to agent and code modules built for that job. Keeping it out of every
+other module keeps modules patchable and predictable, and leaves one place
+that sees the whole graph.
+
+## Native module or development
+
+A new behaviour is either a native module, written in Rust here, or a
+development: a document that wires existing modules together.
+
+Make it a development when it is a fixed wiring of reusable parts and every
+feedback loop in it passes through at least about 1 ms of delay, or it has
+no loops. Keep it native when it needs any of these:
+
+- a zero-delay loop, or a short tuned loop that needs polyphony;
+- switching between engines;
+- voice allocation, or a large bank of voices or tables;
+- oversampling or lookahead.
+
+Atoms, the reusable parts developments are built from, are always native.
+
+That decides where it lives:
+
+- **Core holds the native modules**, including the basic building blocks of
+  effects, such as `delay` and `drive`.
+- **First-party effect developments live in fugue-packs** as `fugue.effects.*`
+  packages, bundled into the CLI release. An effect that grows more advanced
+  and nuanced than a building block belongs there: the stereo, ping-pong and
+  tape delays, chorus, flanger, compressor and EQ are all built from core
+  atoms.
+
+Developments version and get edited like the instrument packs, and keeping
+them out of core keeps core a DSP library.

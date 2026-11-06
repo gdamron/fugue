@@ -18,7 +18,9 @@ to use in the issue or PR first, and check them against this page.
    work, so every ported file carries an
    [attribution header](#attribution-header) and the source gets an entry in
    [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) with its original
-   license text.
+   license text. Porting is MIT-only for now: Apache-2.0 and BSD sources each
+   need their own decision first. Apache-2.0, for one, brings NOTICE duties
+   that the attribution header doesn't cover.
 2. **GPL, unlicensed and unknown-provenance sources are reference only.**
    Write the module clean-room: work from manuals, papers, published
    descriptions and listening. Don't copy code, tables or constants, and
