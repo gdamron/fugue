@@ -87,9 +87,15 @@ fn rising_zero_crossings(x: &[f32]) -> Vec<f64> {
     found
 }
 
-/// Asserts the sine in `x` has cycles of `period` samples (within `tol`),
-/// at least `cycles` of them.
+/// Asserts the sine in `x` has cycles of `period` samples (within one
+/// sample), at least `cycles` of them.
 fn assert_period(x: &[f32], period: f64, cycles: usize, what: &str) {
+    assert_period_within(x, period, 1.0, cycles, what);
+}
+
+/// As `assert_period`, with the cycle length allowed to be off by `tol`
+/// samples.
+fn assert_period_within(x: &[f32], period: f64, tol: f64, cycles: usize, what: &str) {
     let crossings = rising_zero_crossings(x);
     assert!(
         crossings.len() > cycles,
@@ -98,7 +104,7 @@ fn assert_period(x: &[f32], period: f64, cycles: usize, what: &str) {
     );
     for w in crossings.windows(2) {
         assert!(
-            (w[1] - w[0] - period).abs() <= 1.0,
+            (w[1] - w[0] - period).abs() <= tol,
             "{what}: cycle of {} samples, want {period}",
             w[1] - w[0]
         );
@@ -189,10 +195,13 @@ fn an_unusable_bpm_input_falls_back_to_the_control() {
 }
 
 /// With `division` off the LFO runs at `rate` and the tempo does nothing.
+/// The free-running phase accumulates in f32 and drifts a few samples over
+/// seconds, so a cycle is held to 0.1% of 1/rate rather than to one sample.
 #[test]
 fn division_off_runs_at_rate_whatever_the_tempo() {
+    let tol = 16_000.0 * 0.001;
     let config = sine_config(json!({ "rate": 3.0, "bpm": 400.0 }));
-    assert_period(&render(config, secs(3.0)), 16_000.0, 3, "3 Hz");
+    assert_period_within(&render(config, secs(3.0)), 16_000.0, tol, 3, "3 Hz");
     let tempo = |_: usize| 90.0;
     let x = render_with(
         &mut lfo(sine_config(json!({ "rate": 3.0 }))),
@@ -200,7 +209,7 @@ fn division_off_runs_at_rate_whatever_the_tempo() {
         Some(&tempo),
         |_, _| {},
     );
-    assert_period(&x[BLOCK..], 16_000.0, 3, "3 Hz with a bpm input");
+    assert_period_within(&x[BLOCK..], 16_000.0, tol, 3, "3 Hz with a bpm input");
 }
 
 /// Two LFOs built alike, one with `phase` p, give the same waveform shifted
