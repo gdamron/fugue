@@ -430,12 +430,18 @@ impl SignalGraph {
     /// skipping indices out of range. The port's name is copied into a stack
     /// buffer, since `Module::set_input` takes a name and the module cannot
     /// stay borrowed for it. Allocation-free as long as the module's own
-    /// `set_input` is.
+    /// `set_input` is. A write to an input gliding to rest after an unpatch
+    /// (see [`super::releases`]) takes it over: the input lets go of the
+    /// glide and holds the value written.
     pub(super) fn apply_input(&mut self, module_idx: usize, port_idx: usize, value: f32) {
+        let released = !self.releases.is_empty() && self.releases.cancel(module_idx, port_idx);
         let Some((_, instance)) = self.modules.get_index_mut(module_idx) else {
             return;
         };
         let module = instance.module_mut();
+        if released {
+            module.set_input_connected(port_idx, false);
+        }
         let mut name = [0u8; MAX_INPUT_PORT_NAME];
         let len = match module.inputs().get(port_idx) {
             Some(port) if port.len() <= MAX_INPUT_PORT_NAME => {

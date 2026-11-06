@@ -89,17 +89,14 @@ impl Releases {
         true
     }
 
-    /// Forgets the release of `port` of `module`, if there is one.
-    pub(super) fn cancel(&mut self, module: usize, port: usize) {
-        let mut i = 0;
-        while i < self.len {
+    /// Forgets the release of `port` of `module`, reporting whether there
+    /// was one.
+    pub(super) fn cancel(&mut self, module: usize, port: usize) -> bool {
+        let found = (0..self.len).find(|&i| {
             let release = self.slots[i];
-            if release.module == module && release.port == port {
-                self.swap_remove(i);
-            } else {
-                i += 1;
-            }
-        }
+            release.module == module && release.port == port
+        });
+        found.inspect(|&i| self.swap_remove(i)).is_some()
     }
 
     /// Moves every release to its module's index in a new module order,
