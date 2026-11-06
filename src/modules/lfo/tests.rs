@@ -260,3 +260,75 @@ fn a_synced_lfo_holds_the_beat_for_five_minutes() {
         );
     }
 }
+
+/// The rate a free-running sine lfo plays at, from the spacing of the rising
+/// zero crossings of its output over `seconds`, in Hz.
+fn rendered_rate(sample_rate: u32, rate: f32, seconds: usize) -> f64 {
+    const BLOCK: usize = 128;
+    let mut lfo = Lfo::new(sample_rate);
+    lfo.set_rate(rate);
+    lfo.set_waveform(OscillatorType::Sine);
+    let total = sample_rate as usize * seconds;
+    let (mut first, mut last, mut cycles) = (None, 0.0f64, 0u32);
+    let mut prev = 0.0f32;
+    for start in (0..total).step_by(BLOCK) {
+        lfo.process(BLOCK.min(total - start));
+        for (k, &sample) in lfo.output_block(0)[..BLOCK.min(total - start)]
+            .iter()
+            .enumerate()
+        {
+            if prev < 0.0 && sample >= 0.0 {
+                let at = (start + k - 1) as f64 + f64::from(-prev) / f64::from(sample - prev);
+                match first {
+                    None => first = Some(at),
+                    Some(_) => {
+                        last = at;
+                        cycles += 1;
+                    }
+                }
+            }
+            prev = sample;
+        }
+    }
+    f64::from(cycles) * f64::from(sample_rate) / (last - first.unwrap())
+}
+
+/// Free-running, the lfo keeps its rate however slow: within 0.001% of it
+/// over two minutes (an `f32` phase was a percent off at 0.05 Hz).
+#[test]
+fn a_free_running_lfo_keeps_its_rate_when_slow() {
+    for sample_rate in [44_100, 48_000] {
+        for rate in [0.05f32, 0.1, 0.25, 1.0, 3.0, 20.0] {
+            let measured = rendered_rate(sample_rate, rate, 120);
+            let error = (measured / f64::from(rate) - 1.0).abs();
+            assert!(
+                error < 1e-5,
+                "{rate} Hz at {sample_rate}: measured {measured}, {}% off",
+                error * 100.0
+            );
+        }
+    }
+}
+
+/// Switching between free-running and synced carries the phase across
+/// without a step, both ways.
+#[test]
+fn switching_between_free_and_synced_carries_the_phase() {
+    let mut lfo = Lfo::new(48_000);
+    lfo.set_rate(1.7);
+    for _ in 0..31 {
+        lfo.process(128);
+    }
+    let free = lfo.output_block(0)[127];
+    lfo.set_control("division", 3.0).unwrap(); // quarter note
+    lfo.process(1);
+    let synced = lfo.output_block(0)[0];
+    assert!((synced - free).abs() < 0.01, "{free} then {synced}");
+    lfo.set_control("division", 0.0).unwrap(); // off
+    lfo.process(1);
+    let free_again = lfo.output_block(0)[0];
+    assert!(
+        (free_again - synced).abs() < 0.01,
+        "{synced} then {free_again}"
+    );
+}
