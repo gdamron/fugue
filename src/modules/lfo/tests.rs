@@ -208,7 +208,7 @@ fn a_phase_change_takes_the_short_way_round() {
     let mut lfo = Lfo::new(48_000);
     lfo.set_rate(0.001);
     lfo.set_control("phase", 0.9).unwrap();
-    lfo.offset.settle();
+    lfo.process(1);
     lfo.set_control("phase", 0.1).unwrap();
     let mut lowest = 1.0f32;
     for _ in 0..2_000 {
@@ -219,4 +219,13 @@ fn a_phase_change_takes_the_short_way_round() {
     // way it would pass 0.75 and reach −1.
     assert!(lowest > -0.6, "lowest {lowest}");
     assert!(lfo.get_output("bipolar").unwrap() > 0.58);
+}
+
+#[test]
+fn a_phase_written_before_the_first_block_starts_there() {
+    let mut lfo = Lfo::new(48_000);
+    lfo.set_rate(1.0);
+    lfo.set_control("phase", 0.25).unwrap();
+    lfo.process(1);
+    assert!(lfo.get_output("bipolar").unwrap() > 0.999);
 }

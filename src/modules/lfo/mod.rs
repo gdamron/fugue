@@ -95,6 +95,9 @@ pub struct Lfo {
     offset: LinearRamp,
     /// This block's synced rate in Hz, or `None` while `division` is off.
     synced: Option<f64>,
+    /// Whether a block has run: a phase written before then (a
+    /// development's starting value) is where the LFO starts, not a glide.
+    started: bool,
     /// The phase while synced, kept in `f64` so a cycle lasts its note
     /// value to the sample (an `f32` phase drifts by a few samples a cycle).
     precise: f64,
@@ -129,6 +132,7 @@ impl Lfo {
             bpm: 120.0,
             offset: LinearRamp::new(0.0, (PHASE_GLIDE * sample_rate as f32).round() as u32),
             synced: None,
+            started: false,
             precise: 0.0,
             cells,
             inputs: inputs::LfoInputs::new(),
@@ -236,6 +240,10 @@ impl Module for Lfo {
     }
 
     fn process(&mut self, frames: usize) -> bool {
+        if !self.started {
+            self.started = true;
+            self.offset.settle();
+        }
         let tempo = note_division::tempo(self.inputs.bpm(), self.bpm);
         let synced = note_division::division_seconds(self.division, tempo).map(|s| 1.0 / s);
         if self.synced.is_none() && synced.is_some() {
