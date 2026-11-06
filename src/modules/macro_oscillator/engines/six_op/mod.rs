@@ -1,5 +1,7 @@
 //! The six-operator FM synthesizer the `six_op_fm` model will play: its
-//! operators and the algorithms that wire them.
+//! operators and algorithms, envelopes and LFO.
 
 mod algorithms;
+mod envelope;
+mod lfo;
 mod operators;
