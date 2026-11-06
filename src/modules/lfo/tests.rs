@@ -229,3 +229,34 @@ fn a_phase_written_before_the_first_block_starts_there() {
     lfo.process(1);
     assert!(lfo.get_output("bipolar").unwrap() > 0.999);
 }
+
+/// Synced, the lfo holds the beat over a long run: after five minutes at
+/// 120 bpm its phase is within 1 ms of the tempo's, at the slowest division
+/// (a whole note, two seconds) and a fast one.
+#[test]
+fn a_synced_lfo_holds_the_beat_for_five_minutes() {
+    for (division, position, cycle_frames) in [
+        ("whole_note", 1.0, 96_000usize),
+        ("16th_triplet", 14.0, 4_000),
+    ] {
+        let mut lfo = Lfo::new(48_000);
+        lfo.set_control("division", position).unwrap();
+        let frames = 5 * 60 * 48_000;
+        for _ in 0..frames / 128 {
+            lfo.process(128);
+        }
+        let expected = (frames % cycle_frames) as f64 / cycle_frames as f64;
+        let mut error = (lfo.precise - expected).abs();
+        error = error.min(1.0 - error);
+        let seconds = error * cycle_frames as f64 / 48_000.0;
+        assert!(seconds < 1e-3, "{division}: {seconds} s off the beat");
+        // The output (the last block's first sample) follows the phase too.
+        let out = lfo.get_output("bipolar").unwrap();
+        let first = (frames - 128) % cycle_frames;
+        let want = (2.0 * std::f64::consts::PI * first as f64 / cycle_frames as f64).sin();
+        assert!(
+            (f64::from(out) - want).abs() < 1e-3,
+            "{division}: {out} vs {want}"
+        );
+    }
+}
