@@ -48,6 +48,9 @@ mod replacing;
 mod retarget;
 #[cfg(test)]
 mod sample_player_tests;
+mod starting_values;
+#[cfg(test)]
+mod starting_values_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -125,15 +128,7 @@ impl ModuleFactory for DevelopmentFactory {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let builder = InventionBuilder::with_registry_and_registered(
-            sample_rate,
-            self.registry.clone(),
-            self.registered.clone(),
-            self.loaded.clone(),
-        );
-        let (runtime, _handles) = builder.build(self.definition.clone())?;
-        let (module, control_surface) =
-            DevelopmentModule::new(&self.name, runtime, &self.definition)?;
+        let (module, control_surface) = starting_values::build_started(self, sample_rate, config)?;
         apply_development_config(&self.name, config, control_surface.as_ref())?;
         #[cfg(debug_assertions)]
         if let Some(controls) = &module.controls {
