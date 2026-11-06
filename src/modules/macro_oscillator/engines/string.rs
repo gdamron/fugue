@@ -96,14 +96,15 @@ impl StringEngine {
         if p.trigger {
             // The string left ringing keeps the pitch from a moment ago, but
             // never one from before it was struck (a fast roll or flam).
-            let since_struck = self.blocks - self.struck_at[self.active];
-            let back = self.pitch_delay.min(since_struck.saturating_sub(1));
+            let since_struck = self.blocks.wrapping_sub(self.struck_at[self.active]);
+            // The slot at `history_at` is the block before this one.
+            let back = (self.pitch_delay - 1).min(since_struck.saturating_sub(1));
             let at = (self.history_at + PITCH_HISTORY - back) % PITCH_HISTORY;
             self.pitches[self.active] = self.history[at];
             self.active = (self.active + 1) % STRINGS;
             self.struck_at[self.active] = self.blocks;
         }
-        self.blocks += 1;
+        self.blocks = self.blocks.wrapping_add(1);
         let f0 = p.note_to_frequency(p.note).min(0.49);
         self.pitches[self.active] = f0;
         self.history_at = (self.history_at + 1) % PITCH_HISTORY;
