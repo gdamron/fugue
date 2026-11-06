@@ -77,7 +77,7 @@ fn assemble(
 
 /// An instance's `config` with a starting value for each control that
 /// declares a range its definition starts any of its aliases outside, and
-/// that config gives no scalar value: the first alias's start, held within
+/// that config leaves out: the first alias's start, held within
 /// the range, as a configured value is (written to every alias, as a
 /// configured one is). `config` as is when there is none.
 pub(super) fn with_held_starts<'a>(
@@ -91,9 +91,16 @@ pub(super) fn with_held_starts<'a>(
         Value::Object(map) => map,
         _ => return Cow::Borrowed(config),
     };
-    let held = (factory.held_starts).get_or_init(|| held_starts(factory, sample_rate));
+    // Found once, but never from a build that failed: a later one may not.
+    let held = match factory.held_starts.get() {
+        Some(held) => held,
+        None => match held_starts(factory, sample_rate) {
+            Some(found) => factory.held_starts.get_or_init(|| found),
+            None => return Cow::Borrowed(config),
+        },
+    };
     let mut missing = (held.iter())
-        .filter(|(name, _)| configured.get(name).and_then(json_scalar).is_none())
+        .filter(|(name, _)| !configured.contains_key(name))
         .peekable();
     if missing.peek().is_none() {
         return Cow::Borrowed(config);
@@ -108,8 +115,8 @@ pub(super) fn with_held_starts<'a>(
 /// Each control `factory`'s definition declares a range for and starts an
 /// alias of outside it, with its first alias's start held within it. Builds
 /// the definition only when it declares a range; a definition that fails to
-/// build has nothing held, and its build reports why.
-fn held_starts(factory: &DevelopmentFactory, sample_rate: u32) -> Vec<(String, f32)> {
+/// build has nothing held (`None`), and its build reports why.
+fn held_starts(factory: &DevelopmentFactory, sample_rate: u32) -> Option<Vec<(String, f32)>> {
     let definition = &factory.definition;
     let mut ranged: Vec<(&str, (f32, f32))> = Vec::new();
     for control in &definition.controls {
@@ -121,7 +128,7 @@ fn held_starts(factory: &DevelopmentFactory, sample_rate: u32) -> Vec<(String, f
         }
     }
     if ranged.is_empty() {
-        return Vec::new();
+        return Some(Vec::new());
     }
     let builder = InventionBuilder::with_registry_and_registered(
         sample_rate,
@@ -129,9 +136,7 @@ fn held_starts(factory: &DevelopmentFactory, sample_rate: u32) -> Vec<(String, f
         factory.registered.clone(),
         factory.loaded.clone(),
     );
-    let Ok((runtime, _handles)) = builder.build(definition.clone()) else {
-        return Vec::new();
-    };
+    let (runtime, _handles) = builder.build(definition.clone()).ok()?;
     let surfaces = runtime.control_surfaces.lock().unwrap().clone();
     let mut held = Vec::new();
     for (name, (min, max)) in ranged {
@@ -147,7 +152,7 @@ fn held_starts(factory: &DevelopmentFactory, sample_rate: u32) -> Vec<(String, f
             held.push((name.to_string(), first.max(min).min(max)));
         }
     }
-    held
+    Some(held)
 }
 
 /// `definition` with each scalar value of an instance's `config`, but those

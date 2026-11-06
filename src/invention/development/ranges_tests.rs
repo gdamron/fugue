@@ -142,7 +142,7 @@ fn a_fan_out_whose_later_alias_starts_outside_its_range_starts_every_alias_withi
         ]
     }))
     .unwrap();
-    for config in [json!({}), json!({ "rate": null })] {
+    for config in [json!({})] {
         let (runtime, _) = InventionBuilder::with_registry(48_000, registry())
             .build(holding(&definition, config))
             .unwrap();
