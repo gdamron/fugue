@@ -343,16 +343,30 @@ pub(super) mod testing {
             .collect()
     }
 
-    /// Asserts that a drum sounds alike at 44.1 and 96 kHz as at 48 kHz.
+    /// Asserts that a drum sounds alike at 44.1 and 96 kHz as at 48 kHz:
+    /// within 1 dB on average across the windows, and 2 dB in each. The
+    /// average is the test, since a noisy drum's single 25 ms windows move
+    /// by most of a decibel with the noise alone; a gain off with the rate
+    /// moves every window the same way.
     pub fn assert_rate_independent(at: impl Fn(u32) -> Vec<(f32, f32)>) {
         let reference = at(48_000);
         for rate in [44_100, 96_000] {
-            for (window, (got, want)) in at(rate).iter().zip(&reference).enumerate() {
+            let got = at(rate);
+            let mut drift = (0.0f32, 0.0f32);
+            for (window, (got, want)) in got.iter().zip(&reference).enumerate() {
+                let delta = (got.0 - want.0, got.1 - want.1);
                 assert!(
-                    (got.0 - want.0).abs() < 1.0 && (got.1 - want.1).abs() < 1.0,
+                    delta.0.abs() < 2.0 && delta.1.abs() < 2.0,
                     "at {rate} Hz, window {window}: {got:?} against {want:?} at 48 kHz"
                 );
+                drift = (drift.0 + delta.0, drift.1 + delta.1);
             }
+            let n = reference.len() as f32;
+            let drift = (drift.0 / n, drift.1 / n);
+            assert!(
+                drift.0.abs() < 1.0 && drift.1.abs() < 1.0,
+                "at {rate} Hz the drum is {drift:?} dB off 48 kHz on average"
+            );
         }
     }
 }
