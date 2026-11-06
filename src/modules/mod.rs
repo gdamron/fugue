@@ -55,6 +55,7 @@ pub mod mixer;
 pub mod noise;
 pub(crate) mod note_division;
 pub mod oscillator;
+pub mod phaser;
 pub mod resonator;
 pub mod reverb;
 #[cfg(not(target_arch = "wasm32"))]
@@ -98,6 +99,7 @@ pub use filter::{Filter, FilterType};
 pub use follower::{Follower, FollowerFactory};
 pub use gain::{Gain, GainFactory};
 pub use gain_curve::{GainCurve, GainCurveFactory};
+pub use phaser::{Phaser, PhaserFactory};
 pub use granular::{Granular, GranularFactory};
 pub use lfo::Lfo;
 pub use limiter::{Limiter, LimiterFactory};

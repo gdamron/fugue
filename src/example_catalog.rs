@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 34] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 35] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -60,6 +60,11 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 34] = [
         file_name: "delay_dotted_echo.json",
         title: "Dotted Eighth Echo",
         summary: "A plucked line through a dotted-eighth delay timed by the clock.",
+    },
+    ExampleDefinition {
+        file_name: "phaser_sweeping_pad.json",
+        title: "Phaser: Sweeping Pad",
+        summary: "A sawtooth chord through a phaser that sweeps once a bar at the clock's tempo.",
     },
     ExampleDefinition {
         file_name: "granular_cloud.json",
@@ -318,6 +323,7 @@ mod tests {
                 "mixer_voices.json",
                 "noise_surf_and_hats.json",
                 "delay_dotted_echo.json",
+                "phaser_sweeping_pad.json",
                 "granular_cloud.json",
                 "drive_bass_and_crushed_bells.json",
                 "limiter_hot_mix.json",
