@@ -74,7 +74,8 @@ fn a_step_at_every_block_edge_stands_out() {
 
 #[test]
 fn macro_sweeps_put_no_steps_at_block_edges() {
-    const WRITES: usize = 10;
+    // A write every engine block: the whole range in 100 ms.
+    const WRITES: usize = 400;
     for model in first_excited_model()..MODEL_COUNT {
         for key in ["harmonics", "timbre", "morph"] {
             for (from, to) in [(0.0f32, 1.0f32), (1.0, 0.0)] {
@@ -83,13 +84,11 @@ fn macro_sweeps_put_no_steps_at_block_edges() {
                         "model": engines::MODELS[model], "frequency": frequency, key: from,
                     }));
                     render(&mut module, 24 * HOST_BLOCK, HOST_BLOCK);
-                    // A write every host block, each gliding into the next:
-                    // the whole range in 100 ms.
                     let mut swept = Vec::new();
                     for write in 1..=WRITES {
                         let value = from + (to - from) * write as f32 / WRITES as f32;
                         module.set_control(key, value).unwrap();
-                        swept.extend(render(&mut module, HOST_BLOCK, HOST_BLOCK));
+                        swept.extend(render(&mut module, ENGINE_BLOCK, ENGINE_BLOCK));
                     }
                     let ratio = edge_ratio(&swept);
                     assert!(

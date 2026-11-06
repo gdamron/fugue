@@ -76,37 +76,22 @@ fn spectral_cents(x: &[f32], hz: f32) -> f32 {
     best(coarse - 1.0, 0.1, 20) as f32
 }
 
-/// A loop that blocks DC holds no offset from one-signed impulses, and the
-/// blocker's phase lead is taken up so the string stays in tune.
+/// A stiff string is kept in tune: the stiffness allpass's delay at the
+/// fundamental is taken out of the main delay, short loops included. (Past
+/// 0.75 the string's delay wobbles on purpose, so its pitch does too.)
 #[test]
-fn a_dc_blocked_loop_holds_no_offset_and_stays_in_tune() {
-    for hz in [55.0f32, 110.0, 440.0] {
-        let mut string = KarplusString::new(RATE, false, 1).with_dc_blocked_loop();
-        string.glide_to(hz / RATE as f32, 1.0);
-        let x = pluck(&mut string, &settings(0.0), RATE as usize * 2);
-        // Pitch is where the spectrum peaks: the blocker advances the phase
-        // but delays the envelope, so a lag measure would read it the wrong
-        // way.
-        let cents = spectral_cents(&x[4800..], hz);
-        assert!(cents.abs() < 2.0, "{hz} Hz: {cents} cents");
-
-        let mut out = Vec::new();
-        for b in 0..RATE as usize / 12 {
-            let mut input = [0.0f32; 24];
-            if b % 4 == 0 {
-                input[b % 24] = 0.5;
-            }
-            let (mut o, mut a) = ([0.0f32; 24], [0.0f32; 24]);
-            string.process(&settings(0.0), &input, &mut o, &mut a);
-            out.extend_from_slice(&o);
+fn a_tuned_stiff_string_stays_in_tune() {
+    for dispersion in [0.3f32, 0.5, 0.7] {
+        for hz in [110.0f32, 440.0, 3_000.0] {
+            let mut string = KarplusString::new(RATE, true, 1).with_tuned_stiffness();
+            string.glide_to(hz / RATE as f32, 1.0);
+            let x = pluck(&mut string, &settings(dispersion), RATE as usize / 2);
+            let cents = spectral_cents(&x[2400..], hz);
+            assert!(
+                cents.abs() < 5.0,
+                "dispersion {dispersion} at {hz} Hz: {cents} cents"
+            );
         }
-        let tail = &out[out.len() / 2..];
-        let mean = tail.iter().sum::<f32>() / tail.len() as f32;
-        let rms = (tail.iter().map(|x| x * x).sum::<f32>() / tail.len() as f32).sqrt();
-        assert!(
-            mean.abs() < 0.05 * rms,
-            "{hz} Hz: mean {mean} against rms {rms}"
-        );
     }
 }
 

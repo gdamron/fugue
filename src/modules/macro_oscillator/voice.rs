@@ -447,7 +447,9 @@ mod tests {
             }
             out
         };
-        assert!(play(string, true) == play(string, false));
+        let struck = play(string, true);
+        assert!(struck.iter().any(|s| s.abs() > 0.01), "the string sounds");
+        assert!(struck == play(string, false));
         assert!(play(0, true) != play(0, false));
     }
 
