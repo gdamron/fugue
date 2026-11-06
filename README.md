@@ -15,8 +15,9 @@ indexes, configured inspection, live metadata, and response limits.
 ## Install
 
 This repository is the Fugue core: the Rust library and runtime that play
-inventions. The Fugue CLI and MCP app are distributed separately from this
-repository.
+inventions. The Fugue CLI and MCP app are built and released by the Fugue
+product, which documents how to install them; their files are published on this
+repository's releases alongside the library archives.
 
 ### Use the library
 
@@ -50,13 +51,13 @@ builds need the ALSA development headers (Debian/Ubuntu:
 
 ### Release archives
 
-Each [GitHub release](https://github.com/gdamron/fugue/releases) carries
-library archives: native builds named `fugue-<version>-<target>.tar.gz` (macOS
-arm64, Linux x86_64, Windows x86_64), plus iOS (`-ios-xcframework`), Android
-(`-android`) and wasm (`-web`) archives. Every archive includes
-`THIRD_PARTY_LICENSES.txt`, the license notices for the dependencies built into
-it; keep that file with any copy you redistribute.
-`SHA256SUMS.txt` on the release lists the checksums.
+Each [GitHub release](https://github.com/gdamron/fugue/releases) carries the
+library archives this repository's release workflow builds: native builds
+named `fugue-<version>-<target>.tar.gz` (macOS arm64, Linux x86_64, Windows
+x86_64), plus iOS (`-ios-xcframework`), Android (`-android`) and wasm (`-web`)
+archives. Every library archive includes `THIRD_PARTY_LICENSES.txt`, the
+license notices for the dependencies built into it; keep that file with any
+copy you redistribute. `SHA256SUMS.txt` on the release lists the checksums.
 
 ## Quick Start
 
