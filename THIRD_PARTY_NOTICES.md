@@ -64,6 +64,10 @@ where they live in Fugue, then the full license text:
   - `plaits/dsp/engine/string_engine.cc`, `plaits/dsp/physical_modelling/string_voice.cc` → `src/modules/macro_oscillator/engines/string.rs`
   - `plaits/dsp/engine/modal_engine.cc`, `plaits/dsp/physical_modelling/modal_voice.cc` → `src/modules/macro_oscillator/engines/modal.rs`
   - `plaits/dsp/noise/dust.h` → `src/modules/macro_oscillator/engines/dust.rs`
+  - `plaits/dsp/drums/analog_bass_drum.h`, `plaits/dsp/oscillator/sine_oscillator.h` → `src/modules/macro_oscillator/engines/drums/analog_bass.rs`
+  - `plaits/dsp/drums/synthetic_bass_drum.h` → `src/modules/macro_oscillator/engines/drums/synthetic_bass.rs`
+  - `plaits/dsp/engine/bass_drum_engine.cc` → `src/modules/macro_oscillator/engines/drums/bass.rs`
+  - `plaits/dsp/fx/overdrive.h` → `src/modules/macro_oscillator/engines/drums/overdrive.rs`
   - `tides2/ramp_shaper.h` → `src/modules/contour/shaper.rs`
   - `tides2/ramp_generator.h` → `src/modules/contour/ramp.rs`
   - `tides2/poly_slope_generator.h` → `src/modules/contour/generator.rs`
@@ -117,6 +121,7 @@ THE SOFTWARE.
   - `dsp/hysteresis_quantizer.h` (`HysteresisQuantizer2`) → `src/modules/macro_oscillator/engines/chord_bank.rs`
   - `dsp/limiter.h` → `src/modules/macro_oscillator/engines/speech.rs`, `src/modules/macro_oscillator/engines/limiter.rs`
   - `dsp/filter.h` (`Svf` band-pass) → `src/dsp/physical/modal.rs`
+  - `dsp/filter.h` (`Svf`, the `tan` approximations), `dsp/dsp.h` (`SoftLimit`, `SoftClip`, `ONE_POLE`, `SLOPE`) → `src/modules/macro_oscillator/engines/drums/filters.rs`
   - `dsp/dsp.h` (`SoftLimit`) → `src/modules/resonator/limiter.rs`
   - `dsp/dsp.h` (`Squash`) → `src/modules/resonator/sympathetic.rs`
   - `dsp/dsp.h` (`InterpolateHermite`) → `src/dsp/grains/recording.rs`
