@@ -374,10 +374,13 @@ impl PanGains {
     fn at(&mut self, pan: f32) -> Self {
         if pan != self.pan {
             let angle = (pan + 1.0) * FRAC_PI_4;
+            // The ends are exact: cosine of a quarter turn in `f32` is about
+            // -4e-8 (-147 dB), which would leave a hard-panned channel faintly
+            // audible on the far side, and negative.
             *self = Self {
                 pan,
-                left: angle.cos(),
-                right: angle.sin(),
+                left: if pan >= 1.0 { 0.0 } else { angle.cos() },
+                right: if pan <= -1.0 { 0.0 } else { angle.sin() },
             };
         }
         *self
