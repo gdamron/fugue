@@ -7,7 +7,9 @@
 //! the chain the input is `x = s·dry + k·wet`. Solving the two together
 //! gives `wet = (A·s·dry + B) / (1 − k·A)` with no sample of delay in the
 //! loop: the notches stay where the stages put them. `|A| ≤ 1` and
-//! `|k| ≤ 0.95`, so the division never nears zero.
+//! `|k| ≤ 0.95`, so the division never nears zero
+//! (`|A| ≤ 1` holds while the tap weights are each at least 0 and sum to at
+//! most 1, as a crossfade keeps them).
 
 use crate::dsp::FirstOrderAllpass;
 

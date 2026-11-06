@@ -222,7 +222,9 @@ impl Phaser {
         let depth = self.depth.next_value();
         let centre = self.frequency.next_value();
         let ahead = self.stereo_phase.next_value();
-        let highest = HIGHEST_CORNER.min(0.45 * self.sample_rate);
+        let highest = HIGHEST_CORNER
+            .min(0.45 * self.sample_rate)
+            .max(LOWEST_CORNER);
         let coefficient = |phase: f32| {
             let corner = centre * exp2(REACH_OCTAVES * depth * sine(phase));
             let corner = corner.clamp(LOWEST_CORNER, highest);
@@ -382,7 +384,14 @@ impl Module for Phaser {
                     _ => return Err(Refusal::Unsupported),
                 };
                 let target = float(value, min, max)?;
-                ramp.set_target(target);
+                if control == STEREO_PHASE {
+                    // The short way round: 0.9 to 0.1 glides forward 0.2.
+                    let from = ramp.value();
+                    let turn = target - from;
+                    ramp.set_target(from + turn - (turn + 0.5).floor());
+                } else {
+                    ramp.set_target(target);
+                }
                 RtValue::F32(target)
             }
         };

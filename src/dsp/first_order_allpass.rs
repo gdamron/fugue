@@ -15,6 +15,9 @@
 //! Standard technique (the bilinear-transform one-pole lowpass `lp`, with
 //! `allpass = 2·lp − x`); original code.
 
+/// States smaller than this are flushed to zero.
+const SUBNORMAL_FLUSH: f32 = 1e-20;
+
 /// One first-order allpass stage. See the [module docs](self).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FirstOrderAllpass {
@@ -50,6 +53,12 @@ impl FirstOrderAllpass {
         let v = (x - self.state) * coefficient;
         let lowpass = v + self.state;
         self.state = lowpass + v;
+        // A decaying state is flushed before it turns subnormal (slow on
+        // some CPUs), and a NaN or infinity let in is forgotten rather than
+        // kept for good.
+        if !(self.state.abs() >= SUBNORMAL_FLUSH) {
+            self.state = 0.0;
+        }
         2.0 * lowpass - x
     }
 
@@ -101,6 +110,17 @@ mod tests {
     fn turns_the_phase_a_quarter_cycle_at_the_corner() {
         let (_, phase) = sine_through(700.0, 700.0);
         assert!((phase + PI / 2.0).abs() < 0.01, "{phase}");
+    }
+
+    #[test]
+    fn a_nan_passes_and_is_forgotten() {
+        let mut stage = FirstOrderAllpass::new();
+        stage.process(f32::NAN, 0.3);
+        assert!(stage.process(0.5, 0.3).is_finite());
+        for _ in 0..10_000 {
+            stage.process(0.0, 0.3);
+        }
+        assert_eq!(stage.process(0.0, 0.3), 0.0, "the tail is flushed");
     }
 
     #[test]
