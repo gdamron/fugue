@@ -135,3 +135,20 @@ fn a_quarter_note_sweep_repeats_every_half_second_at_120_bpm() {
         assert!((left[n] - left[n + 24_000]).abs() < 2e-3, "frame {n}");
     }
 }
+
+#[test]
+fn values_written_before_the_first_block_start_there() {
+    let source = |n| tone(n, 700.0, 0.5);
+    let mut written = Phaser::new(RATE_HZ);
+    let mut built = Phaser::new(RATE_HZ);
+    for phaser in [&mut written, &mut built] {
+        for (key, value) in [("mix", 0.0), ("depth", 0.0), ("stage_count", 12.0)] {
+            phaser.set_control(key, value).unwrap();
+        }
+    }
+    built.settle();
+    let (a, _) = render(&mut written, 4_800, 64, source, |_, _| {});
+    let (b, _) = render(&mut built, 4_800, 64, source, |_, _| {});
+    assert_eq!(a, b);
+    assert_eq!(a[100], source(100), "mix 0 from the first sample");
+}

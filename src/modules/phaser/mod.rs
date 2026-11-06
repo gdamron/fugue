@@ -137,6 +137,8 @@ pub struct Phaser {
     speed: f64,
     /// Samples until the next coefficient update.
     countdown: usize,
+    /// Whether a block has run (see [`Phaser::settle`]).
+    started: bool,
     // Glided once per update.
     depth: LinearRamp,
     frequency: LinearRamp,
@@ -178,6 +180,7 @@ impl Phaser {
             bpm: 120.0,
             speed: 0.5,
             countdown: 0,
+            started: false,
             depth: LinearRamp::new(1.0, updates),
             frequency: LinearRamp::new(1_000.0, updates),
             stereo_phase: LinearRamp::new(0.1, updates),
@@ -195,23 +198,29 @@ impl Phaser {
                 let _ = apply_declared(&mut phaser, index, value);
             }
         }
-        // Built, the phaser starts where its controls are.
+        phaser.settle();
+        phaser
+    }
+
+    /// Jumps every glide to its target: built, or written before the first
+    /// block (a development's starting values), the phaser starts where its
+    /// controls are.
+    fn settle(&mut self) {
         for ramp in [
-            &mut phaser.depth,
-            &mut phaser.frequency,
-            &mut phaser.stereo_phase,
-            &mut phaser.feedback,
-            &mut phaser.mix,
+            &mut self.depth,
+            &mut self.frequency,
+            &mut self.stereo_phase,
+            &mut self.feedback,
+            &mut self.mix,
         ] {
             ramp.settle();
         }
-        for weight in &mut phaser.weights {
+        for weight in &mut self.weights {
             weight.settle();
         }
-        phaser.fading = 0;
-        phaser.reach = phaser.stage_count;
-        phaser.update(0);
-        phaser
+        self.fading = 0;
+        self.reach = self.stage_count;
+        self.update(0);
     }
 
     /// Moves the sweep on one update and sets each side's coefficient to
@@ -258,6 +267,10 @@ impl Module for Phaser {
     }
 
     fn process(&mut self, frames: usize) -> bool {
+        if !self.started {
+            self.started = true;
+            self.settle();
+        }
         let patched = self.bpm_connected.then_some(self.bpm_input[0]);
         let tempo = note_division::tempo(patched, self.bpm);
         self.speed = note_division::division_seconds(self.division, tempo)
