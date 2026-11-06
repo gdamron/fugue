@@ -121,6 +121,8 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 34] = [
         file_name: "macro_oscillator_six_op_tine_keys.json",
         title: "Macro Oscillator Six-Operator Tine Keys",
         summary: "A slow minor-key line from the macro oscillator's six-operator FM tine keys.",
+    },
+    ExampleDefinition {
         file_name: "macro_oscillator_drum_groove.json",
         title: "Macro Oscillator Drum Groove",
         summary: "A kick, snare, hats, shaker and rain from the macro oscillator's drum and noise models.",
