@@ -22,17 +22,21 @@ fn mix_zero_outputs_each_input_sample_for_sample() {
 }
 
 /// Written live, `mix` glides to 0 and then the output is the dry input
-/// exactly.
+/// exactly. A write applies at the first block boundary at or after 0.5 s;
+/// the output is checked from 0.3 s after that block starts.
 #[test]
 fn mix_written_to_zero_settles_on_the_dry_input_exactly() {
     let x = pad(secs(2.0), 110.0, 0.8);
     let mut unit = build(json!({ "depth": 1.0, "feedback": 0.5 }));
+    let mut written_at = None;
     let (l, r) = unit.run_hooked(&x, |t, u| {
-        if t == secs(0.5) {
+        if written_at.is_none() && t >= secs(0.5) {
+            written_at = Some(t);
             u.set("mix", 0.0);
         }
     });
-    let settled = secs(0.8);
+    let written_at = written_at.expect("the write happened");
+    let settled = written_at + secs(0.3);
     assert_eq!(l[settled..], x[settled..], "left");
     assert_eq!(r[settled..], x[settled..], "right copies the left source");
 }

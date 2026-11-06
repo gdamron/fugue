@@ -39,10 +39,10 @@ fn controls_have_the_stated_ranges_and_defaults() {
         ("stage_count", 4.0, 12.0, 6.0),
         ("rate", 0.01, 10.0, 0.5),
         ("bpm", 1.0, 1000.0, 120.0),
-        ("depth", 0.0, 1.0, 0.6),
-        ("frequency", 50.0, 4000.0, 700.0),
-        ("feedback", -0.95, 0.95, 0.3),
-        ("stereo_phase", 0.0, 1.0, 0.25),
+        ("depth", 0.0, 1.0, 1.0),
+        ("frequency", 50.0, 4000.0, 1000.0),
+        ("feedback", -0.95, 0.95, 0.4),
+        ("stereo_phase", 0.0, 1.0, 0.1),
         ("mix", 0.0, 1.0, 0.5),
     ];
     for (key, lo, hi, default) in numbers {
