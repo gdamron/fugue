@@ -1,11 +1,15 @@
 //! The Lfo's declared controls.
 
 use crate::control_request::{ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue};
+use crate::modules::note_division::{DIVISIONS, DIVISION_SPELLINGS};
 use crate::modules::oscillator::{WAVEFORMS, WAVEFORM_SPELLINGS};
 
 pub(super) const RATE: ControlIndex = ControlIndex(0);
 pub(super) const RATE_MOD_DEPTH: ControlIndex = ControlIndex(1);
 pub(super) const WAVEFORM: ControlIndex = ControlIndex(2);
+pub(super) const DIVISION: ControlIndex = ControlIndex(3);
+pub(super) const BPM: ControlIndex = ControlIndex(4);
+pub(super) const PHASE: ControlIndex = ControlIndex(5);
 
 const DECLS: &[ControlDecl] = &[
     ControlDecl::new(
@@ -39,6 +43,33 @@ const DECLS: &[ControlDecl] = &[
         "Waveform type",
     )
     .spellings(WAVEFORM_SPELLINGS),
+    ControlDecl::new(
+        "division",
+        DeclKind::Choice(DIVISIONS),
+        RtValue::U32(0),
+        "One cycle as a note value at the tempo; off uses rate",
+    )
+    .spellings(DIVISION_SPELLINGS),
+    ControlDecl::new(
+        "bpm",
+        DeclKind::Number {
+            min: 1.0,
+            max: 1000.0,
+        },
+        RtValue::F32(120.0),
+        "Tempo that times division, unless the bpm input is patched",
+    )
+    .unit("BPM")
+    .precision(1)
+    .clamped(1.0, 1000.0),
+    ControlDecl::new(
+        "phase",
+        DeclKind::Number { min: 0.0, max: 1.0 },
+        RtValue::F32(0.0),
+        "Offset added to the phase, in cycles; changes glide",
+    )
+    .precision(3)
+    .clamped(0.0, 1.0),
 ];
 
 pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);

@@ -2,11 +2,16 @@
 
 use crate::MAX_BLOCK;
 
-pub const INPUTS: [&str; 2] = ["sync", "rate_mod"];
+pub const INPUTS: [&str; 3] = ["sync", "rate_mod", "bpm"];
+const BPM: usize = 2;
 
 pub struct LfoInputs {
     sync: [f32; MAX_BLOCK],
     rate_mod: [f32; MAX_BLOCK],
+    bpm: [f32; MAX_BLOCK],
+    /// Whether the `bpm` input is patched (or written), so it, not the
+    /// `bpm` control, sets the tempo.
+    bpm_connected: bool,
 }
 
 impl LfoInputs {
@@ -14,22 +19,22 @@ impl LfoInputs {
         Self {
             sync: [0.0; MAX_BLOCK],
             rate_mod: [0.0; MAX_BLOCK],
+            bpm: [0.0; MAX_BLOCK],
+            bpm_connected: false,
         }
     }
 
     /// Fills an input port's buffer with a constant value (control thread / tests).
     pub fn set(&mut self, port: &str, value: f32) -> Result<(), String> {
-        match port {
-            "sync" => {
-                self.sync.fill(value);
-                Ok(())
-            }
-            "rate_mod" => {
-                self.rate_mod.fill(value);
-                Ok(())
-            }
-            _ => Err(format!("Unknown input port: {}", port)),
+        let index = INPUTS
+            .iter()
+            .position(|name| *name == port)
+            .ok_or_else(|| format!("Unknown input port: {}", port))?;
+        self.block_mut(index).fill(value);
+        if index == BPM {
+            self.bpm_connected = true;
         }
+        Ok(())
     }
 
     /// Mutable block buffer for the indexed input port. Index matches `INPUTS`.
@@ -37,7 +42,14 @@ impl LfoInputs {
     pub fn block_mut(&mut self, index: usize) -> &mut [f32] {
         match index {
             0 => &mut self.sync,
-            _ => &mut self.rate_mod,
+            1 => &mut self.rate_mod,
+            _ => &mut self.bpm,
+        }
+    }
+
+    pub fn set_connected(&mut self, index: usize, connected: bool) {
+        if index == BPM {
+            self.bpm_connected = connected;
         }
     }
 
@@ -49,6 +61,11 @@ impl LfoInputs {
     #[inline]
     pub fn rate_mod(&self, i: usize) -> f32 {
         self.rate_mod[i]
+    }
+
+    /// The patched tempo at the block's start, while `bpm` is patched.
+    pub fn bpm(&self) -> Option<f32> {
+        self.bpm_connected.then_some(self.bpm[0])
     }
 }
 
