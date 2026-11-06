@@ -41,7 +41,6 @@
 //! }
 //! ```
 
-use std::f32::consts::PI;
 use std::sync::Arc;
 
 use crate::control_request::{
@@ -56,7 +55,7 @@ use self::controls::{
     RESONANCE, SLOPE, TABLE,
 };
 use self::fade::Crossfade;
-use self::shape::{Coefficients, EqDesign, Stage};
+use self::shape::{classic_prewarp, Coefficients, EqDesign, Stage};
 
 mod controls;
 mod factory;
@@ -76,21 +75,6 @@ pub use self::types::FilterType;
 /// no peak of its own, so `resonance` shapes one peak rather than squaring
 /// it (two resonant stages in series would ring far louder than either).
 const SECOND_STAGE_DAMPING: f32 = std::f32::consts::SQRT_2;
-
-/// Polynomial approximation of tan(x) for x in [0, ~0.85].
-///
-/// Uses the degree-7 Taylor series in Horner form. Max error < 0.2% for
-/// x < 0.75 rad (cutoff < 10.5 kHz at 44.1 kHz), which is inaudible for
-/// filter coefficient calculations. Roughly 10× faster than libm tan().
-/// Above that it falls short (a 20 kHz cutoff sounds near 19 kHz at
-/// 48 kHz), but lowpass, highpass and bandpass keep it so existing
-/// inventions sound as they always have; the EQ responses use the exact
-/// [`crate::dsp::tan_quarter_turn`].
-#[inline(always)]
-fn fast_tan(x: f32) -> f32 {
-    let x2 = x * x;
-    x * (1.0 + x2 * (0.333_333_34 + x2 * (0.133_333_34 + x2 * 0.053_968_26)))
-}
 
 /// A resonant filter for subtractive synthesis, and the bands of an EQ.
 ///
@@ -264,9 +248,9 @@ impl Filter {
 
         // Recompute SVF coefficients only when cutoff or resonance changes.
         // During ADSR sustain or slow LFO phases the values are stable and we
-        // skip the fast_tan() call entirely.
+        // skip the prewarp entirely.
         if effective_cutoff != self.coeff_cutoff || effective_resonance != self.coeff_resonance {
-            let g = fast_tan(PI * effective_cutoff / self.sample_rate as f32);
+            let g = classic_prewarp(effective_cutoff, self.sample_rate as f32);
             let k = 2.0 * (1.0 - effective_resonance);
             self.classic = Coefficients::stage(g, k);
             if self.steep.is_live() {

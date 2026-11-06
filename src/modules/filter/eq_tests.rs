@@ -49,7 +49,7 @@ fn a_flat_eq_passes_its_input_bit_for_bit() {
 
 #[test]
 fn a_bell_at_20_khz_peaks_at_20_khz() {
-    // `fast_tan` would put this cutoff near 19 kHz, where a narrow bell
+    // A short tan series would put this cutoff near 19 kHz, where a narrow bell
     // misses 20 kHz by most of its boost.
     let mut filter = eq(FilterType::Bell, 20_000.0, 12.0, 8.0);
     let out = run(&mut filter, 0, 24_000, 20_000.0);

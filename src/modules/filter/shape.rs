@@ -17,10 +17,33 @@ use crate::dsp::tan_quarter_turn;
 /// The highest EQ cutoff, as a fraction of the sample rate.
 const MAX_CUTOFF_FRACTION: f32 = 0.49;
 
+/// Below this angle (`π·cutoff/rate`, about 4.6 kHz at 48 kHz) the
+/// classic responses' prewarp is a series exact to 1.5e-6 there.
+const SERIES_LIMIT: f32 = 0.3;
+
 /// The steepest a shelf gets. Past this its corner rises into a resonant
 /// peak far above the plateau (+23 dB over a +12 dB shelf at q 18), which
 /// is a bell's job; at 2 the corner overshoots by under 5 dB.
 const MAX_SHELF_Q: f32 = 2.0;
+
+/// The lowpass, highpass and bandpass prewarp, `tan(π·cutoff/rate)`.
+///
+/// Up to [`SERIES_LIMIT`] it is the degree-7 Taylor series these responses
+/// have always used, which is exact there to within a few f32 steps, so
+/// renders that stay below it are unchanged bit for bit and a cutoff that
+/// moves every sample costs no division. Above it the series falls short
+/// (a 20 kHz cutoff would sound near 19 kHz at 48 kHz), so it hands over to
+/// the accurate [`tan_quarter_turn`]; the two meet within 1.5e-6.
+#[inline(always)]
+pub(super) fn classic_prewarp(cutoff: f32, sample_rate: f32) -> f32 {
+    let x = PI * cutoff / sample_rate;
+    if x <= SERIES_LIMIT {
+        let x2 = x * x;
+        x * (1.0 + x2 * (0.333_333_34 + x2 * (0.133_333_34 + x2 * 0.053_968_26)))
+    } else {
+        tan_quarter_turn(x.min(MAX_CUTOFF_FRACTION * PI))
+    }
+}
 
 /// The stage's coefficients and its output mix.
 #[derive(Clone, Copy, Debug, Default)]

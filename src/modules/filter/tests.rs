@@ -167,3 +167,24 @@ fn controls_clamp_as_they_always_did() {
     assert!(filter.set_control("filter_type", 7.0).is_err());
     assert!(filter.set_control("cutoff", f32::NAN).is_err());
 }
+
+#[test]
+fn classic_cutoffs_land_where_they_are_set() {
+    for rate in [44_100.0f32, 48_000.0, 96_000.0] {
+        let mut hz = 20.0f32;
+        while hz <= 0.45 * rate {
+            let g = f64::from(shape::classic_prewarp(hz, rate));
+            let heard = g.atan() * f64::from(rate) / std::f64::consts::PI;
+            let error = (heard / f64::from(hz) - 1.0).abs();
+            assert!(error < 1.0e-4, "{hz} Hz at {rate} sounds at {heard}");
+            hz *= 1.01;
+        }
+    }
+}
+
+#[test]
+fn a_cutoff_past_the_top_stays_finite_and_open() {
+    // At 22.05 kHz a 20 kHz cutoff is past Nyquist: it holds just below.
+    let g = shape::classic_prewarp(20_000.0, 22_050.0);
+    assert!(g.is_finite() && g > 10.0, "{g}");
+}
