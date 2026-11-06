@@ -1,0 +1,49 @@
+name: Release Notices
+
+# Dry run of the license notices every release archive carries. It builds them
+# with the pinned cargo-about and checks the archive layout the installers and
+# users expect, so a dependency change or a packaging change that would break
+# the release fails on the pull request instead.
+on:
+  pull_request:
+    paths: &paths
+      - ".github/workflows/release-notices.yml"
+      - ".github/workflows/release.yml"
+      - "scripts/**"
+      - "packaging/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "deny.toml"
+      - "LICENSE"
+      - "THIRD_PARTY_NOTICES.md"
+  push:
+    branches:
+      - main
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 10
+
+jobs:
+  notices:
+    name: Release Notices Dry Run
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve cargo-about Version
+        id: about
+        run: echo "version=$(bash scripts/generate-licenses.sh --cargo-about-version)" >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@${{ steps.about.outputs.version }}
+      - name: Check the Release Notices
+        run: bash scripts/check-release-notices.sh

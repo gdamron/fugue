@@ -1,0 +1,28 @@
+This distribution of the Fugue library includes the Rust crates listed below.
+Each is distributed under the license named beside it. The full text of every
+license follows, grouped by license, with the crates that use it. Where a crate
+offers a choice of licenses, the text given in full is the one Fugue uses.
+
+CRATES
+
+{{#each crates}}  {{{package.name}}} {{{package.version}}} ({{{license}}})
+{{/each}}
+LICENSES
+
+{{#each overview}}  {{{name}}} ({{{count}}})
+{{/each}}
+{{#each licenses}}
+================================================================================
+{{{name}}} ({{{id}}})
+
+Used by:
+{{#each used_by}}  {{{crate.name}}} {{{crate.version}}}{{#unless ../source_path}}{{#if crate.authors}} - {{#each crate.authors}}{{{this}}}{{#unless @last}}, {{/unless}}{{/each}}{{/if}}{{/unless}}
+{{/each}}
+{{#unless source_path}}
+
+These crates ship no license file of their own, so the standard text of
+their license follows. Their copyright holders are the authors named above.
+{{/unless}}
+--------------------------------------------------------------------------------
+{{{text}}}
+{{/each}}
