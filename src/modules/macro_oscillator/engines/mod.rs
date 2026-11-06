@@ -8,6 +8,10 @@ mod grain_formant;
 mod speech;
 mod tables;
 mod virtual_analog;
+// The wavetables are built from these; until they are, only tests use
+// them.
+#[allow(dead_code)]
+mod wave_shapes;
 mod waveshaping;
 
 use self::additive::AdditiveEngine;
