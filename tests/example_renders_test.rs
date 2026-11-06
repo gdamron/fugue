@@ -13,8 +13,12 @@ use example_catalog::{playable_examples, ExampleDefinition};
 use fugue::{ControlValue, Invention, RenderEngine};
 
 const SAMPLE_RATE: u32 = 48_000;
-/// Long enough for every generative example to pick a few notes.
+/// Long enough to tell a repeat from a change.
 const SECONDS: usize = 3;
+/// Long enough that two unseeded performances of the slowest generative
+/// example (a melody at 60 bpm) pick a dozen notes, so they all but never
+/// match by chance.
+const PROBE_SECONDS: usize = 12;
 /// Examples whose `code` or `agent` modules run on wall-clock time, so no
 /// seed makes their renders repeat.
 const WALL_CLOCK: [&str; 1] = ["in_c.json"];
@@ -34,10 +38,14 @@ fn engine(example: ExampleDefinition, seed: Option<u64>) -> RenderEngine {
 
 /// The rendered samples' bits, folded into one FNV-1a hash.
 fn render(example: ExampleDefinition, seed: Option<u64>) -> u64 {
+    render_for(example, seed, SECONDS)
+}
+
+fn render_for(example: ExampleDefinition, seed: Option<u64>, seconds: usize) -> u64 {
     let mut engine = engine(example, seed);
     let mut block = vec![0.0f32; 1024];
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for _ in 0..(SAMPLE_RATE as usize * SECONDS).div_ceil(512) {
+    for _ in 0..(SAMPLE_RATE as usize * seconds).div_ceil(512) {
         engine.render_interleaved(&mut block).unwrap();
         for sample in &block {
             for byte in sample.to_bits().to_le_bytes() {
@@ -82,15 +90,16 @@ fn unseeded_examples_still_vary_and_each_seed_plays_its_own_performance() {
             return;
         }
         let name = example.file_name;
-        let unseeded = render(example, None);
-        if unseeded == render(example, None) {
+        let render = |seed| render_for(example, seed, PROBE_SECONDS);
+        let unseeded = render(None);
+        if unseeded == render(None) {
             // Nothing random is left unseeded: a seed changes nothing.
-            let seeded = render(example, Some(1));
+            let seeded = render(Some(1));
             assert_eq!(seeded, unseeded, "{name} moves under a seed");
             return;
         }
         varying.lock().unwrap().push(name);
-        let (one, two) = (render(example, Some(1)), render(example, Some(2)));
+        let (one, two) = (render(Some(1)), render(Some(2)));
         assert_ne!(one, two, "{name} plays alike under seeds 1 and 2");
     });
     let mut varying = varying.into_inner().unwrap();

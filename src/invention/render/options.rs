@@ -25,8 +25,8 @@ impl RenderEngine {
         self.seed
     }
 
-    /// Stubs the backends of the `agent` modules the next load starts: a
-    /// triggered agent contacts no network service and starts no local
+    /// Stubs the backends of the `agent` modules started from now on (by a
+    /// load or an edit): a triggered agent contacts no network service and starts no local
     /// process, and reports the request as refused in its `last_error`.
     /// For test renders; agents call their configured backends otherwise.
     pub fn stub_agent_backends(&mut self, stubbed: bool) {

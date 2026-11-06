@@ -90,7 +90,9 @@ impl InventionBuilder {
     /// noise module the document leaves unseeded, here and inside its
     /// developments, plays a stream derived from `seed` and its module id
     /// rather than one from entropy, so two builds play alike. Modules with
-    /// a seed of their own keep it, and the document is left as written.
+    /// a seed of their own keep it (a melody or chance module later set to
+    /// no seed restarts from its derived stream), and the document is left
+    /// as written.
     /// Modules a later edit or reload builds are not covered.
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = Some(seed);

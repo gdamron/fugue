@@ -257,7 +257,7 @@ where
     while let Some(arg) = args.next() {
         let refused = |message: String| Err(format!("{message}\n\n{}", usage()));
         match arg.as_ref() {
-            "-h" | "--help" if !help && !named && seed.is_none() => help = true,
+            "-h" | "--help" if !help && !named => help = true,
             "--example" if !help && !named => {
                 let Some(file_name) = args.next() else {
                     return refused("Missing JSON filename after --example.".into());
@@ -265,7 +265,7 @@ where
                 command = ExampleCommand::RunByName(file_name.as_ref().to_string());
                 named = true;
             }
-            "--seed" if !help && seed.is_none() => {
+            "--seed" if seed.is_none() => {
                 let Some(value) = args.next() else {
                     return refused("Missing number after --seed.".into());
                 };
@@ -435,6 +435,8 @@ mod tests {
         let interactive = parse_example_command(["examples", "--seed", "7"]).unwrap();
         assert_eq!(interactive.command, ExampleCommand::Interactive);
         assert_eq!(interactive.seed, Some(7));
+        let help = parse_example_command(["examples", "--seed", "7", "--help"]).unwrap();
+        assert_eq!(help.command, ExampleCommand::Help);
     }
 
     #[test]
