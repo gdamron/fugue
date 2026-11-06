@@ -9,6 +9,7 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use fugue::module_config::ConfigKey;
 use fugue::{
     AudioBackend, GraphModule, Invention, InventionBuilder, Module, ModuleBuildResult,
     ModuleFactory, ModuleRegistry, RunningInvention, MAX_BLOCK,
@@ -95,6 +96,15 @@ fn parse(v: &Value) -> f32 {
 impl ModuleFactory for SourceFactory {
     fn type_id(&self) -> &'static str {
         "scripted_source"
+    }
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        const {
+            &[
+                ConfigKey::json("audio"),
+                ConfigKey::json("audio_left"),
+                ConfigKey::json("audio_right"),
+            ]
+        }
     }
     fn output_ports(&self) -> Option<&'static [&'static str]> {
         Some(&OUTPUTS)

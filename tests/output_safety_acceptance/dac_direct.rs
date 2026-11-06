@@ -5,9 +5,14 @@ use super::*;
 const NAN: f32 = f32::NAN;
 const INF: f32 = f32::INFINITY;
 
-/// Writes `values` to the named input, processes them as one block, and
+/// Writes `values` to the named input (the other two inputs get zeros, as a
+/// graph rewrites every input each block), processes them as one block, and
 /// returns the (left, right) sink block.
 fn run(dac: &mut DacModule, port: &str, values: &[f32]) -> (Vec<f32>, Vec<f32>) {
+    for other in ["audio", "audio_left", "audio_right"] {
+        let i = dac.input_port_index(other).expect("dac has the input");
+        dac.input_block_mut(i)[..values.len()].fill(0.0);
+    }
     let index = dac.input_port_index(port).expect("dac has the input");
     dac.input_block_mut(index)[..values.len()].copy_from_slice(values);
     dac.process(values.len());
