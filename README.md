@@ -51,10 +51,11 @@ builds need the ALSA development headers (Debian/Ubuntu:
 ### Release archives
 
 Each [GitHub release](https://github.com/gdamron/fugue/releases) carries
-per-target library archives named `fugue-<version>-<target>.tar.gz` for native
-(macOS arm64, Linux x86_64, Windows x86_64), iOS, Android and wasm builds.
-Every archive includes `THIRD_PARTY_LICENSES.txt`, the license notices for the
-dependencies built into it; keep that file with any copy you redistribute.
+library archives: native builds named `fugue-<version>-<target>.tar.gz` (macOS
+arm64, Linux x86_64, Windows x86_64), plus iOS (`-ios-xcframework`), Android
+(`-android`) and wasm (`-web`) archives. Every archive includes
+`THIRD_PARTY_LICENSES.txt`, the license notices for the dependencies built into
+it; keep that file with any copy you redistribute.
 `SHA256SUMS.txt` on the release lists the checksums.
 
 ## Quick Start
