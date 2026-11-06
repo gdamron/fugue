@@ -5,11 +5,11 @@ use cpal::traits::DeviceTrait;
 use std::sync::Arc;
 
 use super::device::{output_device, requested_output_device};
-#[cfg(doc)]
-use super::OUTPUT_DEVICE_ENV;
 use super::diagnostics::StreamErrorKind;
 use super::supervisor::Supervisor;
 use super::AudioDiagnostics;
+#[cfg(doc)]
+use super::OUTPUT_DEVICE_ENV;
 
 /// Renders a block of `frames` planar stereo samples, where
 /// `frames == left.len() == right.len()`. Called from the audio thread.
@@ -191,19 +191,25 @@ const MAX_BELOW_ONE: f32 = 1.0 - f32::EPSILON / 2.0;
 
 /// Writes one stereo frame in the device's sample format and channel layout.
 ///
-/// Output is clamped to `-1.0..1.0` first. A mono device gets the average of both
-/// channels; devices with more than two channels get left on even and right
-/// on odd channels.
+/// Output is clamped to `-1.0..1.0` first, and a non-finite sample, which
+/// the clamp would pass (NaN) or pin at full scale (±inf), is silenced: the
+/// sinks already silence their own, so this is the device's last guard. A
+/// mono device gets the average of both channels; devices with more than
+/// two channels get left on even and right on odd channels.
 #[inline]
 pub(super) fn write_frame<T: cpal::Sample + cpal::FromSample<f32>>(
     frame: &mut [T],
     left: f32,
     right: f32,
 ) {
-    let (left, right) = (
-        left.clamp(-1.0, MAX_BELOW_ONE),
-        right.clamp(-1.0, MAX_BELOW_ONE),
-    );
+    let clamp = |sample: f32| {
+        if sample.is_finite() {
+            sample.clamp(-1.0, MAX_BELOW_ONE)
+        } else {
+            0.0
+        }
+    };
+    let (left, right) = (clamp(left), clamp(right));
     match frame.len() {
         0 => {}
         1 => frame[0] = T::from_sample((left + right) * 0.5),
@@ -246,6 +252,16 @@ mod tests {
         let mut frame = [0.0f32; 1];
         write_frame(&mut frame, 2.0, 0.0);
         assert!((frame[0] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn write_frame_silences_non_finite_samples() {
+        let mut frame = [9.0f32; 2];
+        write_frame(&mut frame, f32::NAN, f32::INFINITY);
+        assert_eq!(frame, [0.0, 0.0]);
+        let mut mono = [9i16; 1];
+        write_frame(&mut mono, f32::NEG_INFINITY, 0.5);
+        assert_eq!(mono, [<i16 as cpal::Sample>::from_sample(0.25f32)]);
     }
 
     #[test]

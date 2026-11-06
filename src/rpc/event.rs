@@ -162,6 +162,17 @@ pub struct MeterReading {
     /// Frames per second on the audio clock.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample_rate: Option<u32>,
+    /// Non-finite samples (NaN or ±inf) the output's sinks (DACs and
+    /// recording or streaming sinks) have replaced with silence: a running
+    /// total since each was built, not this window's, so a rise means some
+    /// module produced one. Each sink counts what it receives, so a NaN fed
+    /// to two sinks counts twice. Left out on the wire while it is zero.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub non_finite_samples: u64,
+}
+
+fn is_zero(count: &u64) -> bool {
+    *count == 0
 }
 
 impl MeterReading {
@@ -176,6 +187,7 @@ impl MeterReading {
             audio_clock_frame: Some(levels.end_frame),
             audio_clock_ms: Some(levels.end_ms()),
             sample_rate: Some(levels.sample_rate),
+            non_finite_samples: levels.non_finite_samples,
         }
     }
 }

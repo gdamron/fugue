@@ -49,14 +49,22 @@ impl MasterObservers {
     }
 
     /// Audio thread: fold one mixed block, which ends at `end_frame` on the
-    /// audio clock, into every observer.
+    /// audio clock, into every observer. `non_finite_samples` is the total
+    /// the graph's sinks have replaced with silence so far.
     ///
     /// Lock-free and allocation-free. Peak and sum of squares are measured
     /// over buffers already in hand and handed to the level meter with two
     /// atomic adds; the spectrum tap is a single relaxed load unless an
     /// analyser is reading.
     #[inline]
-    pub(crate) fn observe(&self, left: &[f32], right: &[f32], frames: usize, end_frame: u64) {
+    pub(crate) fn observe(
+        &self,
+        left: &[f32],
+        right: &[f32],
+        frames: usize,
+        end_frame: u64,
+        non_finite_samples: u64,
+    ) {
         let (left_peak, left_sum_of_squares) = channel_levels(&left[..frames]);
         let (right_peak, right_sum_of_squares) = channel_levels(&right[..frames]);
         let block = BlockLevels {
@@ -67,6 +75,7 @@ impl MasterObservers {
             frames: frames as u32,
         };
         self.levels.observe(&block, end_frame);
+        self.levels.count_non_finite(non_finite_samples);
 
         #[cfg(feature = "spectrogram")]
         if let Some(spectrum) = &self.spectrum {
@@ -133,7 +142,7 @@ mod tests {
                 .map(|_| {
                     let start = Instant::now();
                     for _ in 0..BLOCKS_PER_BATCH {
-                        observers.observe(black_box(&left), black_box(&right), FRAMES, 0);
+                        observers.observe(black_box(&left), black_box(&right), FRAMES, 0, 0);
                     }
                     start.elapsed() / BLOCKS_PER_BATCH
                 })

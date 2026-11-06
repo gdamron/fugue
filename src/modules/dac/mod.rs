@@ -18,6 +18,7 @@ mod driver_wasm;
 mod inputs;
 mod module;
 mod null;
+mod output_stage;
 mod outputs;
 #[cfg(not(target_arch = "wasm32"))]
 mod supervisor;
@@ -32,3 +33,4 @@ pub use driver_wasm::{default_sample_rate, AudioBackend, AudioDriver, BlockRende
 pub use module::{DacFactory, DacModule};
 pub use null::NullBackend;
 pub(crate) use null::Settle;
+pub(crate) use output_stage::{finite_or_silence, soft_clip};
