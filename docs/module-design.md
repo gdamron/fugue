@@ -267,6 +267,15 @@ no loops. Keep it native when it needs any of these:
 - voice allocation, or a large bank of voices or tables;
 - oversampling or lookahead.
 
+A feedback loop that enters a development at two of its inputs can see a
+different loop delay at each. A loop without a declared delay closes through
+a back-edge one sample late, and the development picks which of the loop's
+routes carries it by walking from its inputs in their declared order, so a
+signal arriving at one input travels the loop a sample longer than one
+arriving at the other. This is intended for now. Declare the delay inside
+the loop, which every loop in a development should do anyway, when the
+lengths must agree.
+
 Atoms, the reusable parts developments are built from, are always native.
 
 That decides where it lives:

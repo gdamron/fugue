@@ -101,7 +101,10 @@ pub use self::types::FilterType;
 /// - `boost` - EQ gain in dB, -24 to 24 (default: 0)
 /// - `q` - EQ width or steepness, 0.1 to 18 (default: 0.7071)
 /// - `bypass` - pass the input through (default: false)
-/// - `slope` - 12 or 24 dB per octave for lowpass, highpass and bandpass
+/// - `slope` - 12 or 24 dB per octave for lowpass, highpass and bandpass.
+///   The 24 dB slope adds a second Butterworth stage that is 3 dB down at
+///   the cutoff, so the corner sits at -6 dB rather than -3 dB (resonance
+///   still peaks only in the first stage)
 pub struct Filter {
     sample_rate: u32,
 
