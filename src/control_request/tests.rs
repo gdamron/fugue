@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 
-use super::queue::bounded_from;
+use super::queue::{bounded, bounded_from, QueueProducer};
 use super::*;
 use crate::alloc_counter::allocator_events;
 
@@ -348,27 +348,6 @@ fn untimed_outcomes_leave_the_room_kept_for_timed_ones() {
         .collect();
     assert_eq!(received, [1, 2, 10, 11]);
     assert_eq!(cursor.take(receiver.dropped()), 1, "past the reserve");
-}
-
-const CONTROLS: usize = 4;
-const LEVEL: ControlKey<f32, CONTROLS> = ControlKey::new(0);
-const STEPS: ControlKeys<i32, CONTROLS> = ControlKeys::new(1, 3);
-
-#[test]
-fn typed_keys_name_their_index_and_value_type() {
-    assert_eq!(LEVEL.index(), ControlIndex(0));
-    assert_eq!(STEPS.len(), 3);
-    assert_eq!(STEPS.at(2).index(), ControlIndex(3));
-    assert_eq!(0.5f32.into_rt(), RtValue::F32(0.5));
-    assert_eq!(i32::from_rt(RtValue::I32(-2)), Some(-2));
-    assert_eq!(bool::from_rt(RtValue::F32(1.0)), None, "no implicit casts");
-}
-
-#[test]
-#[should_panic(expected = "control index out of range")]
-fn a_key_past_its_table_is_refused() {
-    let index = CONTROLS;
-    let _ = ControlKey::<f32, CONTROLS>::new(index);
 }
 
 #[test]

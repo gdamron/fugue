@@ -72,6 +72,7 @@ pub(crate) struct ControlContext<'a> {
 
 impl ControlContext<'_> {
     /// No module context: a codec that needs none.
+    #[cfg(test)]
     pub(crate) const NONE: ControlContext<'static> = ControlContext {
         position: 0,
         parts: &[],

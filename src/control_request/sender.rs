@@ -5,7 +5,7 @@ use super::conditions::WatchSlots;
 use super::event::EventCounter;
 use super::queue::{bounded, QueueConsumer, QueueProducer};
 use super::request::{Request, RequestId, When};
-use super::sync::{debug_assert_control_thread, Arc, AtomicBool, AtomicU64, Ordering};
+use super::sync::{debug_assert_control_thread, Arc, AtomicU64, Ordering};
 use super::transport::Transport;
 use crate::audio_thread::on_audio_thread;
 
@@ -341,6 +341,7 @@ impl RequestSender {
     }
 
     /// Submissions refused for want of room, for telemetry.
+    #[cfg(test)]
     pub(crate) fn overflows(&self) -> &EventCounter {
         &self.shared.overflows
     }

@@ -24,7 +24,7 @@
 //! request, after anchoring. Offline render has no wall clock.
 
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::sync::{AtomicU64, Ordering};
 
@@ -143,7 +143,8 @@ impl Transport {
 
     /// `duration` in samples at the wall clock's rate, rounded: for a ttl
     /// given in time. `None` without a wall clock.
-    pub(crate) fn samples_in(&self, duration: Duration) -> Option<u64> {
+    #[cfg(test)]
+    pub(crate) fn samples_in(&self, duration: std::time::Duration) -> Option<u64> {
         let rate = u128::from(self.clock.get()?.sample_rate);
         let samples = (duration.as_nanos() * rate + 500_000_000) / 1_000_000_000;
         Some(u64::try_from(samples).unwrap_or(u64::MAX))

@@ -7,7 +7,7 @@ use crate::control_request::pending::PendingStore;
 use crate::control_request::{Rank, Refusal};
 use crate::payload::{RetireQueue, Retirer};
 use crate::test_support::dial::{DialFactory, LEVEL, SHAPE, STEPS};
-use crate::{ControlSurface, GraphModule, ModuleFactory};
+use crate::{GraphModule, ModuleFactory};
 
 fn dial() -> Box<dyn Module> {
     let built = DialFactory.build(48_000, &serde_json::json!({})).unwrap();
