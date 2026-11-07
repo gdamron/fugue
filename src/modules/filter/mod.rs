@@ -103,8 +103,9 @@ pub use self::types::FilterType;
 /// - `bypass` - pass the input through (default: false)
 /// - `slope` - 12 or 24 dB per octave for lowpass, highpass and bandpass.
 ///   The 24 dB slope adds a second Butterworth stage that is 3 dB down at
-///   the cutoff, so the corner sits at -6 dB rather than -3 dB (resonance
-///   still peaks only in the first stage)
+///   the cutoff, so a lowpass or highpass corner sits at -6 dB rather than
+///   -3 dB (resonance still peaks only in the first stage); a bandpass
+///   keeps unity gain at its centre
 pub struct Filter {
     sample_rate: u32,
 

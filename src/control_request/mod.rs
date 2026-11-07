@@ -2,10 +2,10 @@
 //!
 //! A control write (from RPC, MCP agents, scripts or reload) becomes a
 //! typed [`Request`] submitted through a [`RequestSender`] into one
-//! bounded, allocation-free MPSC queue ([`bounded`]). The audio thread is
-//! the queue's only consumer and the only mutator of module control state,
-//! and it reports what became of each request through an outcome channel
-//! ([`outcome_channel`]). Modules declare their controls in a
+//! bounded, allocation-free MPSC queue ([`bounded`](self::queue::bounded)).
+//! The audio thread is the queue's only consumer and the only mutator of
+//! module control state, and it reports what became of each request through
+//! an outcome channel ([`outcome_channel`]). Modules declare their controls in a
 //! [`ControlTable`], which control threads resolve keys and coerce values
 //! against, apply them with [`Module::apply`](crate::Module::apply) and
 //! publish what they hold to [`ControlCells`] for read-back. Requests are

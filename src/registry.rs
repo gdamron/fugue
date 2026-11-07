@@ -149,7 +149,7 @@ impl ModuleRegistry {
                     .filter(|meta| {
                         surface
                             .and_then(|surface| surface.declaration(&meta.key))
-                            .is_none_or(|declared| declared.decl.writer != Writer::Telemetry)
+                            .is_none_or(|decl| decl.decl.writer != Writer::Telemetry)
                     })
                     .collect();
                 return Err(unknown_config_key(type_id, key, declared, &writable).into());
