@@ -49,11 +49,21 @@ impl DevelopmentDefinitions {
 pub(crate) struct LoadedDevelopments(pub(super) IndexMap<String, LoadedDevelopment>);
 
 /// One loaded development declaration.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) struct LoadedDevelopment {
     pub(crate) definition: Invention,
     /// The developments `definition` declares.
     pub(crate) scope: Arc<LoadedDevelopments>,
+}
+
+/// Two declarations build the same development when they differ at most in
+/// the minimum core they declare: saving writes that minimum into the file,
+/// and reloading the saved file must not rebuild instances nobody touched.
+impl PartialEq for LoadedDevelopment {
+    fn eq(&self, other: &Self) -> bool {
+        self.scope == other.scope
+            && self.definition.without_minimum_core() == other.definition.without_minimum_core()
+    }
 }
 
 impl LoadedDevelopments {

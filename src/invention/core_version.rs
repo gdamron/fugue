@@ -122,7 +122,11 @@ impl Invention {
     /// inline development definitions included; `None` when it uses nothing
     /// that needs more than any core reading the field.
     ///
-    /// A feature that needs a newer core adds its check here.
+    /// A feature that needs a newer core adds its check here, with a new
+    /// [`CoreVersion`] constant naming the first release that ships it. When
+    /// that release is already tagged, the feature takes the next one and
+    /// bumps the crate version with it, so a released core and a later build
+    /// never share a version yet read different fields.
     pub fn features_minimum_core(&self) -> Option<CoreVersion> {
         let ranges = (self.controls.iter())
             .any(|control| control.range.is_some())
@@ -144,6 +148,23 @@ impl Invention {
         }
         // `None` orders below every version, so this keeps the higher one.
         self.minimum_core_version = self.minimum_core_version.max(self.features_minimum_core());
+    }
+
+    /// A copy with no declared minimum, here or in any inline definition:
+    /// what the document builds, for comparing two versions of it.
+    pub(crate) fn without_minimum_core(&self) -> Invention {
+        let mut document = self.clone();
+        document.clear_minimum_core();
+        document
+    }
+
+    fn clear_minimum_core(&mut self) {
+        self.minimum_core_version = None;
+        for spec in &mut self.developments {
+            if let Some(definition) = spec.definition.as_deref_mut() {
+                definition.clear_minimum_core();
+            }
+        }
     }
 }
 
