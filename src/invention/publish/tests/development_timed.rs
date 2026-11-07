@@ -194,3 +194,89 @@ fn a_write_into_a_development_loop_lands_on_its_sample() {
         }
     }
 }
+
+/// Two oscillators summed into a vca, one development name `shape` fanned
+/// out to both waveforms. Flat, they are `left` and `right`.
+fn fanned() -> (String, String) {
+    let wiring = |a: &str, b: &str| {
+        let modules = vec![
+            osc(a, 137.0),
+            osc(b, 211.0),
+            serde_json::json!({ "id": "out", "type": "vca", "config": { "level": 0.5 } }),
+        ];
+        let connections = vec![
+            conn(a, "audio", "out", "audio"),
+            conn(b, "audio", "out", "audio"),
+        ];
+        (modules, connections)
+    };
+    let (modules, connections) = wiring("p", "q");
+    let dev = development(
+        modules,
+        connections,
+        "out",
+        &[("shape", "p", "waveform"), ("shape", "q", "waveform")],
+    );
+    let (modules, connections) = wiring("left", "right");
+    (dev, flat(modules, connections, "out"))
+}
+
+#[test]
+fn a_fanned_out_development_write_lands_on_its_sample_in_every_alias() {
+    let (dev, native) = fanned();
+    for block in BLOCKS {
+        let frames = block * 4;
+        for n in samples(block) {
+            let changed = render(&dev, block, frames, &[(n, "voice", "shape", SQUARE)]);
+            let base = render(&dev, block, frames, &[]);
+            assert_eq!(
+                first_difference(&base, &changed),
+                Some(n as usize),
+                "block {block}"
+            );
+            let both = [
+                (n, "left", "waveform", SQUARE),
+                (n, "right", "waveform", SQUARE),
+            ];
+            let flat = render(&native, block, frames, &both);
+            assert_eq!(
+                first_difference(&flat, &changed),
+                None,
+                "block {block}, n {n}"
+            );
+        }
+    }
+}
+
+#[test]
+fn two_writes_in_one_block_each_land_on_their_sample() {
+    const SINE: RtValue = RtValue::U32(0);
+    for (dev, native) in [single(), looped()] {
+        for block in BLOCKS {
+            let frames = block * 4;
+            let b = block as u64;
+            let (first, second) = (b + b / 4, b + 3 * b / 4);
+            let once = [(first, "voice", "shape", SQUARE)];
+            let twice = [once[0], (second, "voice", "shape", SINE)];
+            let base = render(&dev, block, frames, &[]);
+            let one = render(&dev, block, frames, &once);
+            let two = render(&dev, block, frames, &twice);
+            assert_eq!(
+                first_difference(&base, &two),
+                Some(first as usize),
+                "block {block}"
+            );
+            assert_eq!(
+                first_difference(&one, &two),
+                Some(second as usize),
+                "block {block}"
+            );
+            let flat = [
+                (first, "voice", "waveform", SQUARE),
+                (second, "voice", "waveform", SINE),
+            ];
+            let flat = render(&native, block, frames, &flat);
+            assert_eq!(first_difference(&flat, &two), None, "block {block}");
+        }
+    }
+}
