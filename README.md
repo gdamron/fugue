@@ -173,8 +173,8 @@ know. A development document, inline or in its own file, can declare its
 own. Saving writes the minimum that the document and its inline
 development definitions need, and never lowers one already declared: a
 development control `range` needs 2026.11.0. A development referenced by
-`path` keeps the minimum its own file declares. Cores released before 2026.11.0 don't know the field and ignore
-it.
+`path` or `ref` keeps the minimum its own file declares. Cores released
+before 2026.11.0 don't know the field and ignore it.
 
 Load and run it:
 
