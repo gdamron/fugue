@@ -27,8 +27,22 @@ pub(crate) const GATE_LEVEL: f32 = 0.5;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Edge {
     /// From at most the level to above it.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "built only by tests until the timed-write front doors exist"
+        )
+    )]
     Rising,
     /// From at least the level to below it.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "built only by tests until the timed-write front doors exist"
+        )
+    )]
     Falling,
 }
 
