@@ -238,9 +238,9 @@ fn a_fanned_out_development_write_lands_on_its_sample_in_every_alias() {
                 (n, "left", "waveform", SQUARE),
                 (n, "right", "waveform", SQUARE),
             ];
-            let flat = render(&native, block, frames, &both);
+            let expected = render(&native, block, frames, &both);
             assert_eq!(
-                first_difference(&flat, &changed),
+                first_difference(&expected, &changed),
                 None,
                 "block {block}, n {n}"
             );
@@ -271,12 +271,12 @@ fn two_writes_in_one_block_each_land_on_their_sample() {
                 Some(second as usize),
                 "block {block}"
             );
-            let flat = [
+            let writes = [
                 (first, "voice", "waveform", SQUARE),
                 (second, "voice", "waveform", SINE),
             ];
-            let flat = render(&native, block, frames, &flat);
-            assert_eq!(first_difference(&flat, &two), None, "block {block}");
+            let expected = render(&native, block, frames, &writes);
+            assert_eq!(first_difference(&expected, &two), None, "block {block}");
         }
     }
 }
