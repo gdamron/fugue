@@ -165,6 +165,16 @@ Define your invention in a JSON file:
 }
 ```
 
+`version` is the invention format's version. A document may also declare
+`"minimum_core_version": "2026.11.0"`, the oldest Fugue core (`YYYY.M.P`)
+that reads every field it uses. A core older than that refuses to load it,
+and names both versions, instead of silently dropping the fields it doesn't
+know. A development document, inline or in its own file, can declare its
+own. Saving writes the minimum the document's features need and never
+lowers one already declared: a development control `range` needs
+2026.11.0. Cores released before 2026.11.0 don't know the field and ignore
+it.
+
 Load and run it:
 
 ```rust

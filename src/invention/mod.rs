@@ -15,6 +15,7 @@
 pub(crate) mod audio_assets;
 pub(crate) mod authored_document;
 pub mod builder;
+pub mod core_version;
 pub(crate) mod declared;
 pub mod development;
 // Only tests call the candidate step until the runtime's atomic apply path
@@ -42,6 +43,7 @@ pub mod taps;
 pub(crate) mod timelines;
 
 pub use builder::InventionBuilder;
+pub use core_version::CoreVersion;
 pub use format::{
     AssetSpec, Connection, ControlRange, DevelopmentControl, DevelopmentInput, DevelopmentOutput,
     DevelopmentSpec, Invention, ModuleSpec, TimeSignature,

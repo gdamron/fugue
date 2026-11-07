@@ -1070,7 +1070,7 @@ dependencies = [
 
 [[package]]
 name = "fugue"
-version = "2026.8.0"
+version = "2026.11.0"
 dependencies = [
  "base64 0.23.1",
  "boa_engine",

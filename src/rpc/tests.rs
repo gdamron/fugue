@@ -23,6 +23,7 @@ mod timed;
 fn test_invention() -> Invention {
     Invention {
         version: "1.0.0".to_string(),
+        minimum_core_version: None,
         title: Some("rpc-test".to_string()),
         description: None,
         developments: Vec::new(),
