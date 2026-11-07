@@ -21,9 +21,14 @@ impl Invention {
     /// different directory they are rebased so the saved file still resolves them: relative to the
     /// target directory when the referenced file sits under it, absolute
     /// otherwise. Documents without a `source_path` are written as-is.
+    ///
+    /// The saved document declares the minimum core its features need (see
+    /// [`Invention::declare_minimum_core`]), so an older core refuses it
+    /// rather than dropping what it cannot read.
     pub fn save_to_file(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
         let path = path.as_ref();
-        let rebased = self.rebased_for(path)?;
+        let mut rebased = self.rebased_for(path)?;
+        rebased.declare_minimum_core();
         let mut json = rebased.to_json()?;
         json.push('\n');
 

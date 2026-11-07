@@ -92,7 +92,7 @@ pub use modules::{
 // Re-export invention system
 pub use invention::{
     feedback_chunks, set_feedback_chunks, validate_score, AssetSpec, ChannelBins,
-    CodeModuleRuntimeInfo, Connection, ControlAcks, ControlOverride, ControlRange,
+    CodeModuleRuntimeInfo, Connection, ControlAcks, ControlOverride, ControlRange, CoreVersion,
     DevelopmentControl, DevelopmentDefinitions, DevelopmentInput, DevelopmentOutput,
     DevelopmentSpec, GraphCommandError, Invention, InventionBuilder, InventionHandles,
     InventionRuntime, LoggedBeat, LoggedConnection, LoggedEdit, LoggedEditOutcome, LoggedLatch,

@@ -17,6 +17,18 @@ pub struct Invention {
     #[serde(default = "default_version")]
     pub version: String,
 
+    /// The oldest Fugue core, `YYYY.M.P`, that reads every field this
+    /// document uses. A core older than this refuses the document instead
+    /// of dropping what it does not know; saving writes the minimum the
+    /// document's features need. Omitted when nothing needs it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::core_version::deserialize_minimum"
+    )]
+    #[cfg_attr(feature = "rpc-schema", schemars(with = "Option<String>"))]
+    pub minimum_core_version: Option<super::core_version::CoreVersion>,
+
     /// Optional title for the invention.
     #[serde(default)]
     pub title: Option<String>,

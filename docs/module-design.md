@@ -165,6 +165,8 @@ that reaches 100 Hz sweeping a chorus), give one of its entries a narrower
 starting value and every write within it. A range must lie within the inner
 control's own; a definition starting the control outside it starts it at the
 nearest end.
+Saving a document with a range writes `"minimum_core_version": "2026.11.0"`
+or higher, so an older core refuses it rather than dropping the range.
 
 Formats that feed modules use the modules' names. A `fugue.score.v1` step has
 `velocity` and `gate_length`, and the score has `root_note`, as the sequencers

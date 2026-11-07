@@ -76,6 +76,34 @@ fn unchanged_development_definition_leaves_instances_untouched() {
 }
 
 #[test]
+fn a_declared_minimum_core_alone_leaves_instances_untouched() {
+    // Saving writes the minimum into the file; reloading the saved file
+    // must not rebuild what the save did not change.
+    let _ungoverned = crate::pkg::lock::ungoverned_here();
+    let mut running = start(DEV_BASE);
+    let minimum = r#""minimum_core_version": "2026.1.0","#;
+    let saved = DEV_BASE
+        .replacen(
+            "\"modules\": [\n                    {",
+            &format!("{minimum} \"modules\": [ {{"),
+            1,
+        )
+        .replacen(
+            "\"version\": \"1.0.0\",",
+            &format!("\"version\": \"1.0.0\", {minimum}"),
+            1,
+        );
+    let document = doc(&saved);
+    let definition = document.developments[0].definition.as_deref().unwrap();
+    assert!(definition.minimum_core_version.is_some());
+    assert!(document.minimum_core_version.is_some());
+
+    let report = running.reload(document).expect("diff applies");
+    assert!(report.swapped.is_empty(), "{:?}", report.swapped);
+    assert_eq!(report.unchanged, 4);
+}
+
+#[test]
 fn changed_development_types_are_transitive() {
     let inner = |frequency: f64| {
         format!(
