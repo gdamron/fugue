@@ -134,12 +134,14 @@ impl AutomationSlots {
 
     /// Automation writes refused so far: by the module, or as a value its
     /// control cannot hold (a fraction for an integer).
+    #[cfg(test)]
     pub(crate) fn refused(&self) -> &EventCounter {
         &self.refused
     }
 
     /// Automation writes dropped so far because a higher tier held their
     /// control.
+    #[cfg(test)]
     pub(crate) fn overridden(&self) -> &EventCounter {
         &self.overridden
     }

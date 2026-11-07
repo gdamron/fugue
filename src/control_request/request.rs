@@ -64,6 +64,13 @@ pub(crate) enum When {
     /// to [`When::AtSample`], or, before the clock's first anchor, the audio
     /// thread does as it takes the request. Without a wall clock (offline
     /// render) it is refused ([`Refusal::NoClock`](super::Refusal::NoClock)).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "built only by tests until the timed-write front doors exist"
+        )
+    )]
     AtTime(Instant),
     /// When a clock's beat position reaches a beat (see
     /// [`BeatTime`]): resolved as the clock plays, so a tempo change made

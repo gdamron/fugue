@@ -12,6 +12,7 @@ use crate::control_request::pending::PendingStore;
 use crate::control_request::{
     outcome_channel, request_channel, ControlIndex, Edge, OutcomeReceiver, RequestId, RtValue,
 };
+use crate::payload::Retirer;
 
 pub(super) const INSTALLED: u64 = 1;
 /// The module whose control the requests write.

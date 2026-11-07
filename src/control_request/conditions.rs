@@ -43,13 +43,11 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use self::parts::{arm, latch, read_controls, waits_on};
-use self::replace::Survivor;
 use super::chains::Chains;
 use super::condition::{Condition, Predicate, MAX_PARTS};
 use super::hold::Standing;
-use super::pending::{expired, Outcome, Outcomes, PendingStore, Refusal};
+use super::pending::{expired, Outcome, Outcomes, Refusal};
 use super::request::{ControlIndex, ControlTarget, Request, RequestId, RequestValue, When};
-use crate::payload::Retirer;
 
 /// The most requests timed by a condition one graph keeps waiting, but
 /// for the [`WAITING_RESERVE`] reserved ones may take too.

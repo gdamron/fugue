@@ -27,8 +27,22 @@ pub(crate) const GATE_LEVEL: f32 = 0.5;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Edge {
     /// From at most the level to above it.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "built only by tests until the timed-write front doors exist"
+        )
+    )]
     Rising,
     /// From at least the level to below it.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "built only by tests until the timed-write front doors exist"
+        )
+    )]
     Falling,
 }
 
@@ -76,6 +90,7 @@ pub(crate) enum Predicate {
 impl Predicate {
     /// The `count`th rising edge of a gate or trigger output: a note, a
     /// step, or a clock's beat.
+    #[cfg(test)]
     pub(crate) fn edges(module: u32, port: u16, count: u32) -> Self {
         Self::Signal {
             module,
@@ -87,6 +102,7 @@ impl Predicate {
     }
 
     /// The module whose state it reads, if any.
+    #[cfg(test)]
     pub(crate) fn module(&self) -> Option<u32> {
         match *self {
             Self::Signal { module, .. } | Self::Control { module, .. } => Some(module),
@@ -195,6 +211,7 @@ impl Condition {
         Self::new(Join::All, parts)
     }
 
+    #[cfg(test)]
     pub(crate) fn join(&self) -> Join {
         self.join
     }

@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::alloc_counter::allocator_events;
+use std::time::Duration;
 
 const RATE: u32 = 48_000;
 

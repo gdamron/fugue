@@ -262,6 +262,7 @@ impl Ramps {
         &self.crowded
     }
 
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }

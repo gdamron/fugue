@@ -3,6 +3,7 @@
 //! The registry provides a central place for mapping module type names
 //! (like "clock", "oscillator") to their factory implementations.
 
+use crate::control_request::Writer;
 use crate::factory::{ModuleBuildResult, ModuleFactory};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -140,7 +141,18 @@ impl ModuleRegistry {
                 })
             };
             if let Some(key) = undeclared.into_iter().find(|key| !is_control(key)) {
-                return Err(unknown_config_key(type_id, key, declared, &controls).into());
+                // A read-only control (telemetry) takes no config, so the
+                // hint leaves it out.
+                let surface = built.control_surface.as_ref();
+                let writable: Vec<crate::ControlMeta> = controls
+                    .into_iter()
+                    .filter(|meta| {
+                        surface
+                            .and_then(|surface| surface.declaration(&meta.key))
+                            .is_none_or(|decl| decl.decl.writer != Writer::Telemetry)
+                    })
+                    .collect();
+                return Err(unknown_config_key(type_id, key, declared, &writable).into());
             }
         }
         Ok(built)
@@ -284,7 +296,8 @@ impl Default for ModuleRegistry {
         use crate::modules::{
             AdsrFactory, AgentFactory, AudioFileSinkFactory, CellSequencerFactory, ChanceFactory,
             ClockFactory, CodeFactory, ControlSchedulerFactory, DacFactory, DelayFactory,
-            DivisiFactory, DriveFactory, FilterFactory, FollowerFactory, GainCurveFactory, GainFactory, LfoFactory, LimiterFactory, MelodyFactory, MixerFactory, NoiseFactory,
+            DivisiFactory, DriveFactory, FilterFactory, FollowerFactory, GainCurveFactory,
+            GainFactory, LfoFactory, LimiterFactory, MelodyFactory, MixerFactory, NoiseFactory,
             OscillatorFactory, ReverbFactory, SampleInstrumentFactory, SampleKitFactory,
             SamplePlayerFactory, SampleSlicerFactory, StepSequencerFactory, VcaFactory,
         };

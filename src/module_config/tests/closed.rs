@@ -36,6 +36,22 @@ fn an_undeclared_config_key_is_refused_naming_the_module_and_key() {
 }
 
 #[test]
+fn the_unknown_key_hint_leaves_out_read_only_controls() {
+    let config = json!({ "not_a_key": 1.0 });
+    let error = ModuleRegistry::default()
+        .build("limiter", 48_000, &config)
+        .err()
+        .expect("an undeclared key is refused")
+        .to_string();
+    assert!(
+        error.contains("limiter config has no key 'not_a_key'"),
+        "{error}"
+    );
+    assert!(error.contains("release"), "{error}");
+    assert!(!error.contains("reduction"), "{error}");
+}
+
+#[test]
 fn a_declared_indexed_family_takes_every_index() {
     let config = json!({ "degrees": [], "degree.0": 7, "note_weight.3": 0.5 });
     assert!(ModuleRegistry::default()

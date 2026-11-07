@@ -4,7 +4,7 @@
 use super::chains::{Chains, RECENT};
 use super::hold::{Rank, Standing};
 use super::outcome::OutcomeSender;
-use super::request::{ControlTarget, Request, RequestId, RequestValue, When};
+use super::request::{ControlTarget, Request, RequestValue, When};
 use super::staged::{Applying, Staging};
 use crate::payload::{Retirer, MAX_RETIRES_PER_REQUEST};
 
@@ -265,6 +265,7 @@ impl PendingStore {
         self.outcomes.chains = Chains::new(settles);
     }
 
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
@@ -288,6 +289,7 @@ impl PendingStore {
     }
 
     /// The capacity reserved at creation; [`Self::insert`] never grows it.
+    #[cfg(test)]
     pub(crate) fn capacity(&self) -> usize {
         self.entries.capacity()
     }
