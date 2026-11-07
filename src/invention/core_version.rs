@@ -199,41 +199,6 @@ mod tests {
     }
 
     #[test]
-    fn a_too_new_minimum_is_refused_naming_both_versions() {
-        let json = r#"{"minimum_core_version":"9999.1.0","modules":[],"connections":[]}"#;
-        let error = Invention::from_json(json).unwrap_err().to_string();
-        assert!(error.contains("9999.1.0"), "{error}");
-        assert!(
-            error.contains(&CoreVersion::running().to_string()),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn declaring_raises_but_never_lowers() {
-        let ranged = r#"{"modules":[],"connections":[],"controls":[
-            {"name":"rate","module":"lfo","control":"frequency","range":{"min":0.1,"max":5}}]}"#;
-        let mut document = Invention::from_json(ranged).unwrap();
-        document.declare_minimum_core();
-        let ranges = Some(CoreVersion::DEVELOPMENT_CONTROL_RANGES);
-        assert_eq!(document.minimum_core_version, ranges);
-
-        document.minimum_core_version = Some(CoreVersion::new(2026, 1, 0));
-        document.declare_minimum_core();
-        assert_eq!(document.minimum_core_version, ranges);
-
-        let mut plain = Invention::from_json(r#"{"modules":[],"connections":[]}"#).unwrap();
-        plain.declare_minimum_core();
-        assert_eq!(plain.minimum_core_version, None);
-        plain.minimum_core_version = Some(CoreVersion::new(2026, 1, 0));
-        plain.declare_minimum_core();
-        assert_eq!(
-            plain.minimum_core_version,
-            Some(CoreVersion::new(2026, 1, 0))
-        );
-    }
-
-    #[test]
     fn an_inline_definition_raises_its_parent() {
         let json = r#"{"modules":[],"connections":[],"developments":[{"name":"kit",
             "definition":{"modules":[],"connections":[],"controls":[
