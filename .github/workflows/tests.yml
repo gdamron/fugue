@@ -110,7 +110,12 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # The retired install.ps1 stub must work in Windows PowerShell 5.1
+      # (`powershell`) and PowerShell 7 (`pwsh`), both on this runner, so a
+      # missing one fails the run here instead of skipping its test.
       - name: Run Tests
+        env:
+          FUGUE_REQUIRE_POWERSHELL: "1"
         run: cargo test --features spectrogram --lib --tests
 
   feature-tests:
