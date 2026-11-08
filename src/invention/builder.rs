@@ -437,6 +437,7 @@ impl InventionBuilder {
                 registered: self.registered.clone(),
                 loaded: scope,
                 held_starts: Default::default(),
+                events: Default::default(),
             };
             self.registry.register_boxed(
                 development.name.clone(),

@@ -18,6 +18,8 @@ use super::load_warnings;
 use super::reload::LoadedDevelopments;
 use super::timelines::Enclosure;
 
+#[cfg(test)]
+mod build_count_tests;
 mod compiled_graph;
 mod config;
 mod control_surface;
@@ -82,6 +84,11 @@ pub(crate) struct DevelopmentFactory {
     /// found once, by building the definition, and shared by the factories
     /// rebuilt from this one.
     pub(crate) held_starts: Arc<OnceLock<Vec<(String, f32)>>>,
+    /// The exposed controls an alias of which fires an event, or `None`
+    /// when its modules cannot say (see `starting_values::event_names`):
+    /// found once, without building the definition, and shared by the
+    /// factories rebuilt from this one.
+    pub(crate) events: Arc<OnceLock<Option<HashSet<String>>>>,
 }
 
 impl DevelopmentFactory {
@@ -98,6 +105,7 @@ impl DevelopmentFactory {
             registered: Arc::new(Mutex::new(registered)),
             loaded: self.loaded.clone(),
             held_starts: self.held_starts.clone(),
+            events: self.events.clone(),
         }
     }
 }
@@ -142,10 +150,10 @@ impl ModuleFactory for DevelopmentFactory {
         // A definition starting a ranged control outside its range starts
         // it within, as a configured value outside it would.
         let started = starting_values::with_held_starts(self, sample_rate, config);
-        let (module, control_surface, inner) =
+        let ((module, control_surface, inner), folded) =
             starting_values::build_started(self, sample_rate, &started)?;
-        let refused =
-            config::apply_development_config(&self.name, &started, control_surface.as_ref())?;
+        let surface = control_surface.as_ref();
+        let refused = config::apply_development_config(&self.name, &started, surface, &folded)?;
         // A value passed down to a nested development that sets it aside
         // is set aside here too: said once, here, as the instance's own.
         let passed_down = |warning: &load_warnings::Warning| {

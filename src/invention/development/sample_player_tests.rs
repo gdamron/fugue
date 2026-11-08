@@ -61,6 +61,7 @@ fn pair(a: &str) -> DevelopmentFactory {
         registered: Arc::new(Mutex::new(HashSet::new())),
         loaded: Arc::new(LoadedDevelopments::default()),
         held_starts: Default::default(),
+        events: Default::default(),
     }
 }
 
@@ -122,4 +123,39 @@ fn a_saved_start_plays_nothing_and_one_sample_key_loads_into_both() {
     // Without a saved sample, the players play what they were built with.
     let (graph, _) = running(pair(&a), json!({}));
     assert_eq!(frame(&graph), [0.0, 0.2, 0.0, 1.0]);
+}
+
+#[test]
+fn a_saved_sample_loads_once_into_each_player() {
+    use crate::modules::sample_loading::LOADS;
+    let dir = tempfile::tempdir().unwrap();
+    let a = tone(dir.path(), "a.wav", 0.2, 64);
+    let b = tone(dir.path(), "b.wav", 0.4, 64);
+
+    LOADS.with(|loads| loads.borrow_mut().clear());
+    let (graph, _) = running(pair(&a), json!({ "sample": b, "start": true }));
+    let loads = LOADS.with(|loads| loads.take());
+    // Built at b, with the saved start left out: nothing loads it again.
+    assert_eq!(
+        loads.iter().filter(|asset| **asset == b).count(),
+        2,
+        "{loads:?}"
+    );
+    assert_eq!(frame(&graph), [0.0, 0.4, 0.0, 1.0]);
+}
+
+#[test]
+fn a_saved_start_plays_nothing_where_the_definition_names_no_sample_it_can_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir
+        .path()
+        .join("missing.wav")
+        .to_string_lossy()
+        .into_owned();
+    let b = tone(dir.path(), "b.wav", 0.4, 64);
+
+    // Its players build only at an instance's sample, so their events are
+    // found on the built development instead.
+    let (graph, _) = running(pair(&missing), json!({ "sample": b, "start": true }));
+    assert_eq!(frame(&graph), [0.0, 0.4, 0.0, 1.0]);
 }

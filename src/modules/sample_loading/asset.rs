@@ -49,8 +49,16 @@ impl AssetLoader {
     /// the engine rate through the sample cache, which keeps the buffer
     /// (see [`SampleData`]). Control thread: may read, decode and resample.
     pub(crate) fn load(&self, asset: &str) -> Result<Arc<SampleData>, String> {
+        #[cfg(test)]
+        LOADS.with(|loads| loads.borrow_mut().push(asset.to_string()));
         (self.policy).run(|| load_cached_sample(&resolve_source(asset)?, self.sample_rate))
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Every asset this thread's modules loaded through a loader, in order.
+    pub(crate) static LOADS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The codec of a control whose payload is one sample (a player's `asset`,

@@ -27,6 +27,7 @@ pub(super) fn factory(name: &str, definition: serde_json::Value) -> DevelopmentF
         registered: Arc::new(Mutex::new(HashSet::new())),
         loaded: Arc::new(LoadedDevelopments::default()),
         held_starts: Default::default(),
+        events: Default::default(),
     }
 }
 
