@@ -36,7 +36,7 @@ use crate::invention::runtime::ControlSurfaceInstance;
 use crate::payload::{Payload, Retired};
 
 use super::fan_out::apply_fanned_out;
-use super::ranges;
+use super::ranges::{self, Ranges};
 use crate::{GraphModule, Invention};
 
 /// The events a development whose aliases queue them keeps for a block,
@@ -160,6 +160,9 @@ impl DevelopmentControls {
         let mut current = Vec::new();
         let mut aliases: Vec<Vec<Alias>> = Vec::new();
         let mut ranges: Vec<Option<(f32, f32)>> = Vec::new();
+        let declared = Ranges::of(development, definition);
+        // Where each key's declaration sits in `decls`.
+        let mut positions: HashMap<&str, usize> = HashMap::new();
         // Each key's first declared alias, for the build error.
         let mut firsts: Vec<String> = Vec::new();
         // Whether an event alias's module plays every event written.
@@ -169,7 +172,7 @@ impl DevelopmentControls {
                 .get(&control.module)
                 .and_then(|surface| surface.declaration(&control.control))
             else {
-                if let Some(range) = ranges::declared(development, definition, &control.name)? {
+                if let Some(range) = declared.get(&control.name)? {
                     let alias = format!("{}.{}", control.module, control.control);
                     return Err(ranges::undeclared(
                         development,
@@ -180,7 +183,7 @@ impl DevelopmentControls {
                 }
                 continue;
             };
-            let range = ranges::declared(development, definition, &control.name)?;
+            let range = declared.get(&control.name)?;
             if let Some(range) = range {
                 let alias = format!("{}.{}", control.module, control.control);
                 ranges::check(development, &control.name, range, &alias, &found.decl)?;
@@ -188,8 +191,8 @@ impl DevelopmentControls {
             let module = *module_indexes
                 .get(&control.module)
                 .ok_or_else(|| format!("Unknown control module: {}", control.module))?;
-            let position = match decls.iter().position(|decl| decl.key == control.name) {
-                Some(position) => position,
+            let position = match positions.get(control.name.as_str()) {
+                Some(&position) => position,
                 None => {
                     decls.push(ControlDecl {
                         key: Cow::Owned(control.name.clone()),
@@ -227,6 +230,7 @@ impl DevelopmentControls {
                     aliases.push(Vec::new());
                     ranges.push(range);
                     firsts.push(format!("{}.{}", control.module, control.control));
+                    positions.insert(&control.name, decls.len() - 1);
                     decls.len() - 1
                 }
             };
