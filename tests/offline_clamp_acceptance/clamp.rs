@@ -55,10 +55,12 @@ fn an_over_level_square_is_written_at_the_clamp_values() {
     let mut positive = 0;
     let mut negative = 0;
     for x in &out {
-        match *x {
-            v if v == MAX_BELOW_ONE => positive += 1,
-            v if v == -1.0 => negative += 1,
-            v => assert!(v.abs() < 0.5, "a transition sample, got {v}"),
+        if *x == MAX_BELOW_ONE {
+            positive += 1;
+        } else if *x == -1.0 {
+            negative += 1;
+        } else {
+            assert!(x.abs() < 0.5, "a transition sample, got {x}");
         }
     }
     assert!(
