@@ -85,6 +85,26 @@ fn a_file_development_with_a_partial_range_names_the_development_and_bound() {
 }
 
 #[test]
+fn a_file_development_that_cannot_be_read_keeps_its_own_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut parent = Invention::from_json(
+        &json!({
+            "version": "1.0.0",
+            "developments": [{ "name": "voice", "path": "missing.json" }],
+            "modules": [{ "id": "v", "type": "voice" }],
+            "connections": []
+        })
+        .to_string(),
+    )
+    .unwrap();
+    parent.source_path = Some(dir.path().join("parent.json"));
+    let error = DevelopmentDefinitions::resolve(&parent)
+        .expect_err("a missing file must not load")
+        .to_string();
+    assert!(!error.contains("Development 'voice'"), "{error}");
+}
+
+#[test]
 fn a_range_of_the_wrong_type_still_names_the_control() {
     let error = message(Invention::from_json(&inline_document(
         json!({ "min": "low", "max": 10 }),
