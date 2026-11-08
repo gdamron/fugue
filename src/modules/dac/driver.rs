@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use super::device::{output_device, requested_output_device};
 use super::diagnostics::StreamErrorKind;
+use super::output_stage::device_sample;
 use super::supervisor::Supervisor;
 use super::AudioDiagnostics;
 #[cfg(doc)]
@@ -184,17 +185,10 @@ impl AudioBackend for AudioDriver {
     }
 }
 
-/// Largest `f32` below 1.0. cpal's f32 → I24/U24 conversions assume samples in
-/// `-1.0..1.0` and wrap +1.0 around to negative full scale, so the positive
-/// clamp stops just short of it. Other formats saturate either way.
-const MAX_BELOW_ONE: f32 = 1.0 - f32::EPSILON / 2.0;
-
 /// Writes one stereo frame in the device's sample format and channel layout.
 ///
-/// Output is clamped to `-1.0..1.0` first, and a non-finite sample, which
-/// the clamp would pass (NaN) or pin at full scale (±inf), is silenced: the
-/// sinks already silence their own, so this is the device's last guard. A
-/// mono device gets the average of both channels; devices with more than
+/// Each sample goes through [`device_sample`] first: clamped to
+/// `-1.0..1.0`, and silenced when it is not finite. A mono device gets the average of both channels; devices with more than
 /// two channels get left on even and right on odd channels.
 #[inline]
 pub(super) fn write_frame<T: cpal::Sample + cpal::FromSample<f32>>(
@@ -202,14 +196,7 @@ pub(super) fn write_frame<T: cpal::Sample + cpal::FromSample<f32>>(
     left: f32,
     right: f32,
 ) {
-    let clamp = |sample: f32| {
-        if sample.is_finite() {
-            sample.clamp(-1.0, MAX_BELOW_ONE)
-        } else {
-            0.0
-        }
-    };
-    let (left, right) = (clamp(left), clamp(right));
+    let (left, right) = (device_sample(left), device_sample(right));
     match frame.len() {
         0 => {}
         1 => frame[0] = T::from_sample((left + right) * 0.5),
