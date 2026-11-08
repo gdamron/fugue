@@ -336,10 +336,24 @@ fn a_refused_value_passed_down_to_a_nested_development_is_reported() {
 /// 1.0, a gain `decibels` of 40 at its 24 dB ceiling.
 #[test]
 fn an_out_of_range_value_starts_at_the_clamped_value() {
-    let mut engine = load(&level_decibels_polyphony(
-        json!({ "level": 1.5, "decibels": 40.0 }),
-    ));
-    assert_steady(&left(&render(&mut engine, FRAMES)), level_of(24.0));
+    // The source is held at 0.05 so the clamped +24 dB (0.05 x 15.85) stays
+    // under the output clamp, while an unclamped +40 dB (0.05 x 100) would
+    // reach it and be heard as 1.0.
+    let mut quiet = level_decibels_polyphony(json!({ "level": 1.5, "decibels": 40.0 }));
+    let definition = &mut quiet["developments"][0]["definition"];
+    definition["modules"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "id": "quiet", "type": "vca", "config": { "level": 0.05 } }));
+    definition["connections"][0]["to"] = json!("quiet");
+    definition["connections"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "from": "quiet", "from_port": "audio", "to": "vca", "to_port": "audio"
+        }));
+    let mut engine = load(&quiet);
+    assert_steady(&left(&render(&mut engine, FRAMES)), 0.05 * level_of(24.0));
 
     let mut engine = load(&level_decibels_polyphony(
         json!({ "level": 1.5, "decibels": -12.0 }),
