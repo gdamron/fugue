@@ -93,6 +93,8 @@ fn nested_instances_given_events_at_every_level_build_once_each() {
     let mut engine = RenderEngine::new(48_000);
     let (loaded, builds) = counted(|| engine.load_json(&document.to_string()));
     loaded.unwrap();
+    // Built and built again without its events, each level would double
+    // the one below it: fourteen in all.
     assert_eq!(builds, 3, "one build per level");
     assert_eq!(
         engine.get_control("lead", "at").unwrap(),
