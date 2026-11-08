@@ -90,7 +90,6 @@ mod tests {
             out,
             [MAX_BELOW_ONE, MAX_BELOW_ONE, -1.0, 0.0, 0.0, 0.0, 0.25]
         );
-        assert!(MAX_BELOW_ONE < 1.0);
         assert_eq!(MAX_BELOW_ONE.next_up(), 1.0);
     }
 
