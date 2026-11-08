@@ -97,7 +97,7 @@ fn a_declaring_types_front_door_writes_are_requests_or_publications() {
 /// `RuntimeSnapshot::set_control_with_intent` or `submit_control`.
 const WRITES_A_SURFACE: &[(&str, &str)] = &[
     (
-        "invention/development.rs",
+        "invention/development/config.rs",
         "a development configures its inner modules as it builds",
     ),
     (
