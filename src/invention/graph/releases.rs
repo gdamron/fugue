@@ -164,8 +164,8 @@ impl Releases {
     }
 
     /// Forgets one share of `port` of `module` whose cable comes from
-    /// `source`.
-    fn cancel_share(&mut self, module: usize, port: usize, source: (usize, usize)) {
+    /// `source`, reporting whether there was one.
+    fn cancel_share(&mut self, module: usize, port: usize, source: (usize, usize)) -> bool {
         let found = (0..self.len).find(|&i| {
             let release = self.slots[i];
             release.share
@@ -173,9 +173,7 @@ impl Releases {
                 && release.port == port
                 && release.source == source
         });
-        if let Some(i) = found {
-            self.swap_remove(i);
-        }
+        found.inspect(|&i| self.swap_remove(i)).is_some()
     }
 
     /// Forgets every release.
@@ -250,7 +248,8 @@ impl SignalGraph {
     /// and has no longer, the port still connected: a share of what the
     /// cable last carried, gliding to 0 on top of the routes that remain.
     /// A cable patched in again as its share glides is the routes' at once,
-    /// as a port patched again as it releases is. A cable is its source
+    /// as a port patched again as it releases is. An edit that also patches
+    /// in a new cable glides none out. A cable is its source
     /// module (by id, or by index when `previous` is in the graph's own
     /// order) and port, and one made twice counts twice. A share
     /// past the slots, or of a cable whose value is unknown, steps as
@@ -279,14 +278,20 @@ impl SignalGraph {
         if then.clone().count() == now.clone().count() && pairs.all(|(old, new)| same(old, new)) {
             return;
         }
-        // A cable patched in again cuts its share short.
-        let gliding = !self.releases.is_empty();
-        for (k, new) in now.clone().enumerate().filter(|_| gliding) {
+        // A cable patched in again cuts its share short. Any other cable
+        // patched in makes the edit a reroute, such as a module inserted
+        // into the chain, which steps to the new routes as before: gliding
+        // the old cables out on top of their replacements would double them.
+        let mut rerouted = false;
+        for (k, new) in now.clone().enumerate() {
             let rank = now.clone().take(k).filter(|r| twin(new, r)).count();
             if rank >= then.clone().filter(|old| same(old, new)).count() {
                 let source = (new.from_module, new.from_port);
-                self.releases.cancel_share(mi, port, source);
+                rerouted |= !self.releases.cancel_share(mi, port, source);
             }
+        }
+        if rerouted {
+            return;
         }
         for (k, old) in then.clone().enumerate() {
             let rank = then.clone().take(k).filter(|r| twin(old, r)).count();
