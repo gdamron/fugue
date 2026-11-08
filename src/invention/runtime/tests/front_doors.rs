@@ -101,6 +101,10 @@ const WRITES_A_SURFACE: &[(&str, &str)] = &[
         "a development configures its inner modules as it builds",
     ),
     (
+        "invention/development/starting_values.rs",
+        "asking a module built on its own, which never plays, what it takes",
+    ),
+    (
         "invention/edits/apply/commit.rs",
         "a batch's writes: carried, or to modules it built and has not yet played",
     ),

@@ -197,7 +197,7 @@ fn a_nested_mixed_key_reaches_both_parts_through_the_outer_development() {
 }
 
 #[test]
-fn a_value_one_alias_cannot_hold_changes_no_alias_and_fails_a_cold_load() {
+fn a_value_one_alias_cannot_hold_changes_no_alias_and_is_set_aside_on_a_cold_load() {
     let (graph, surface) = running_from(factory("mixed", mixed()), json!({}));
     assert!(
         surface.set_control("form", "steep".into()).is_err(),
@@ -210,7 +210,12 @@ fn a_value_one_alias_cannot_hold_changes_no_alias_and_fails_a_cold_load() {
         "the dial is untouched"
     );
     let config = json!({ "form": "steep" });
-    assert!(factory("mixed", mixed()).build(48_000, &config).is_err());
+    let (built, warnings) = crate::invention::load_warnings::collected(|| {
+        factory("mixed", mixed()).build(48_000, &config)
+    });
+    let surface = built.unwrap().control_surface.unwrap();
+    assert_eq!(surface.get_control("form").unwrap(), "flat".into());
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
 }
 
 #[test]

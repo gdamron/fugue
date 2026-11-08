@@ -47,6 +47,11 @@ pub struct ReloadReport {
     pub connections_removed: usize,
     /// Modules untouched by the diff; they keep their phase and state.
     pub unchanged: usize,
+    /// What building the added and rebuilt modules set aside without
+    /// refusing the reload: a development's starting value its control
+    /// refuses, say, which starts where its definition starts it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 /// A control write a reload could not make.

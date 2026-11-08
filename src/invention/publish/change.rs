@@ -15,6 +15,7 @@ use crate::invention::declared::Route;
 use crate::invention::graph::{
     compile_topology, vacant, Publication, RoutingConnection, SurvivorRemap, TopologyFacts,
 };
+use crate::invention::load_warnings;
 use crate::invention::orchestration::ModulePorts;
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::invention::state::RuntimeModuleInfo;
@@ -197,6 +198,9 @@ pub(crate) struct BuiltModule {
     /// (an edit batch's to a module it builds), so the request log can
     /// make them again.
     pub(crate) writes: Vec<(String, crate::ControlValue)>,
+    /// What building it set aside without refusing it (a development's
+    /// starting value its control refuses), each naming the module.
+    pub(crate) warnings: Vec<String>,
 }
 
 /// A structural change being prepared against a snapshot of the mirror.
@@ -265,9 +269,24 @@ impl GraphChange {
                 module_type.to_string(),
             ));
         }
-        let result = registry
-            .build(module_type, sample_rate, config)
-            .map_err(|e| GraphCommandError::ModuleBuildFailed(format!("module '{id}': {e}")))?;
+        let (result, warnings) = load_warnings::collected(|| {
+            registry
+                .build(module_type, sample_rate, config)
+                .map_err(|e| GraphCommandError::ModuleBuildFailed(format!("module '{id}': {e}")))
+        });
+        let result = result?;
+        let warnings: Vec<String> = warnings
+            .into_iter()
+            .map(|mut warning| {
+                warning.modules.insert(0, id.to_string());
+                warning.to_string()
+            })
+            .collect();
+        if !load_warnings::collecting() {
+            for warning in &warnings {
+                eprintln!("Warning: {warning}");
+            }
+        }
         Ok(BuiltModule {
             module: MirrorModule {
                 ports: ports_of(&result.module),
@@ -285,6 +304,7 @@ impl GraphChange {
             surface: result.control_surface,
             handles: result.handles,
             writes: Vec::new(),
+            warnings,
         })
     }
 

@@ -93,6 +93,9 @@ pub struct RuntimeState {
     /// are not overwritten.
     pub(crate) authored_epoch: u64,
     pub(crate) authored_log: AuthoredLog,
+    /// What building this graph's document set aside without refusing it,
+    /// each naming the module it is in (see `load_warnings`).
+    pub(crate) load_warnings: Vec<crate::invention::load_warnings::Warning>,
 }
 
 /// What each module's stored config does not show of the authored writes

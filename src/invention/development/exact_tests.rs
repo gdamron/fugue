@@ -1,10 +1,12 @@
 //! A development's config writes a whole-number control exactly: a
 //! fraction an f32 would round whole is refused, as a JSON number and as
-//! text, and a whole number builds as it always did.
+//! text (set aside with a warning, the control left as it starts), and a
+//! whole number builds as it always did.
 
 use serde_json::json;
 
 use super::declared_tests::factory;
+use crate::invention::load_warnings;
 use crate::ModuleFactory;
 
 /// A development exposing a step sequencer's clamped root note (0 to 127).
@@ -23,12 +25,20 @@ fn a_development_config_refuses_a_fraction_an_f32_rounds_whole() {
     for text in ["60.0000001", "16777214.5", "8388608.5"] {
         let number: serde_json::Value = serde_json::from_str(text).unwrap();
         for value in [number, json!(text)] {
-            let built = factory("seq", sequencer()).build(48_000, &json!({ "note": value }));
-            let error = built
-                .err()
-                .unwrap_or_else(|| panic!("{value} built"))
-                .to_string();
-            assert!(error.contains("expects a whole number"), "{value}: {error}");
+            let (built, warnings) = load_warnings::collected(|| {
+                factory("seq", sequencer()).build(48_000, &json!({ "note": value }))
+            });
+            let surface = built.unwrap().control_surface.unwrap();
+            let note = surface.get_control("note").unwrap();
+            assert_eq!(note, crate::ControlValue::Number(48.0), "{value}");
+            let [warning] = warnings.as_slice() else {
+                panic!("{value}: {warnings:?}");
+            };
+            let warning = warning.to_string();
+            assert!(
+                warning.contains("expects a whole number"),
+                "{value}: {warning}"
+            );
         }
     }
     // A number control, here one its module reads itself, still takes it

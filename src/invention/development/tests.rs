@@ -122,12 +122,17 @@ fn a_development_config_can_set_an_inner_schedule() {
     pump.render(4);
     assert_eq!(freq(&running, "lead", "freq"), ControlValue::Number(220.0));
 
-    // One naming an outer module fails the build, as validation does.
+    // One naming an outer module is refused, as a live write of it is: set
+    // aside with a warning, and the rest of the document still loads.
     let config = json!({ "schedule": schedule(0, "lead", 220.0) });
-    let built = InventionBuilder::new(SAMPLE_RATE).build(document(json!([
-        { "id": "lead", "type": "pattern", "config": config }
-    ])));
-    assert!(built.is_err());
+    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE)
+        .build(document(json!([
+            { "id": "lead", "type": "pattern", "config": config }
+        ])))
+        .unwrap();
+    let warnings = runtime.load_warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("'schedule'"), "{warnings:?}");
 }
 
 #[test]

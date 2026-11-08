@@ -177,6 +177,12 @@ impl ModuleRegistry {
         registry
     }
 
+    /// Whether it builds modules to play (rather than to inspect or
+    /// validate, which build stand-ins and report nothing a load would).
+    pub(crate) fn builds_live(&self) -> bool {
+        matches!(self.mode, BuildMode::Live)
+    }
+
     /// Returns true if a factory is registered for the given type.
     pub fn has_type(&self, type_id: &str) -> bool {
         self.factories.contains_key(type_id)
