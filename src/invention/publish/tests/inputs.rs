@@ -155,6 +155,9 @@ fn rebuilt_and_added_modules_start_fresh() {
             })
             .unwrap();
     }
+    // The edited vca's cable, one of two into the dac, glides out first.
+    edited.render(8);
+    plain.render(8);
     assert_identical(&edited.render(3), &plain.render(3), "after rebuilding");
 
     // Adding the vca back builds a new one: its audio input is silent.

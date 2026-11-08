@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 use super::compile::CompiledTopology;
 use super::notes::NoteTaps;
-use super::releases::Previous;
+use super::releases::{id_at, Previous};
 use super::{RoutingConnection, SignalGraph};
 use crate::control_request::RampRoom;
 use crate::invention::runtime::ModuleInstance;
@@ -589,7 +589,12 @@ impl SignalGraph {
                 .survivors()
                 .all(|(old, new)| self.same_module(&retired.modules, old, new));
         if vouched {
-            self.releases.remap(|old| remap.get(old));
+            // A share's source follows its module by id, rebuilt or not.
+            let (modules, retired_modules) = (&self.modules, &retired.modules);
+            self.releases.remap(
+                |old| remap.get(old),
+                |old| id_at(retired_modules, old).and_then(|id| modules.get_index_of(id)),
+            );
         } else {
             self.releases.clear();
         }
@@ -606,6 +611,7 @@ impl SignalGraph {
                     ports,
                     routes: topology.compiled_routes.get(old).map_or(&[], Vec::as_slice),
                     carry: &topology.out_prev,
+                    modules: Some(&retired.modules),
                 });
                 self.reset_module_inputs(new, was);
             }

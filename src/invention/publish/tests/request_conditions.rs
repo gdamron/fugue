@@ -142,7 +142,9 @@ fn removing_a_source_refuses_the_request() {
 /// due: it applies on its sample rather than being refused.
 #[test]
 fn a_met_condition_applies_when_an_edit_removes_its_source() {
-    const OFFSET: u32 = 500;
+    // Long enough for the clock's cable, one of two into the dac, to glide
+    // out after the edit removes it.
+    const OFFSET: u32 = 1_000;
     let oracle = rig(false).render(200);
     let mut rig = rig(false);
     let id = {

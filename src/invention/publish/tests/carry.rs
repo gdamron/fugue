@@ -166,3 +166,38 @@ fn a_module_rebuilt_by_an_earlier_queued_edit_starts_from_zero() {
     assert!(carry(&rig, "osc1").iter().all(|v| *v == 0.0));
     assert_eq!(carry(&rig, "osc2"), osc2_before);
 }
+
+/// Two oscillators summed into the dac.
+const SUMMED: &str = r#"{
+    "version": "1.0.0",
+    "modules": [
+        { "id": "osc1", "type": "oscillator", "config": { "frequency": 220.0 } },
+        { "id": "osc2", "type": "oscillator", "config": { "frequency": 331.0 } },
+        { "id": "dac", "type": "dac" }
+    ],
+    "connections": [
+        { "from": "osc1", "from_port": "audio", "to": "dac", "to_port": "audio" },
+        { "from": "osc2", "from_port": "audio", "to": "dac", "to_port": "audio" }
+    ]
+}"#;
+
+#[test]
+fn a_unity_module_inserted_into_a_summed_input_leaves_it_sample_identical() {
+    let mut edited = Rig::new(SUMMED);
+    let mut twin = Rig::new(SUMMED);
+    assert_identical(&edited.render(4), &twin.render(4), "before the edit");
+
+    // One edit reroutes osc2 through a unity vca: its old cable is
+    // replaced, not removed, so it does not glide out on top of the new.
+    let thru = edited.build("thru", "vca", serde_json::json!({ "level": 1.0 }));
+    edited
+        .live
+        .edit(|change| {
+            change.upsert("thru", thru);
+            change.disconnect(edge("osc2", "audio", "dac", "audio"));
+            change.connect(edge("osc2", "audio", "thru", "audio"))?;
+            change.connect(edge("thru", "audio", "dac", "audio"))
+        })
+        .unwrap();
+    assert_identical(&edited.render(12), &twin.render(12), "after the edit");
+}

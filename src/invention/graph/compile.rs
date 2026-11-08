@@ -346,6 +346,7 @@ impl SignalGraph {
                 ports,
                 routes: topology.compiled_routes.get(mi).map_or(&[], Vec::as_slice),
                 carry: &topology.out_prev,
+                modules: None,
             });
             self.reset_module_inputs(mi, was);
         }
@@ -380,12 +381,15 @@ impl SignalGraph {
     /// treats the module as starting fresh.
     ///
     /// A port connected now is declared connected; routing fills it each
-    /// block. A port `was` shows connected that is unconnected now glides to
-    /// rest (see [`super::releases`]) where it can, and is otherwise cleared
-    /// and declared unconnected at once, as every port unconnected now is on
-    /// a module starting fresh. A port unconnected before and now is left as
-    /// it is, keeping any value written to it (see
-    /// [`crate::Module::set_input`]) or the release it is in.
+    /// block. One connected before and now glides out each cable it lost
+    /// (see [`super::releases`]), keeping the shares already gliding; one
+    /// patched anew is the routes' at once. A port `was` shows connected
+    /// that is unconnected now glides to rest where it can, from all it
+    /// last heard, and is otherwise cleared and declared unconnected at
+    /// once, as every port unconnected now is on a module starting fresh. A
+    /// port unconnected before and now is left as it is, keeping any value
+    /// written to it (see [`crate::Module::set_input`]) or the release it
+    /// is in.
     ///
     /// Clearing covers the whole buffer, not just the active span, so an
     /// unconnected input never holds routed samples beyond it that a larger
@@ -402,15 +406,25 @@ impl SignalGraph {
                 .connected_in_ports
                 .get(mi)
                 .is_some_and(|now| now.contains(&p));
-            let changed = was.is_none_or(|was| was.ports.contains(&p));
-            if !connected && !changed {
+            // Connected before, or starting fresh.
+            let was_connected = was.is_none_or(|was| was.ports.contains(&p));
+            if !connected && !was_connected {
                 continue;
             }
-            if !self.releases.is_empty() {
-                self.releases.cancel(mi, p);
-            }
-            if !connected && was.is_some_and(|was| self.release_input(mi, p, was)) {
-                continue;
+            match was {
+                Some(was) if connected && was_connected => self.release_routes(mi, p, was),
+                _ => {
+                    let shares = if self.releases.is_empty() {
+                        0.0
+                    } else {
+                        self.releases.cancel_all(mi, p, self.current_sample)
+                    };
+                    let released =
+                        !connected && was.is_some_and(|was| self.release_input(mi, p, was, shares));
+                    if released {
+                        continue;
+                    }
+                }
             }
             let Some((_, inst)) = self.modules.get_index_mut(mi) else {
                 return;
