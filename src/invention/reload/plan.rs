@@ -66,7 +66,7 @@ pub(crate) struct Implicit<'a> {
 /// does not record (to a default, an indexed key, a key stored as a null or
 /// array) and the new config does not state restore by control writes to
 /// the control's value in a fresh build of that config (see
-/// [`config_diff::implicit_restores`]), so the module sounds as the file
+/// [`super::config_diff::implicit_restores`]), so the module sounds as the file
 /// does without a rebuild. A write `fresh` gives no value for keeps playing
 /// (a development instance's, one no write restores). A key the new config
 /// removes returns the same way, to its fresh value, and rebuilds the

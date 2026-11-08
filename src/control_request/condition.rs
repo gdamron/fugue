@@ -66,7 +66,7 @@ pub(crate) enum Predicate {
     /// The `count`th time output `port` of `module` crosses `level` the
     /// `edge` way, counted from the sample the audio thread takes the
     /// request: met on the exact sample of that crossing. Counting a
-    /// gate's or a clock's beats is [`Self::edges`]; a threshold on an
+    /// gate's or a clock's beats is `Predicate::edges`; a threshold on an
     /// output is a count of one.
     Signal {
         module: u32,
@@ -110,7 +110,7 @@ impl Predicate {
         }
     }
 
-    /// The module it reads, mapped as [`Self::module`] names it.
+    /// The module it reads, mapped as `Predicate::module` names it.
     pub(crate) fn module_mut(&mut self) -> Option<&mut u32> {
         match self {
             Self::Signal { module, .. } | Self::Control { module, .. } => Some(module),

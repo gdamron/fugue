@@ -1,6 +1,6 @@
 //! Tables played on rising edges on the audio thread: what the graph lets
 //! the drain's edge cursors read (see
-//! [`crate::control_request::EdgeCursors`]), and which modules they split.
+//! `crate::control_request::watch::EdgeCursors`), and which modules they split.
 //!
 //! A table's module counts its clock input's edges as it computes; the
 //! drain counts the same inputs as each target is about to compute, so an

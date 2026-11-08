@@ -80,7 +80,7 @@ impl Delay {
     }
 
     /// Plays `frames` frames (at most the shortest time) without the
-    /// `audio` input, keeping their writes for [`Self::absorb`].
+    /// `audio` input, keeping their writes for [`Self::absorb_frames`].
     pub(super) fn emit_frames(&mut self, frames: usize) {
         let frames = frames.min(self.shortest).min(self.writes.len());
         self.start(frames);

@@ -146,7 +146,7 @@ impl RequestSender {
     /// [`QueueFull`] with the request (id assigned) when the queue has no
     /// room and it cannot be held, or the queue is
     /// [`closed`](Self::closed); the overflow is also counted
-    /// in [`overflows`](Self::overflows).
+    /// in `overflows`.
     // The request comes back by value, as large as it is (a condition makes
     // it 176 bytes), so a full queue never allocates.
     #[allow(clippy::result_large_err)]

@@ -6,7 +6,7 @@
 //!
 //! # Components
 //!
-//! - [`format`] - JSON invention format definitions
+//! - [`mod@format`] - JSON invention format definitions
 //! - [`builder`] - Invention construction and validation
 //! - [`runtime`] - Invention execution and control
 //! - [`graph`] - Signal processing graph (pull-based)

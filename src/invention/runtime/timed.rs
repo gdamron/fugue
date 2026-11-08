@@ -1,6 +1,6 @@
 //! Timed structural edits on a running invention: a swap, an edit batch or
 //! a reload queued to land on a sample or a beat, and what became of it,
-//! in the wire's terms (see [`crate::rpc::timed`]).
+//! in the wire's terms (see `crate::rpc::timed`).
 
 use super::{GraphCommandError, RunningInvention};
 use crate::control_request::Refusal;
