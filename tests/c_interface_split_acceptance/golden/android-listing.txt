@@ -1,0 +1,6 @@
+fugue-<VERSION>-<TARGET>/LICENSE
+fugue-<VERSION>-<TARGET>/README.md
+fugue-<VERSION>-<TARGET>/THIRD_PARTY_LICENSES.txt
+fugue-<VERSION>-<TARGET>/fugue.h
+fugue-<VERSION>-<TARGET>/lib/arm64-v8a/libfugue.so
+fugue-<VERSION>-<TARGET>/lib/x86_64/libfugue.so
