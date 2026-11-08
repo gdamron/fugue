@@ -5,6 +5,7 @@
 //! checked by the indices it skipped rather than by counts alone.
 
 use super::*;
+use crate::modules::dac::MAX_BELOW_ONE;
 
 /// The sample value that stands for index `n`: `n / 2^24`, which stays below
 /// the tap's ±1 clamp and exact in `f32` for every index these tests reach.
@@ -54,11 +55,12 @@ fn sums_channels_to_mono() {
     tap.observe_block(&[1.0, 0.0], &[0.0, 0.5], 2);
     let mut out = [0.0; 2];
     assert_eq!(reader.read(&mut out), TapRead { lost: 0, count: 2 });
-    assert_eq!(out, [0.5, 0.25]);
+    assert_eq!(out, [0.5 * MAX_BELOW_ONE, 0.25]);
 }
 
-/// The tap hears what the DAC sends: each channel clipped to ±1 before
-/// the channels are folded together.
+/// The tap hears what the DAC sends: each channel through the device clamp
+/// (±1, and silence for a non-finite sample) before the channels are folded
+/// together.
 #[test]
 fn clamps_each_channel_as_the_dac_does() {
     let tap = SpectrumTap::new();
@@ -66,7 +68,15 @@ fn clamps_each_channel_as_the_dac_does() {
     tap.observe_block(&[3.0, -3.0, 2.0, f32::INFINITY], &[0.5, 0.0, -2.0, 0.0], 4);
     let mut out = [0.0; 4];
     assert_eq!(reader.read(&mut out).count, 4);
-    assert_eq!(out, [0.75, -0.5, 0.0, 0.5]);
+    assert_eq!(
+        out,
+        [
+            0.5 * (MAX_BELOW_ONE + 0.5),
+            -0.5,
+            0.5 * (MAX_BELOW_ONE - 1.0),
+            0.0
+        ]
+    );
 }
 
 #[test]

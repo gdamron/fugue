@@ -63,7 +63,8 @@ fn a_scheduler_on_an_lfo_counts_its_rising_edges_offline() {
     engine.render_interleaved(&mut out).unwrap();
     let step = |second: f32| out[2 * (second * 48_000.0) as usize];
     assert_eq!(step(0.25), 0.0);
-    assert_eq!(step(0.75), 1.0);
+    // Step 1, written at the device clamp just below 1.0.
+    assert_eq!(step(0.75), 1.0 - f32::EPSILON / 2.0);
 }
 
 #[test]

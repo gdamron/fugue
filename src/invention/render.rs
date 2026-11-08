@@ -4,6 +4,7 @@ use indexmap::IndexMap;
 use std::sync::{Arc, Mutex};
 
 use crate::agents::AgentManager;
+use crate::modules::dac::device_sample;
 use crate::scripting::ScriptManager;
 use crate::{ControlValue, Invention, InventionBuilder, InventionHandles, ModuleRegistry};
 
@@ -195,6 +196,12 @@ impl RenderEngine {
     ///
     /// The buffer length must be even because output is written as
     /// `[left0, right0, left1, right1, ...]`.
+    ///
+    /// Samples are written as live playback sends them to the device:
+    /// clamped to `-1.0..1.0` (the positive limit is the largest `f32`
+    /// below 1.0) and never NaN or infinite. The output sinks turn a
+    /// non-finite sample into silence and count it, as they do live; the
+    /// master peak meter still reads the mix before the clamp.
     pub fn render_interleaved(
         &mut self,
         output: &mut [f32],
@@ -247,9 +254,11 @@ impl RenderEngine {
                 graph.process_block(&mut left[at..end], &mut right[at..end]);
                 at = end;
             }
+            // Written as the device receives it: clamped and finite, after
+            // the peak meter has read the mix.
             for k in 0..n {
-                output[(done + k) * 2] = left[k];
-                output[(done + k) * 2 + 1] = right[k];
+                output[(done + k) * 2] = device_sample(left[k]);
+                output[(done + k) * 2 + 1] = device_sample(right[k]);
             }
             done += n;
         }
@@ -474,6 +483,8 @@ impl OrchestrationRuntime for RenderEngine {
     }
 }
 
+#[cfg(test)]
+mod clamp_tests;
 #[cfg(test)]
 mod edit_state_tests;
 #[cfg(test)]

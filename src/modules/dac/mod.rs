@@ -33,4 +33,6 @@ pub use driver_wasm::{default_sample_rate, AudioBackend, AudioDriver, BlockRende
 pub use module::{DacFactory, DacModule};
 pub use null::NullBackend;
 pub(crate) use null::Settle;
-pub(crate) use output_stage::{finite_or_silence, soft_clip};
+#[cfg(test)]
+pub(crate) use output_stage::MAX_BELOW_ONE;
+pub(crate) use output_stage::{device_sample, finite_or_silence, soft_clip};

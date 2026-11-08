@@ -25,7 +25,7 @@ const INVENTION: &str = r#"{
     ]
 }"#;
 
-/// Outputs 1.0 on `flag` while its `process` runs with flush-to-zero set
+/// Outputs 0.5 on `flag` while its `process` runs with flush-to-zero set
 /// (0.0 otherwise), and NaN on `nan`.
 struct Probe {
     flag: [f32; MAX_BLOCK],
@@ -38,7 +38,7 @@ impl Module for Probe {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        let flag = if flush_to_zero_enabled() { 1.0 } else { 0.0 };
+        let flag = if flush_to_zero_enabled() { 0.5 } else { 0.0 };
         self.flag[..frames].fill(flag);
         true
     }
@@ -111,7 +111,7 @@ fn runtime() -> crate::invention::runtime::InventionRuntime {
 
 fn expected_flag() -> f32 {
     if SUPPORTED {
-        1.0
+        0.5
     } else {
         0.0
     }

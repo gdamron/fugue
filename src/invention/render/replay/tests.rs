@@ -168,9 +168,10 @@ fn offline(log: Option<&RequestLog>, frames: usize) -> Output {
 }
 
 /// What the DAC sends a stereo device and a mono one, sample by sample:
-/// each channel clamped to ±1, and their mono fold.
+/// each channel through the device clamp (a render is already clamped; live
+/// output is not), and their mono fold.
 fn heard(out: &Output) -> Vec<[u32; 3]> {
-    let clamp = |sample: f32| sample.clamp(-1.0, 1.0);
+    let clamp = crate::modules::dac::device_sample;
     out.left
         .iter()
         .zip(&out.right)

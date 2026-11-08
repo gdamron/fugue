@@ -1,6 +1,8 @@
 use std::sync::atomic::{fence, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use crate::modules::dac::device_sample;
+
 /// Samples the ring holds: about 0.7 s at 48 kHz, far more than the few
 /// milliseconds between analysis passes. A power of two, so a position maps to
 /// its slot with a mask.
@@ -77,9 +79,10 @@ impl SpectrumTap {
     /// Allocation-free and lock-free, and must only ever be called from one
     /// thread. Returns immediately when nobody is reading.
     ///
-    /// Each channel is first clamped to ±1, exactly as the DAC clamps what it
-    /// sends to the device, so the spectrum shows what the listener hears,
-    /// clipping harmonics included, and can never overflow to infinity.
+    /// Each channel first goes through the device clamp the DAC applies to
+    /// what it sends (`device_sample`: ±1, and silence for a non-finite
+    /// sample), so the spectrum shows what the listener hears, clipping
+    /// harmonics included, and can never overflow to infinity or NaN.
     /// Channels are then summed and halved, as the DAC folds to mono; a
     /// signal panned hard to one side therefore reads 6 dB below its channel
     /// peak, and an out-of-phase pair cancels.
@@ -109,7 +112,7 @@ impl SpectrumTap {
             let l = &left[done..done + run];
             let r = &right[done..done + run];
             for ((dst, a), b) in slots.iter().zip(l).zip(r) {
-                let heard = 0.5 * (a.clamp(-1.0, 1.0) + b.clamp(-1.0, 1.0));
+                let heard = 0.5 * (device_sample(*a) + device_sample(*b));
                 dst.store(heard.to_bits(), Ordering::Relaxed);
             }
             done += run;
