@@ -13,13 +13,13 @@
 # message could be read. An uncaught `throw` still gives a non-zero exit code to
 # `powershell -File`, `-Command` and `pwsh` alike.
 
-$message = @'
+# Passed straight to WriteErrorLine so no variable is left in the session of a
+# user who ran this through `iex`.
+$host.ui.WriteErrorLine(@'
 error: this installer has moved. Install Fugue from the product release instead:
 
   powershell -ExecutionPolicy ByPass -c "irm https://github.com/Ilusiv-media/fyug/releases/latest/download/install.ps1 | iex"
 
 Nothing was installed.
-'@
-
-$host.ui.WriteErrorLine($message)
+'@)
 throw 'install.ps1 has moved.'

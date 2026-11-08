@@ -128,15 +128,15 @@ fn assert_refuses(
         printed,
         "{label}: no output line equals the install command {command:?}\nstdout: {stdout}\nstderr: {stderr}"
     );
-    assert_eq!(
-        before,
-        scratch.snapshot().as_slice(),
-        "{label}: wrote files"
-    );
     assert!(
         !scratch.netlog_calls().exists(),
         "{label}: ran a network tool: {}",
         fs::read_to_string(scratch.netlog_calls()).unwrap_or_default()
+    );
+    assert_eq!(
+        before,
+        scratch.snapshot().as_slice(),
+        "{label}: wrote files"
     );
 }
 
@@ -177,6 +177,8 @@ fn network_uses(code: &str) -> Vec<&'static str> {
         "Resolve-DnsName",
         "TcpClient",
         "/dev/tcp",
+        "[net.",
+        "system.net",
         "http://",
         "https://",
     ];
@@ -210,6 +212,18 @@ fn stubs_name_the_product_installers() {
     assert!(read_stub("install.ps1")
         .lines()
         .any(|l| l.contains(PS_COMMAND)));
+}
+
+/// Windows PowerShell 5.1 reads a BOM-less script as the ANSI code page, so
+/// a non-ASCII character in either stub could garble the message there.
+#[test]
+fn stubs_are_ascii() {
+    for name in ["install.sh", "install.ps1"] {
+        assert!(
+            read_stub(name).is_ascii(),
+            "{name} holds a non-ASCII character"
+        );
+    }
 }
 
 #[test]
@@ -351,7 +365,8 @@ fn check_powershell_stub(exe: &str, major_version: fn(u32) -> bool) {
 
     let script = repo_file("install.ps1");
     let script_path = script.display().to_string();
-    let piped = format!("Get-Content -Raw -LiteralPath '{script_path}' | Invoke-Expression");
+    let quoted_path = script_path.replace('\'', "''");
+    let piped = format!("Get-Content -Raw -LiteralPath '{quoted_path}' | Invoke-Expression");
     let forms: [(&str, Vec<&str>); 2] = [
         (
             "-File",
@@ -365,7 +380,7 @@ fn check_powershell_stub(exe: &str, major_version: fn(u32) -> bool) {
         let run = |extra: &[&str]| {
             let mut command = Command::new(exe);
             command
-                .args(["-NoProfile", "-NonInteractive"])
+                .args(["-NoProfile", "-NonInteractive", "-OutputFormat", "Text"])
                 .args(extra)
                 .stdin(Stdio::null());
             scratch.confine(&mut command);

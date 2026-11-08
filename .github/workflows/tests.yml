@@ -84,7 +84,11 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # GitHub's Linux image ships pwsh; the retired install.ps1 stub's test
+      # must run here rather than skip if it ever goes missing.
       - name: Run Tests
+        env:
+          FUGUE_REQUIRE_POWERSHELL: "1"
         run: cargo test --lib --tests
 
   # Windows is the slowest job (about 5 minutes against under 4 for Linux), so
