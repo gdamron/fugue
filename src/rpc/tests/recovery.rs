@@ -449,6 +449,7 @@ fn receipt(state: ControlRequestState, requested: bool) -> RpcResponsePayload {
             session: None,
         },
         controls: vec![control],
+        warnings: Vec::new(),
     })
 }
 

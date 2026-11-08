@@ -45,6 +45,7 @@ fn reload_command_defaults_and_outcome_round_trip() {
             modules: Vec::new(),
             connections: Vec::new(),
         }),
+        warnings: Vec::new(),
     };
     let response = RpcResponse::ok(
         Some("req-1".to_string()),
@@ -114,6 +115,7 @@ fn a_receipt_carries_status_and_written_controls_only() {
             AppliedControl::read_back("osc", "frequency", Some(440.0.into())),
             AppliedControl::read_back("gone", "level", None),
         ],
+        warnings: Vec::new(),
     };
     let response = RpcResponse::ok(None, RpcResponsePayload::Receipt(receipt.clone()));
     let json = serde_json::to_value(&response).unwrap();
@@ -129,6 +131,7 @@ fn a_receipt_carries_status_and_written_controls_only() {
     let structural = RpcResponsePayload::Receipt(MutationReceipt {
         status: status(1, 0),
         controls: Vec::new(),
+        warnings: Vec::new(),
     });
     let json = serde_json::to_value(RpcResponse::ok(None, structural.clone())).unwrap();
     assert!(json.get("controls").is_none(), "{json}");
@@ -143,6 +146,7 @@ fn a_reload_answered_with_a_receipt_omits_the_snapshot() {
         reason: None,
         report: Some(crate::ReloadReport::default()),
         snapshot: None,
+        warnings: Vec::new(),
     };
     let json = serde_json::to_value(RpcResponse::ok(
         None,
@@ -232,4 +236,62 @@ fn an_acknowledged_control_says_what_became_of_its_request() {
     let json = serde_json::json!({ "module_id": "osc", "key": "frequency", "value": 1.0 });
     let decoded: AppliedControl = serde_json::from_value(json).unwrap();
     assert_eq!((decoded.state, decoded.request), (None, None));
+}
+
+#[test]
+fn a_load_warning_rides_its_reply_and_an_older_reply_reads_as_none() {
+    let warning = "module 'lead': development 'seq' control 'note' refused its starting value 1.5 \
+                   (expects a whole number), so it starts where its definition starts it";
+    let receipt = MutationReceipt {
+        status: status(2, 1),
+        controls: Vec::new(),
+        warnings: vec![warning.to_string()],
+    };
+    let json = serde_json::to_value(RpcResponse::ok(
+        None,
+        RpcResponsePayload::Receipt(receipt.clone()),
+    ))
+    .unwrap();
+    assert_eq!(json["warnings"][0], warning);
+    let decoded: RpcResponse = serde_json::from_value(json).unwrap();
+    assert_eq!(
+        decoded.payload,
+        RpcResponsePayload::Receipt(receipt.clone())
+    );
+
+    let outcome = ReloadOutcome {
+        mode: ReloadMode::Rebuild,
+        reason: Some("nothing was running".to_string()),
+        report: None,
+        snapshot: None,
+        warnings: vec![warning.to_string()],
+    };
+    let json = serde_json::to_value(RpcResponse::ok(
+        None,
+        RpcResponsePayload::Reload(outcome.clone()),
+    ))
+    .unwrap();
+    assert_eq!(json["warnings"][0], warning);
+    let decoded: RpcResponse = serde_json::from_value(json).unwrap();
+    assert_eq!(decoded.payload, RpcResponsePayload::Reload(outcome.clone()));
+
+    // A reply from a daemon before warnings, which has no such field,
+    // reads as none; and a reply with none leaves the field off, as that
+    // daemon did.
+    for payload in [
+        RpcResponsePayload::Receipt(receipt),
+        RpcResponsePayload::Reload(outcome),
+    ] {
+        let mut older = serde_json::to_value(RpcResponse::ok(None, payload)).unwrap();
+        older.as_object_mut().unwrap().remove("warnings");
+        let decoded: RpcResponse = serde_json::from_value(older).unwrap();
+        let warnings = match &decoded.payload {
+            RpcResponsePayload::Receipt(receipt) => &receipt.warnings,
+            RpcResponsePayload::Reload(outcome) => &outcome.warnings,
+            other => panic!("{other:?}"),
+        };
+        assert!(warnings.is_empty());
+        let json = serde_json::to_value(RpcResponse::ok(None, decoded.payload)).unwrap();
+        assert!(json.get("warnings").is_none(), "{json}");
+    }
 }
