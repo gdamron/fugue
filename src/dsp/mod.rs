@@ -58,8 +58,8 @@ mod tilt;
 mod waveshape;
 
 pub use allpass::Allpass;
-pub use band_limited::{BandLimitedOscillator, Shape};
 pub(crate) use band_limited::{corner_residual, step_residual};
+pub use band_limited::{BandLimitedOscillator, Shape};
 pub use block_ramp::{BlockRamp, BlockSteps};
 pub use crush::{bit_step, quantize, SampleHold};
 pub use damper::Damper;
@@ -69,10 +69,10 @@ pub use decibels::{decibels_to_level, exp2, level_to_decibels, log2, FLOOR_DECIB
 pub(crate) use declick::DECLICK_SECONDS;
 pub(crate) use declick::{declick_gain, declick_step};
 pub use delay_line::DelayLine;
-pub use first_order_allpass::FirstOrderAllpass;
 pub use drive::{DriveProcessor, DriveShape, REFERENCE_PEAK};
 #[cfg(feature = "spectrogram")]
 pub(crate) use fft::RealFft;
+pub use first_order_allpass::FirstOrderAllpass;
 pub use grains::{
     share_per_frame, ClockDivider, Diffuser, GrainCloud, GrainShape, LoopShape, Looper, Onsets,
     PitchShifter, Recording, RisingEdge, StretchShape, Stretcher, MAX_GRAINS,

@@ -104,7 +104,10 @@ fn harmonic(row: usize, x: f64) -> Spectrum {
 }
 
 fn is_prime(n: usize) -> bool {
-    n >= 2 && (2..n).take_while(|d| d * d <= n).all(|d| !n.is_multiple_of(d))
+    n >= 2
+        && (2..n)
+            .take_while(|d| d * d <= n)
+            .all(|d| !n.is_multiple_of(d))
 }
 
 /// Bank 1. A dark base (`n^-2`) under resonances shaped as bumps in log
