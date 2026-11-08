@@ -187,10 +187,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check Formatting
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Check Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Check Rustdoc Links
         env:

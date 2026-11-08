@@ -1,13 +1,24 @@
 [package]
 name = "fugue"
-version = "2026.11.0"
+version.workspace = true
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
 autoexamples = false
 
-[lib]
-crate-type = ["rlib", "staticlib", "cdylib"]
+# The C libraries and the wasm module build from the `ffi` crate, so building
+# this crate produces only its rlib.
+# This package is a member as the workspace root; listing "." as well would
+# defeat `exclude`, which keeps the test fixtures (built as their own packages,
+# see tests/plugin_wit_test.rs) out of the workspace.
+[workspace]
+members = ["ffi"]
+default-members = ["."]
+exclude = ["tests/fixtures"]
+
+# Releases bump this one version (release.yml checks it against the tag).
+[workspace.package]
+version = "2026.11.0"
 
 [dependencies]
 rand = "0.10"

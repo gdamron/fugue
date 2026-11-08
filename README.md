@@ -34,7 +34,7 @@ Optional cargo features, all off by default:
 
 | Feature | Adds |
 |---|---|
-| `ffi` | The C ABI over the render engine (`include/fugue.h`), used by the native, iOS and Android archives. |
+| `ffi` | The C ABI over the render engine (`include/fugue.h`). The `fugue-ffi` crate in `ffi/` turns it into the static and dynamic libraries the native, iOS and Android archives ship (`cargo build --release -p fugue-ffi`); building `fugue` itself produces only its rlib. |
 | `plugins` | Hosting for WebAssembly component modules (see [Wasm modules](docs/wasm-modules.md)). |
 | `rpc-schema` | JSON Schema generation for the runtime RPC types. |
 | `score-import` | Importing scores from MusicXML. |
