@@ -4,9 +4,7 @@
 //! prepared for; its document change is recorded as it is adopted; every
 //! block stays allocation- and free-free.
 
-use super::request_beats::{
-    beat_rig, blocks_for, level_change, outcomes_of, render_counted, Twin, BPM,
-};
+use super::request_beats::{beat_rig, blocks_for, outcomes_of, render_counted, Twin, BPM};
 use super::request_conditions::{first_change, nth_beat, rig as condition_rig};
 use super::*;
 use crate::control_request::{BeatSpec, Edge, Outcome, Refusal, RequestId, RtValue, Timeline};
@@ -24,9 +22,12 @@ fn remove_dial(rig: &Rig, time: EditTime<'_>) -> Result<RequestId, GraphCommandE
     })
 }
 
-/// Where the dial stops being heard in `out`, from sample `start`.
+/// Where the dial starts to go in `out`, from sample `start`: its cable,
+/// one of two into the dac, glides out from there rather than stepping.
 fn dial_gone(out: &[f32], start: u64) -> Option<u64> {
-    level_change(out, 0.0).map(|i| start + i as u64)
+    out.iter()
+        .position(|sample| sample - sample.floor() < 0.25)
+        .map(|i| start + i as u64)
 }
 
 #[test]
