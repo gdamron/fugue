@@ -83,6 +83,15 @@ impl Scratch {
 fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
     for entry in fs::read_dir(dir).expect("read scratch dir") {
         let entry = entry.expect("scratch entry");
+        // pwsh rewrites this startup cache on every run (under HOME on
+        // Windows, where XDG_* does not apply); it is the host's, not the stub's.
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("StartupProfileData-")
+        {
+            continue;
+        }
         let meta = fs::symlink_metadata(entry.path()).expect("scratch metadata");
         let rel = entry
             .path()
