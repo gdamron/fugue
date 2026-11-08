@@ -129,6 +129,15 @@ pub struct OutputLevels {
     pub left_rms: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub right_rms: Option<f32>,
+    /// Non-finite samples the output's sinks have replaced with silence: the
+    /// same running total as `MeterReading::non_finite_samples`. Left out on
+    /// the wire while it is zero.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub non_finite_samples: u64,
+}
+
+fn is_zero(count: &u64) -> bool {
+    *count == 0
 }
 
 /// The session's focus without its notes or nodes: where the person pointed.
