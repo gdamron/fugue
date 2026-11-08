@@ -556,6 +556,10 @@ pub trait Module: Send {
     /// before: for one whose value selects rather than sets (a key, a cell,
     /// a tempo), or whose unconnected meaning no value reaches (a right
     /// input that falls back to the left).
+    ///
+    /// Only a port losing its last connection rests. One that loses some of
+    /// several stays connected, and the graph glides it from the old sum to
+    /// the new whatever this returns.
     fn input_rest(&self, _index: usize) -> Option<f32> {
         Some(0.0)
     }

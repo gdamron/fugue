@@ -173,3 +173,87 @@ fn an_input_in_a_feedback_loop_glides_to_rest_too() {
     engine.disconnect("cv", "audio", "voice", "level").unwrap();
     assert_glides_to_rest(&render(&mut engine, 2_048));
 }
+
+/// [`patched`] with a second cable into `voice`'s `level`, from vca `cv2`
+/// holding the still square at 0.5: the dac plays the sum, 0.75.
+fn summed() -> RenderEngine {
+    patched_with(
+        json!([{ "id": "cv2", "type": "vca", "config": { "level": 0.5 } }]),
+        json!([
+            { "from": "a", "from_port": "audio", "to": "cv2", "to_port": "audio" },
+            { "from": "cv2", "from_port": "audio", "to": "voice", "to_port": "level" }
+        ]),
+    )
+}
+
+/// `out` glides evenly from `from` to `to` over the release, and stays.
+fn assert_glides(from: f32, to: f32, out: &[f32]) {
+    let even = (to - from).abs() / RELEASE as f32;
+    let largest = largest_step(from, out);
+    assert!(largest <= even * 1.01, "largest step {largest} past {even}");
+    let half = (from + to) / 2.0;
+    assert!(
+        (out[RELEASE / 2 - 1] - half).abs() < 0.01,
+        "no glide: {:?}",
+        &out[..4]
+    );
+    for (i, &x) in out.iter().enumerate().skip(RELEASE - 1) {
+        assert!((x - to).abs() < 1e-6, "frame {i}: {x}, not at {to}");
+    }
+}
+
+#[test]
+fn a_cable_removed_from_a_summed_input_glides_out() {
+    let mut engine = summed();
+    assert!(render(&mut engine, 1_024).iter().all(|&x| x == 0.75));
+    engine.disconnect("cv2", "audio", "voice", "level").unwrap();
+    assert_glides(0.75, 0.25, &render(&mut engine, 2_048));
+}
+
+#[test]
+fn removing_one_module_of_a_fan_in_glides_its_cable_out() {
+    let mut engine = summed();
+    render(&mut engine, 1_024);
+    engine.remove_module("cv2").unwrap();
+    assert_glides(0.75, 0.25, &render(&mut engine, 2_048));
+}
+
+#[test]
+fn a_cable_gliding_out_carries_on_through_another_edit() {
+    let mut engine = summed();
+    render(&mut engine, 1_024);
+    engine.disconnect("cv2", "audio", "voice", "level").unwrap();
+    let mut out = render(&mut engine, 128);
+    // An edit elsewhere, `voice` connected before and after.
+    engine.disconnect("a", "audio", "cv2", "audio").unwrap();
+    out.extend(render(&mut engine, 2_048));
+    assert_glides(0.75, 0.25, &out);
+}
+
+#[test]
+fn the_last_cable_unpatched_as_another_glides_out_releases_from_both() {
+    let mut engine = summed();
+    render(&mut engine, 1_024);
+    engine.disconnect("cv2", "audio", "voice", "level").unwrap();
+    let mut out = render(&mut engine, 128);
+    engine.disconnect("cv", "audio", "voice", "level").unwrap();
+    out.extend(render(&mut engine, 2_048));
+    // Down a quarter of the way to 0.25, then on to rest at 1 without a
+    // step: neither glide's own step is more than 0.75 over the release.
+    assert!(largest_step(0.75, &out) <= 0.75 / RELEASE as f32 * 1.01);
+    for (i, &x) in out.iter().enumerate().skip(128 + RELEASE - 1) {
+        assert!((x - 1.0).abs() < 1e-6, "frame {i}: {x}, not at rest");
+    }
+}
+
+#[test]
+fn a_cable_patched_back_as_it_glides_out_is_the_routes_again() {
+    let mut engine = summed();
+    render(&mut engine, 1_024);
+    engine.disconnect("cv2", "audio", "voice", "level").unwrap();
+    let released = render(&mut engine, 128);
+    assert!(released[127] < 0.75);
+    engine.connect("cv2", "audio", "voice", "level").unwrap();
+    let out = render(&mut engine, 2_048);
+    assert!(out.iter().all(|&x| x == 0.75), "{:?}", &out[..4]);
+}
