@@ -2,6 +2,7 @@
 name = "fugue"
 version = "2026.11.0"
 edition = "2021"
+rust-version = "1.95"
 license = "MIT"
 autoexamples = false
 
