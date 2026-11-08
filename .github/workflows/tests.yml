@@ -144,6 +144,47 @@ jobs:
       - name: Check Spectrogram on wasm32
         run: cargo check --lib --target wasm32-unknown-unknown --features spectrogram
 
+  # Formatting, lints and rustdoc links stay clean because a PR that breaks any
+  # of them fails here. Clippy runs with every feature on and over tests,
+  # examples and benches, with warnings denied; the default lint set only (no
+  # pedantic or nursery). The docs build covers private items too, since most
+  # of the module documentation lives on them.
+  lint:
+    name: Check Format, Lints and Docs
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux Audio Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
+
+      - name: Install Stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo Artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Check Formatting
+        run: cargo fmt --check
+
+      - name: Check Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Check Rustdoc Links
+        env:
+          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links
+        run: cargo doc --no-deps --all-features --document-private-items
+
   # Every crate in the dependency tree must carry a license on the allow-list
   # in deny.toml (see docs/dsp-provenance.md). It reads only Cargo metadata,
   # so it runs on every PR, docs-only ones included, in well under a minute.
@@ -173,6 +214,7 @@ jobs:
       - changes
       - test
       - feature-tests
+      - lint
       - licenses
     runs-on: ubuntu-latest
     steps:
