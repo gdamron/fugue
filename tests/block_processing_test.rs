@@ -106,7 +106,8 @@ fn feedback_render_is_block_size_invariant() {
 fn multiple_sources_into_one_port_sum() {
     let frames = 256;
     // Two oscillators summed into the DAC's `audio` port. Compared against each
-    // rendered alone, the combined render should equal the sum per frame.
+    // rendered alone, the combined render should equal the sum per frame, as
+    // the device clamp writes it.
     let combined = render_at(MIX_INVENTION, frames, 64);
 
     let only1 = render_at(
@@ -129,7 +130,7 @@ fn multiple_sources_into_one_port_sum() {
     );
 
     for i in 0..combined.len() {
-        let expected = only1[i] + only2[i];
+        let expected = (only1[i] + only2[i]).clamp(-1.0, 1.0 - f32::EPSILON / 2.0);
         assert!(
             (combined[i] - expected).abs() < 1e-6,
             "sample {i}: sources did not sum ({} vs {})",

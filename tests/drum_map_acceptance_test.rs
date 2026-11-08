@@ -12,6 +12,9 @@ use fugue::{ControlValue, ModuleRegistry, RenderEngine};
 use serde_json::{json, Value};
 
 const SAMPLE_RATE: u32 = 48_000;
+/// A trigger of 1.0 as a render writes it: the largest `f32` below 1.0,
+/// where the device clamp stops.
+const TRIGGER: f32 = 1.0 - f32::EPSILON / 2.0;
 /// 120 BPM, a 16th note is a quarter of a beat: 0.125 s (the clock's edges
 /// are within a sample of this spacing, so tests read the real edges).
 const STEP: usize = 6_000;
@@ -176,12 +179,15 @@ fn module_declares_its_ports_and_accepts_its_controls_as_config() {
 }
 
 /// Interface: outputs are triggers, 1.0 for a short pulse (about 5 ms), else
-/// 0.0.
+/// 0.0. A render writes 1.0 at the device clamp, just below it.
 #[test]
 fn triggers_are_short_pulses_of_one() {
     let cfg = json!({ "mode": "euclidean", "kick_density": 0.5 });
     let kick = render(&cfg, "kick", ONE_BAR, &[], false);
-    assert!(kick.iter().all(|&v| v == 0.0 || v == 1.0), "not 0.0/1.0");
+    assert!(
+        kick.iter().all(|&v| v == 0.0 || v == TRIGGER),
+        "not 0.0/1.0"
+    );
     let lens = pulse_lengths(&kick);
     assert!(!lens.is_empty());
     let (lo, hi) = (

@@ -4,6 +4,7 @@
 
 use crate::invention::manual_backend::{start_manual, SAMPLE_RATE};
 use crate::invention::render::edit_tests::{document, step_sample};
+use crate::modules::dac::device_sample;
 use crate::rpc::{EditWhen, StructuralEdit};
 use crate::{ControlValue, Invention, InventionBuilder, LoggedSetting, RenderEngine, RequestLog};
 
@@ -36,7 +37,7 @@ fn session(
 }
 
 /// Replays `log` over the document as loaded, asserting it renders what
-/// `played`, bit for bit; returns the engine.
+/// `played` sent the device, bit for bit; returns the engine.
 fn replayed(log: &RequestLog, played: &[f32]) -> RenderEngine {
     let mut engine = RenderEngine::new(SAMPLE_RATE);
     engine.load_json(&document(0)).unwrap();
@@ -46,7 +47,7 @@ fn replayed(log: &RequestLog, played: &[f32]) -> RenderEngine {
         engine.render_interleaved(chunk).unwrap();
     }
     assert_eq!(engine.replay_refused(), 0);
-    let same = |(a, b): (&f32, &f32)| a.to_bits() == b.to_bits();
+    let same = |(a, b): (&f32, &f32)| device_sample(*a).to_bits() == b.to_bits();
     let first = played.iter().zip(&replayed).position(|pair| !same(pair));
     assert_eq!(first, None);
     engine
