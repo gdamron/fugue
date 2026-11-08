@@ -207,7 +207,7 @@ const PINNED: &[(&str, &str, Mode, u64)] = &[
         "vca level on a sine",
         "disconnect",
         Mode::Offline,
-        0x20a8d4e4edf2eec2,
+        0x79c3868d59785b6a,
     ),
     (
         "vca level on a sine",
@@ -219,7 +219,7 @@ const PINNED: &[(&str, &str, Mode, u64)] = &[
         "vca level on a sine",
         "remove source",
         Mode::Offline,
-        0x20a8d4e4edf2eec2,
+        0x79c3868d59785b6a,
     ),
     (
         "vca level on a sine",
@@ -231,7 +231,7 @@ const PINNED: &[(&str, &str, Mode, u64)] = &[
         "vca level on a constant",
         "disconnect",
         Mode::Offline,
-        0x57e0f273fff7c3f7,
+        0x2f5ea263cad8c6f7,
     ),
     (
         "vca level on a constant",
@@ -243,7 +243,7 @@ const PINNED: &[(&str, &str, Mode, u64)] = &[
         "vca level on a constant",
         "remove source",
         Mode::Offline,
-        0x57e0f273fff7c3f7,
+        0x2f5ea263cad8c6f7,
     ),
     (
         "vca level on a constant",
@@ -255,7 +255,7 @@ const PINNED: &[(&str, &str, Mode, u64)] = &[
         "vca level on a constant, patched back mid-release",
         "disconnect, then connect",
         Mode::Offline,
-        0xf4b5a9ae3d82486d,
+        0x1a3a4c21777edd6d,
     ),
     (
         "vca level on a constant, patched back mid-release",
@@ -267,7 +267,7 @@ const PINNED: &[(&str, &str, Mode, u64)] = &[
         "oscillator amplitude_mod",
         "disconnect",
         Mode::Offline,
-        0x85ee88b6cd148e78,
+        0x4909c7b19aa56e10,
     ),
     (
         "oscillator amplitude_mod",
@@ -279,7 +279,7 @@ const PINNED: &[(&str, &str, Mode, u64)] = &[
         "oscillator amplitude_mod",
         "remove source",
         Mode::Offline,
-        0x85ee88b6cd148e78,
+        0x4909c7b19aa56e10,
     ),
     (
         "oscillator amplitude_mod",
@@ -315,7 +315,7 @@ const PINNED: &[(&str, &str, Mode, u64)] = &[
         "oscillator frequency",
         "disconnect",
         Mode::Offline,
-        0x902ca2e91e1050e8,
+        0xe66b755a1d4ef988,
     ),
     (
         "oscillator frequency",
@@ -327,7 +327,7 @@ const PINNED: &[(&str, &str, Mode, u64)] = &[
         "oscillator frequency",
         "remove source",
         Mode::Offline,
-        0x902ca2e91e1050e8,
+        0xe66b755a1d4ef988,
     ),
     (
         "oscillator frequency",
@@ -339,7 +339,7 @@ const PINNED: &[(&str, &str, Mode, u64)] = &[
         "audio into a vca",
         "disconnect",
         Mode::Offline,
-        0x195007852941dedb,
+        0x6fff8ccd0c583693,
     ),
     (
         "audio into a vca",
@@ -351,7 +351,7 @@ const PINNED: &[(&str, &str, Mode, u64)] = &[
         "audio into a vca",
         "remove source",
         Mode::Offline,
-        0x195007852941dedb,
+        0x6fff8ccd0c583693,
     ),
     (
         "audio into a vca",
@@ -363,7 +363,7 @@ const PINNED: &[(&str, &str, Mode, u64)] = &[
         "audio into the dac",
         "disconnect",
         Mode::Offline,
-        0x195007852941dedb,
+        0x6fff8ccd0c583693,
     ),
     (
         "audio into the dac",
@@ -375,7 +375,7 @@ const PINNED: &[(&str, &str, Mode, u64)] = &[
         "audio into the dac",
         "remove source",
         Mode::Offline,
-        0x195007852941dedb,
+        0x6fff8ccd0c583693,
     ),
     (
         "audio into the dac",
