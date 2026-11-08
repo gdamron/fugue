@@ -84,10 +84,11 @@ pub(crate) struct DevelopmentFactory {
     /// found once, by building the definition, and shared by the factories
     /// rebuilt from this one.
     pub(crate) held_starts: Arc<OnceLock<Vec<(String, f32)>>>,
-    /// The exposed controls an alias of which fires an event (see
-    /// `starting_values::event_names`): found once, without building the
-    /// definition, and shared like `held_starts`.
-    pub(crate) events: Arc<OnceLock<HashSet<String>>>,
+    /// The exposed controls an alias of which fires an event, or `None`
+    /// when its modules cannot say (see `starting_values::event_names`):
+    /// found once, without building the definition, and shared by the
+    /// factories rebuilt from this one.
+    pub(crate) events: Arc<OnceLock<Option<HashSet<String>>>>,
 }
 
 impl DevelopmentFactory {

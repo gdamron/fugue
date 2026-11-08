@@ -38,15 +38,17 @@ use crate::{ControlValue, Invention};
 type Fold<'a> = &'a dyn Fn(&str, &str, ControlValue) -> Option<ControlValue>;
 
 /// Builds `factory`'s development with its inner modules at the starting
-/// values in `config`, building its definition once. An event (a key an
+/// values in `config`, assembling its definition once. An event (a key an
 /// alias fires) is no value to start at, so it is never folded: an inner
 /// module may read its key as config (a sample player's `play` as its
-/// start state), or fire it as it builds (see [`event_names`]). A value
-/// an inner module refuses as config is left out, as its live write would
-/// be refused, and the rest start in place, in a second build (see the
-/// module docs). A definition that still refuses the values, or that no longer
-/// has every exposed control (a count written below a position another key
-/// reaches), builds as written: the writes after the build then apply, or
+/// start state), or fire it as it builds (see [`event_names`]); events its
+/// modules cannot name beforehand are found on the built surface, in a
+/// second build without them. A value an inner module refuses as config
+/// is left out, as its live write would be refused, and the rest start in
+/// place, in a second build (see the module docs). A definition that still
+/// refuses the values, or that no longer has every exposed control (a
+/// count written below a position another key reaches), builds as
+/// written, a third time: the writes after the build then apply, or
 /// report what is wrong, as they always did. Returns what the kept build
 /// reported, and the keys of `config` the kept build started its inner
 /// modules at.
@@ -57,17 +59,47 @@ pub(super) fn build_started(
 ) -> Result<(Built, Vec<String>), Box<dyn Error>> {
     let assemble = |definition: Invention| assemble(factory, sample_rate, definition);
     let as_written = || assemble(factory.definition.clone()).map(|built| (built, Vec::new()));
-    let events = event_names(factory, sample_rate);
-    let skip: Vec<&str> = (config.as_object().into_iter().flatten())
+    let keys: Vec<&str> = (config.as_object().into_iter().flatten())
         .map(|(key, _)| key.as_str())
-        .filter(|key| events.contains(*key))
         .collect();
+    // Asked only of an instance configuring something.
+    let none = HashSet::new();
+    let events = match keys.is_empty() {
+        true => Some(&none),
+        false => event_names(factory, sample_rate).as_ref(),
+    };
+    let mut skip: Vec<&str> = match events {
+        Some(events) => keys
+            .iter()
+            .copied()
+            .filter(|key| events.contains(*key))
+            .collect(),
+        None => Vec::new(),
+    };
     let as_given: Fold = &|_, _, value| Some(value);
     let Some((started, folded)) = with_starting_values(factory, config, &skip, as_given) else {
         return as_written();
     };
     if let Ok(built) = assemble(started) {
-        return Ok((built, folded));
+        // Events its modules could not say beforehand are found as they
+        // were before: on the built surface, building again without them.
+        let fired: Vec<&str> = match events {
+            Some(_) => Vec::new(),
+            None => (keys.iter().copied())
+                .filter(|key| (built.1.declaration(key)).is_some_and(|found| found.decl.event))
+                .collect(),
+        };
+        if fired.is_empty() {
+            return Ok((built, folded));
+        }
+        skip = fired;
+        return match with_starting_values(factory, config, &skip, as_given) {
+            Some((started, folded)) => match assemble(started) {
+                Ok(built) => Ok((built, folded)),
+                Err(_) => as_written(),
+            },
+            None => as_written(),
+        };
     }
     let accepted = accepted_by_reached(factory, sample_rate, config);
     let accepted: Fold = &|module, control, value| accepted(module, control, value);
@@ -103,19 +135,23 @@ fn refuses_alike(
 /// alias into a nested development asks that development's factory, and
 /// one into any other module asks that module, built on its own at the
 /// definition's config to validate, as a document is before it loads. A
-/// module that cannot be built on its own is taken to fire none; its build
-/// then reports what is wrong.
-pub(super) fn event_names(factory: &DevelopmentFactory, sample_rate: u32) -> &HashSet<String> {
+/// module that cannot be built on its own at the definition's config (an
+/// asset only its instances name, say) cannot say: then `None`, and its
+/// instances find their events on the built surface instead.
+pub(super) fn event_names(
+    factory: &DevelopmentFactory,
+    sample_rate: u32,
+) -> &Option<HashSet<String>> {
     factory
         .events
         .get_or_init(|| find_events(factory, sample_rate))
 }
 
-fn find_events(factory: &DevelopmentFactory, sample_rate: u32) -> HashSet<String> {
+fn find_events(factory: &DevelopmentFactory, sample_rate: u32) -> Option<HashSet<String>> {
     let definition = &factory.definition;
     let mut events = HashSet::new();
     if definition.controls.is_empty() {
-        return events;
+        return Some(events);
     }
     // The registry its modules build from: its own, unless it declares
     // developments of its own.
@@ -131,38 +167,38 @@ fn find_events(factory: &DevelopmentFactory, sample_rate: u32) -> HashSet<String
                 factory.loaded.clone(),
             )
             .register_developments_only(definition);
-            let Ok(built) = built else {
-                return events;
-            };
-            scoped = built;
+            scoped = built.ok()?;
             &scoped
         }
     };
-    let mut probes: HashMap<&str, Option<ControlSurfaceInstance>> = HashMap::new();
+    let mut probes: HashMap<&str, Option<Option<ControlSurfaceInstance>>> = HashMap::new();
     for alias in &definition.controls {
         let Some(spec) = (definition.modules.iter()).find(|spec| spec.id == alias.module) else {
             continue;
         };
         let fires = match registry.development(&spec.module_type) {
-            Some(nested) => event_names(nested, sample_rate).contains(&alias.control),
-            None => probes
-                .entry(spec.id.as_str())
-                .or_insert_with(|| {
+            Some(nested) => event_names(nested, sample_rate)
+                .as_ref()?
+                .contains(&alias.control),
+            None => {
+                let probed = probes.entry(spec.id.as_str()).or_insert_with(|| {
                     let (built, _) = load_warnings::collected(|| {
                         registry.probe(&spec.module_type, sample_rate, &spec.config)
                     });
-                    built.and_then(|built| built.control_surface)
-                })
-                .as_ref()
-                .is_some_and(|surface| {
+                    built.map(|built| built.control_surface)
+                });
+                // A module with no surface fires nothing.
+                let surface = probed.as_ref()?;
+                (surface.as_ref()).is_some_and(|surface| {
                     (surface.declaration(&alias.control)).is_some_and(|found| found.decl.event)
-                }),
+                })
+            }
         };
         if fires {
             events.insert(alias.name.clone());
         }
     }
-    events
+    Some(events)
 }
 
 #[cfg(test)]

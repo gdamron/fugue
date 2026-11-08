@@ -110,6 +110,6 @@ pub(super) fn apply_development_config(
 fn prepared(surface: &(dyn ControlSurface + Send + Sync), key: &str, value: &ControlValue) -> bool {
     let payload = surface
         .declaration(key)
-        .is_some_and(|found| matches!(found.decl.kind, DeclKind::Payload));
+        .is_some_and(|found| found.decl.kind == DeclKind::Payload);
     payload && surface.get_control(key).is_ok_and(|now| now == *value)
 }

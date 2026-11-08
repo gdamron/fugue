@@ -143,3 +143,19 @@ fn a_saved_sample_loads_once_into_each_player() {
     );
     assert_eq!(frame(&graph), [0.0, 0.4, 0.0, 1.0]);
 }
+
+#[test]
+fn a_saved_start_plays_nothing_where_the_definition_names_no_sample_it_can_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir
+        .path()
+        .join("missing.wav")
+        .to_string_lossy()
+        .into_owned();
+    let b = tone(dir.path(), "b.wav", 0.4, 64);
+
+    // Its players build only at an instance's sample, so their events are
+    // found on the built development instead.
+    let (graph, _) = running(pair(&missing), json!({ "sample": b, "start": true }));
+    assert_eq!(frame(&graph), [0.0, 0.4, 0.0, 1.0]);
+}
