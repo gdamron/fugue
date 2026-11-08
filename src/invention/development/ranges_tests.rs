@@ -3,6 +3,7 @@
 
 use serde_json::json;
 
+use super::ranges::Ranges;
 use super::*;
 use crate::test_support::dial::DialFactory;
 
@@ -163,4 +164,101 @@ fn a_fan_out_whose_later_alias_starts_outside_its_range_starts_every_alias_withi
     let refused = InventionBuilder::with_registry(48_000, registry())
         .build(holding(&definition, json!({ "rate": null })));
     assert!(refused.is_err());
+}
+
+/// A development exposing `names`, each as a `level` of its own dial, with
+/// the ranges given for them (none for a name left out).
+fn exposing(entries: &[(&str, Option<(f64, f64)>)]) -> Invention {
+    let modules: Vec<_> = (0..entries.len())
+        .map(|i| json!({ "id": format!("d{i}"), "type": "dial" }))
+        .collect();
+    let controls: Vec<_> = (entries.iter().enumerate())
+        .map(|(i, (name, range))| {
+            let mut control =
+                json!({ "name": name, "module": format!("d{i}"), "control": "level" });
+            if let Some((min, max)) = range {
+                control["range"] = json!({ "min": min, "max": max });
+            }
+            control
+        })
+        .collect();
+    serde_json::from_value(json!({
+        "version": "1.0.0",
+        "modules": modules,
+        "connections": [],
+        "outputs": [{ "name": "a", "from": "d0", "from_port": "out" }],
+        "controls": controls
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_name_declares_the_range_its_entries_agree_on_and_none_without_one() {
+    let definition = exposing(&[
+        ("a", Some((0.25, 0.5))),
+        ("b", None),
+        ("a", Some((0.25, 0.5))),
+        ("a", None),
+        ("c", None),
+    ]);
+    let ranges = Ranges::of("kit", &definition);
+    assert_eq!(ranges.get("a"), Ok(Some((0.25, 0.5))));
+    assert_eq!(ranges.get("b"), Ok(None));
+    assert_eq!(ranges.get("missing"), Ok(None));
+}
+
+#[test]
+fn only_the_name_whose_entries_disagree_is_refused_and_says_which_ranges() {
+    let definition = exposing(&[
+        ("a", Some((0.25, 0.5))),
+        ("b", Some((0.0, 1.0))),
+        ("a", Some((0.25, 0.5))),
+        ("a", Some((0.125, 0.5))),
+        ("a", Some((0.0, 1.0))),
+    ]);
+    let ranges = Ranges::of("kit", &definition);
+    assert_eq!(ranges.get("b"), Ok(Some((0.0, 1.0))));
+    let error = ranges.get("a").unwrap_err();
+    assert!(error.contains("'kit'") && error.contains("'a'"));
+    // The first range declared, and the first that differs from it.
+    assert!(error.contains("0.25 to 0.5 and 0.125 to 0.5"), "{error}");
+}
+
+#[test]
+fn a_development_exposing_many_ranged_controls_holds_each_start_within_its_range() {
+    let count = 200;
+    let names: Vec<_> = (0..count).map(|i| format!("c{i}")).collect();
+    let entries: Vec<_> = (names.iter())
+        .map(|name| (name.as_str(), Some((0.25, 0.75))))
+        .collect();
+    let definition = exposing(&entries);
+    let config: serde_json::Map<_, _> = (names.iter().enumerate())
+        .map(|(i, name)| (name.clone(), json!(if i % 2 == 0 { 0.5 } else { 0.9 })))
+        .collect();
+    let invention = holding(&definition, serde_json::Value::Object(config));
+    let (runtime, _) = InventionBuilder::with_registry(48_000, registry())
+        .build(invention)
+        .unwrap();
+    let kit = runtime.control_surfaces.lock().unwrap()["k"].clone();
+    for (i, name) in names.iter().enumerate() {
+        let expected = if i % 2 == 0 { 0.5 } else { 0.75 };
+        assert_eq!(kit.get_control(name), Ok(ControlValue::Number(expected)));
+    }
+    assert_eq!(kit.controls().len(), count);
+}
+
+#[test]
+fn a_development_coerces_a_written_value_to_the_kind_its_entry_lists() {
+    let definition = exposing(&[("level", Some((0.25, 0.75))), ("other", None)]);
+    let (runtime, _) = InventionBuilder::with_registry(48_000, registry())
+        .build(holding(&definition, json!({})))
+        .unwrap();
+    let kit = runtime.control_surfaces.lock().unwrap()["k"].clone();
+    let text = ControlValue::String("0.5".into());
+    assert_eq!(
+        kit.coerce_value("level", text.clone()),
+        ControlValue::Number(0.5)
+    );
+    // A key the development does not list passes through untouched.
+    assert_eq!(kit.coerce_value("missing", text.clone()), text);
 }

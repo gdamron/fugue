@@ -8,31 +8,70 @@
 //! range must lie within each inner control the name reaches, so no alias
 //! is asked to hold a value its own range refuses.
 
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
+
 use crate::control_request::{ControlDecl, DeclKind};
 use crate::{ControlKind, ControlValue, Invention};
 
-/// The range `definition`, the development `development`, declares for its
-/// exposed control `name`, from whichever of the name's entries declare
-/// one; or why it cannot hold one: entries declaring different ranges.
-pub(super) fn declared(
-    development: &str,
-    definition: &Invention,
-    name: &str,
-) -> Result<Option<(f32, f32)>, String> {
-    let mut ranges = (definition.controls.iter())
-        .filter(|control| control.name == name)
-        .filter_map(|control| control.range)
-        .map(|range| (range.min as f32, range.max as f32));
-    let Some(first) = ranges.next() else {
-        return Ok(None);
-    };
-    match ranges.find(|other| *other != first) {
-        Some(other) => Err(format!(
-            "Development '{development}' control '{name}': its entries declare different \
-             ranges, {} to {} and {} to {}",
-            first.0, first.1, other.0, other.1
-        )),
-        None => Ok(Some(first)),
+/// What the entries of one exposed control declare.
+enum Declared {
+    /// One range, which every entry declaring one agrees on.
+    Range((f32, f32)),
+    /// The first range declared and the first one differing from it.
+    Differing((f32, f32), (f32, f32)),
+}
+
+/// The ranges a development's exposed controls declare, found in one pass
+/// over its definition so each lookup is a map read, however many controls
+/// it exposes.
+pub(super) struct Ranges<'a> {
+    development: &'a str,
+    declared: HashMap<&'a str, Declared>,
+}
+
+impl<'a> Ranges<'a> {
+    /// The ranges `definition`, the development `development`, declares,
+    /// by exposed control name, from whichever of the name's entries
+    /// declare one.
+    pub(super) fn of(development: &'a str, definition: &'a Invention) -> Self {
+        let mut declared = HashMap::new();
+        for control in &definition.controls {
+            let Some(range) = control.range else {
+                continue;
+            };
+            let range = (range.min as f32, range.max as f32);
+            match declared.entry(control.name.as_str()) {
+                Entry::Vacant(vacant) => {
+                    vacant.insert(Declared::Range(range));
+                }
+                Entry::Occupied(mut occupied) => {
+                    if let Declared::Range(first) = *occupied.get() {
+                        if first != range {
+                            occupied.insert(Declared::Differing(first, range));
+                        }
+                    }
+                }
+            }
+        }
+        Self {
+            development,
+            declared,
+        }
+    }
+
+    /// The range exposed control `name` declares; or why it cannot hold
+    /// one: entries declaring different ranges.
+    pub(super) fn get(&self, name: &str) -> Result<Option<(f32, f32)>, String> {
+        match self.declared.get(name) {
+            None => Ok(None),
+            Some(Declared::Range(range)) => Ok(Some(*range)),
+            Some(Declared::Differing(first, other)) => Err(format!(
+                "Development '{}' control '{name}': its entries declare different \
+                 ranges, {} to {} and {} to {}",
+                self.development, first.0, first.1, other.0, other.1
+            )),
+        }
     }
 }
 

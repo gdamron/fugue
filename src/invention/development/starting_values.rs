@@ -11,11 +11,13 @@
 //! and the writes after the build find them already there.
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::error::Error;
 
 use serde_json::Value;
 
-use super::{ranges, DevelopmentFactory, DevelopmentModule, InventionBuilder};
+use super::ranges::{self, Ranges};
+use super::{DevelopmentFactory, DevelopmentModule, InventionBuilder};
 use crate::invention::authored_document;
 use crate::invention::runtime::ControlSurfaceInstance;
 use crate::traits::exact_number::json_scalar;
@@ -118,11 +120,12 @@ pub(super) fn with_held_starts<'a>(
 /// build has nothing held (`None`), and its build reports why.
 fn held_starts(factory: &DevelopmentFactory, sample_rate: u32) -> Option<Vec<(String, f32)>> {
     let definition = &factory.definition;
+    let declared = Ranges::of(&factory.name, definition);
     let mut ranged: Vec<(&str, (f32, f32))> = Vec::new();
+    let mut seen = HashSet::new();
     for control in &definition.controls {
-        let range = ranges::declared(&factory.name, definition, &control.name);
-        if let Ok(Some(range)) = range {
-            if !ranged.iter().any(|(name, _)| *name == control.name) {
+        if let Ok(Some(range)) = declared.get(&control.name) {
+            if seen.insert(control.name.as_str()) {
                 ranged.push((&control.name, range));
             }
         }
@@ -167,6 +170,7 @@ fn with_starting_values(
     skip: &[&str],
 ) -> Option<Invention> {
     let values = config.as_object()?;
+    let declared = Ranges::of(development, definition);
     let mut built = definition.clone();
     let mut written = false;
     for (name, value) in values
@@ -178,9 +182,7 @@ fn with_starting_values(
         };
         // Held within the range its control declares, as a write to it is;
         // a range the build refuses is reported by the build.
-        let range = ranges::declared(development, definition, name)
-            .ok()
-            .flatten();
+        let range = declared.get(name).ok().flatten();
         let value = ranges::held(value, range);
         for alias in definition
             .controls

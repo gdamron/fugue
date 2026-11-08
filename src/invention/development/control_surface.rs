@@ -5,6 +5,7 @@ use crate::modules::control_scheduler::SurfaceDirectory;
 use std::sync::PoisonError;
 
 use super::fan_out::fanned_out;
+use super::ranges::Ranges;
 use super::retarget::{reordered, InnerOrder};
 
 pub(super) struct AliasedControl {
@@ -59,6 +60,7 @@ impl DevelopmentControlSurface {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let surfaces = directory.lock().unwrap().clone();
         let mut controls = Vec::with_capacity(definition.controls.len());
+        let ranges = Ranges::of(name, definition);
 
         for control in &definition.controls {
             let surface = surfaces
@@ -75,7 +77,7 @@ impl DevelopmentControlSurface {
                     )
                 })?;
 
-            let range = super::ranges::declared(name, definition, &control.name)?;
+            let range = ranges.get(&control.name)?;
             controls.push(AliasedControl {
                 meta: ControlMeta {
                     key: control.name.clone(),
@@ -107,12 +109,13 @@ impl DevelopmentControlSurface {
     /// The payload keys reaching an inner control `key` reaches, `key`
     /// among them when it is one.
     fn shared_payload_keys<'a>(&'a self, key: &'a str) -> impl Iterator<Item = &'a str> {
+        // The inner controls `key` reaches, which few keys share.
+        let reaches: Vec<(&str, &str)> = (self.controls.iter())
+            .filter(|aliased| aliased.meta.key == key)
+            .map(|aliased| (aliased.module_id.as_str(), aliased.key.as_str()))
+            .collect();
         let reached = move |entry: &AliasedControl| {
-            (self.controls.iter()).any(|aliased| {
-                aliased.meta.key == key
-                    && aliased.module_id == entry.module_id
-                    && aliased.key == entry.key
-            })
+            reaches.contains(&(entry.module_id.as_str(), entry.key.as_str()))
         };
         let mut seen = std::collections::HashSet::new();
         (self.controls.iter())
@@ -211,6 +214,19 @@ impl ControlSurface for DevelopmentControlSurface {
                 meta
             })
             .collect()
+    }
+
+    /// Coerced by the kind its first entry lists, as the default does by
+    /// the listing of [`Self::controls`], without building the listing
+    /// (which would cost every key a write of its own).
+    fn coerce_value(&self, key: &str, value: ControlValue) -> ControlValue {
+        if crate::traits::exact_number::keeps_text(&value) && self.is_whole(key) {
+            return value;
+        }
+        match self.controls.iter().find(|entry| entry.meta.key == key) {
+            Some(entry) => value.coerced_to(&entry.meta.kind),
+            None => value,
+        }
     }
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
