@@ -63,6 +63,13 @@ pub struct MutationReceipt {
     /// that writes no control.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub controls: Vec<AppliedControl>,
+    /// What the command's load set aside so the rest still plays (a
+    /// starting value a development's control refuses, say), each worded
+    /// as in [`RenderEngine::load_warnings`](crate::RenderEngine::load_warnings).
+    /// Empty, and left off the wire, for a command that loads nothing or
+    /// sets nothing aside.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 /// A control as it reads after a write, and what became of the write.

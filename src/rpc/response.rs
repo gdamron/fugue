@@ -225,4 +225,11 @@ pub struct ReloadOutcome {
     /// [`MutationReply::Receipt`]: super::MutationReply::Receipt
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<RuntimeFullSnapshot>,
+    /// What the reload's builds set aside so the rest still plays, each
+    /// worded as in [`RenderEngine::load_warnings`](crate::RenderEngine::load_warnings):
+    /// a diff's are its report's [`warnings`](crate::ReloadReport::warnings),
+    /// and a rebuild's are those of the fresh load it makes. Empty, and left
+    /// off the wire, when nothing was set aside.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
