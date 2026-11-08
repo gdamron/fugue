@@ -477,7 +477,15 @@ pub(crate) fn load_development_definition(
     match (&development.path, &development.definition) {
         (Some(path), None) => {
             let resolved = resolve_development_path(invention.source_path.as_deref(), path)?;
-            Invention::from_file(&resolved.to_string_lossy())
+            Invention::from_file(&resolved.to_string_lossy()).map_err(|err| {
+                // A document that fails to parse names the development; any
+                // other failure (a lock refusal, a missing file) is kept as
+                // it was.
+                match err.downcast::<serde_json::Error>() {
+                    Ok(parse) => format!("Development '{}': {parse}", development.name).into(),
+                    Err(other) => other,
+                }
+            })
         }
         (None, Some(definition)) => Ok((**definition).clone()),
         (Some(_), Some(_)) => Err(format!(

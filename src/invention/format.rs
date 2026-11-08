@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+mod named_errors;
+#[cfg(test)]
+mod named_errors_tests;
+
 /// A complete invention document defining a modular synthesis setup.
 ///
 /// Inventions can be loaded from JSON files or strings and define
@@ -103,7 +107,10 @@ impl Invention {
 }
 
 /// A named development registered for use as a module type within an invention.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// Deserializes through `named_errors`, so an error in an inline definition
+/// names the development.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct DevelopmentSpec {
     /// Module type name used when instantiating this development.
@@ -152,7 +159,10 @@ pub struct DevelopmentOutput {
 ///
 /// Like the exposed inputs and outputs, an exposed control is called by its
 /// `name`; listing one name more than once fans it out to every target.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// Deserializes through `named_errors`, so a range missing a bound names
+/// the control and the bound.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct DevelopmentControl {
     pub name: String,
