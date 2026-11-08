@@ -141,8 +141,12 @@ impl Releases {
 
     /// Moves every release to its module's index in a new module order,
     /// dropping those of modules `new_of` does not carry over, and each
-    /// share's source with it.
-    pub(super) fn remap(&mut self, new_of: impl Fn(usize) -> Option<usize>) {
+    /// share's source to where `source_of` puts it.
+    pub(super) fn remap(
+        &mut self,
+        new_of: impl Fn(usize) -> Option<usize>,
+        source_of: impl Fn(usize) -> Option<usize>,
+    ) {
         let mut i = 0;
         while i < self.len {
             match new_of(self.slots[i].module) {
@@ -150,7 +154,8 @@ impl Releases {
                     let release = &mut self.slots[i];
                     release.module = new;
                     let (from, port) = release.source;
-                    release.source = new_of(from).map_or(NO_SOURCE, |from| (from, port));
+                    let from = (from != usize::MAX).then(|| source_of(from)).flatten();
+                    release.source = from.map_or(NO_SOURCE, |from| (from, port));
                     i += 1;
                 }
                 None => self.swap_remove(i),
@@ -185,9 +190,9 @@ impl Releases {
 }
 
 /// A module's connections before an edit: the ports it had connected, the
-/// routes into them, and every module's last outputs as of then (indexed as
-/// those routes are), and the modules those routes index when they are not
-/// the graph's own, in its order now.
+/// routes into them, every module's last outputs as of then (indexed as
+/// those routes are), and, when those routes index another module order
+/// than the graph's now, that order's module map, to match sources by id.
 #[derive(Clone, Copy)]
 pub(super) struct Previous<'a> {
     pub(super) ports: &'a [usize],
@@ -246,7 +251,8 @@ impl SignalGraph {
     /// cable last carried, gliding to 0 on top of the routes that remain.
     /// A cable patched in again as its share glides is the routes' at once,
     /// as a port patched again as it releases is. A cable is its source
-    /// module (by id) and port, and one made twice counts twice. A share
+    /// module (by id, or by index when `previous` is in the graph's own
+    /// order) and port, and one made twice counts twice. A share
     /// past the slots, or of a cable whose value is unknown, steps as
     /// before.
     pub(super) fn release_routes(&mut self, mi: usize, port: usize, previous: Previous) {
@@ -267,6 +273,12 @@ impl SignalGraph {
             a.from_module == b.from_module && a.from_port == b.from_port
         };
         let (then, now) = (previous.routes.iter().filter(into), now.iter().filter(into));
+        // The same cables in the same order, as most edits leave a port:
+        // none lost, none patched in again.
+        let mut pairs = then.clone().zip(now.clone());
+        if then.clone().count() == now.clone().count() && pairs.all(|(old, new)| same(old, new)) {
+            return;
+        }
         // A cable patched in again cuts its share short.
         let gliding = !self.releases.is_empty();
         for (k, new) in now.clone().enumerate().filter(|_| gliding) {
@@ -379,7 +391,7 @@ impl SignalGraph {
 }
 
 /// The id of the module at `index` of `modules`.
-fn id_at(modules: &IndexMap<String, ModuleInstance>, index: usize) -> Option<&str> {
+pub(super) fn id_at(modules: &IndexMap<String, ModuleInstance>, index: usize) -> Option<&str> {
     modules.get_index(index).map(|(id, _)| id.as_str())
 }
 

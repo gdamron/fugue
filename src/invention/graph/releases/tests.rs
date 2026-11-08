@@ -257,3 +257,76 @@ fn a_cable_patched_back_as_it_glides_out_is_the_routes_again() {
     let out = render(&mut engine, 2_048);
     assert!(out.iter().all(|&x| x == 0.75), "{:?}", &out[..4]);
 }
+
+/// [`summed`] with `cv2` and an idle oscillator `z` ahead of every other
+/// module, so removing either moves the rest down the order.
+fn summed_up_front() -> RenderEngine {
+    let mut engine = RenderEngine::new(48_000);
+    engine.set_block_size(128);
+    let still = |id: &str| {
+        json!({ "id": id, "type": "oscillator",
+                "config": { "frequency": 0.001, "waveform": "square" } })
+    };
+    let invention = json!({
+        "version": "1.0.0",
+        "modules": [
+            still("z"),
+            { "id": "cv2", "type": "vca", "config": { "level": 0.5 } },
+            still("a"), still("b"),
+            { "id": "cv", "type": "vca", "config": { "level": 0.25 } },
+            { "id": "voice", "type": "vca" },
+            { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+        ],
+        "connections": [
+            { "from": "a", "from_port": "audio", "to": "cv", "to_port": "audio" },
+            { "from": "a", "from_port": "audio", "to": "cv2", "to_port": "audio" },
+            { "from": "cv", "from_port": "audio", "to": "voice", "to_port": "level" },
+            { "from": "cv2", "from_port": "audio", "to": "voice", "to_port": "level" },
+            { "from": "b", "from_port": "audio", "to": "voice", "to_port": "audio" },
+            { "from": "voice", "from_port": "audio", "to": "dac", "to_port": "audio" }
+        ]
+    });
+    engine.load_json(&invention.to_string()).unwrap();
+    engine
+}
+
+#[test]
+fn a_fan_in_glides_out_its_cable_when_the_edit_moves_the_rest() {
+    let mut engine = summed_up_front();
+    assert!(render(&mut engine, 1_024).iter().all(|&x| x == 0.75));
+    engine.remove_module("cv2").unwrap();
+    assert_glides(0.75, 0.25, &render(&mut engine, 2_048));
+}
+
+#[test]
+fn a_cable_patched_back_after_an_edit_moves_it_is_the_routes_again() {
+    let mut engine = summed_up_front();
+    render(&mut engine, 1_024);
+    engine.disconnect("cv2", "audio", "voice", "level").unwrap();
+    render(&mut engine, 128);
+    // `cv2` and `voice` move down the order as the share glides.
+    engine.remove_module("z").unwrap();
+    engine.connect("cv2", "audio", "voice", "level").unwrap();
+    let out = render(&mut engine, 2_048);
+    assert!(out.iter().all(|&x| x == 0.75), "{:?}", &out[..4]);
+}
+
+#[test]
+fn a_cable_removed_from_an_input_in_a_feedback_loop_glides_out_too() {
+    let mut engine = patched_with(
+        json!([
+            { "id": "cv2", "type": "vca", "config": { "level": 0.5 } },
+            { "id": "fb", "type": "vca", "config": { "level": 0.0 } }
+        ]),
+        json!([
+            { "from": "a", "from_port": "audio", "to": "cv2", "to_port": "audio" },
+            { "from": "cv2", "from_port": "audio", "to": "voice", "to_port": "level" },
+            { "from": "voice", "from_port": "audio", "to": "fb", "to_port": "audio" },
+            { "from": "fb", "from_port": "audio", "to": "b", "to_port": "frequency_mod" }
+        ]),
+    );
+    let steady = render(&mut engine, 1_024);
+    assert!(steady[1..].iter().all(|&x| x == 0.75), "{:?}", &steady[..4]);
+    engine.disconnect("cv2", "audio", "voice", "level").unwrap();
+    assert_glides(0.75, 0.25, &render(&mut engine, 2_048));
+}

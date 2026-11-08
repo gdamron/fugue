@@ -406,12 +406,13 @@ impl SignalGraph {
                 .connected_in_ports
                 .get(mi)
                 .is_some_and(|now| now.contains(&p));
-            let changed = was.is_none_or(|was| was.ports.contains(&p));
-            if !connected && !changed {
+            // Connected before, or starting fresh.
+            let was_connected = was.is_none_or(|was| was.ports.contains(&p));
+            if !connected && !was_connected {
                 continue;
             }
             match was {
-                Some(was) if connected && changed => self.release_routes(mi, p, was),
+                Some(was) if connected && was_connected => self.release_routes(mi, p, was),
                 _ => {
                     let shares = if self.releases.is_empty() {
                         0.0
