@@ -121,12 +121,50 @@ fn a_nested_development_starts_at_the_value_passed_down() {
 }
 
 #[test]
-fn a_value_the_inner_config_refuses_still_fails_the_build() {
+fn a_value_its_control_refuses_is_reported_and_the_rest_start() {
     let invention = development(
-        &[(json!({ "id": "vca", "type": "vca" }), "audio", "audio")],
-        json!([{ "name": "level", "module": "vca", "control": "level" }]),
-        json!({ "level": "loud" }),
+        &[
+            (json!({ "id": "vca", "type": "vca" }), "audio", "audio"),
+            (json!({ "id": "gain", "type": "gain" }), "audio", "audio"),
+        ],
+        json!([
+            { "name": "level", "module": "vca", "control": "level" },
+            { "name": "decibels", "module": "gain", "control": "decibels" }
+        ]),
+        json!({ "level": "loud", "decibels": -12.0 }),
     );
     let mut engine = RenderEngine::new(48_000);
-    assert!(engine.load_json(&invention.to_string()).is_err());
+    engine.load_json(&invention.to_string()).unwrap();
+    let mut out = vec![0.0; 2_048];
+    engine.render_interleaved(&mut out).unwrap();
+    let left: Vec<f32> = out.chunks(2).map(|frame| frame[0]).collect();
+    assert_steady(&left, crate::dsp::decibels_to_level(-12.0));
+    let warnings = engine.load_warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].starts_with("module 'v': development 'voice' control 'level'"));
+}
+
+#[test]
+fn a_value_refused_inside_a_nested_development_is_reported_once_per_development() {
+    let mut invention = development(
+        &[(json!({ "id": "nest", "type": "inner" }), "audio", "audio")],
+        json!([{ "name": "level", "module": "nest", "control": "level" }]),
+        json!({ "level": "loud" }),
+    );
+    invention["developments"][0]["definition"]["developments"] = json!([{
+        "name": "inner",
+        "definition": {
+            "version": "1.0.0",
+            "modules": [{ "id": "vca", "type": "vca" }],
+            "connections": [],
+            "inputs": [{ "name": "audio", "to": "vca", "to_port": "audio" }],
+            "outputs": [{ "name": "audio", "from": "vca", "from_port": "audio" }],
+            "controls": [{ "name": "level", "module": "vca", "control": "level" }]
+        }
+    }]);
+    let mut engine = RenderEngine::new(48_000);
+    engine.load_json(&invention.to_string()).unwrap();
+    let warnings = engine.load_warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].starts_with("module 'v': development 'voice' control 'level'"));
 }

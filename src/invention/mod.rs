@@ -25,6 +25,7 @@ pub(crate) mod edits;
 pub mod format;
 pub mod graph;
 pub mod handles;
+pub(crate) mod load_warnings;
 #[cfg(test)]
 pub(crate) mod manual_backend;
 pub mod notes;

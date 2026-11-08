@@ -62,6 +62,17 @@ pub struct InventionRuntime {
 }
 
 impl InventionRuntime {
+    /// What building it set aside without refusing it, each naming the
+    /// module it is in; empty when it set nothing aside.
+    pub fn load_warnings(&self) -> Vec<String> {
+        let state = self.state.lock().unwrap();
+        state
+            .load_warnings
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+
     /// Starts audio playback using the default AudioDriver.
     pub fn start(self) -> Result<RunningInvention, Box<dyn std::error::Error>> {
         let audio = AudioDriver::new()?;

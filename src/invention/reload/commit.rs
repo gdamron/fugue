@@ -89,6 +89,11 @@ impl RunningInvention {
             .iter()
             .map(build)
             .collect::<Result<Vec<_>, _>>()?;
+        let warnings = swapped
+            .iter()
+            .chain(&added)
+            .flat_map(|built| built.warnings.iter().cloned())
+            .collect();
 
         let writes = plan
             .control_updates
@@ -109,6 +114,7 @@ impl RunningInvention {
             connections_added: plan.added_connections.len(),
             connections_removed: plan.removed_connections.len(),
             unchanged: plan.unchanged.len(),
+            warnings,
         };
         Ok(PreparedCommit {
             change,

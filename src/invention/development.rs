@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use super::builder::InventionBuilder;
+use super::load_warnings;
 use super::reload::LoadedDevelopments;
 use super::timelines::Enclosure;
 
@@ -141,9 +142,29 @@ impl ModuleFactory for DevelopmentFactory {
         // A definition starting a ranged control outside its range starts
         // it within, as a configured value outside it would.
         let started = starting_values::with_held_starts(self, sample_rate, config);
-        let (module, control_surface) =
+        let (module, control_surface, inner) =
             starting_values::build_started(self, sample_rate, &started)?;
-        config::apply_development_config(&self.name, &started, control_surface.as_ref())?;
+        let refused =
+            config::apply_development_config(&self.name, &started, control_surface.as_ref())?;
+        // A value passed down to a nested development that sets it aside
+        // is set aside here too: said once, here, as the instance's own.
+        let passed_down = |warning: &load_warnings::Warning| {
+            let [module] = warning.modules.as_slice() else {
+                return false;
+            };
+            (self.definition.controls.iter()).any(|alias| {
+                alias.module == *module
+                    && warning.refused.as_deref() == Some(alias.control.as_str())
+                    && (refused.iter()).any(|own| own.refused.as_deref() == Some(&alias.name))
+            })
+        };
+        if self.registry.builds_live() {
+            let inner: Vec<_> = inner.into_iter().filter(|w| !passed_down(w)).collect();
+            inner
+                .into_iter()
+                .chain(refused)
+                .for_each(load_warnings::warn);
+        }
         #[cfg(debug_assertions)]
         if let Some(controls) = &module.controls {
             let keys = self.config_keys();

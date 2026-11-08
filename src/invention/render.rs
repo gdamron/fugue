@@ -123,6 +123,20 @@ impl RenderEngine {
         Ok(())
     }
 
+    /// What the last load set aside without refusing it, each naming the
+    /// module it is in (a development instance's starting value its control
+    /// refuses, say); empty when it set nothing aside. A reload reports what
+    /// it sets aside in its own [`ReloadReport::warnings`](crate::ReloadReport::warnings)
+    /// and leaves this as the load left it.
+    pub fn load_warnings(&self) -> Vec<String> {
+        let state = self.state.lock().unwrap();
+        state
+            .load_warnings
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+
     /// Loads an invention from JSON text.
     pub fn load_json(&mut self, json: &str) -> Result<(), Box<dyn std::error::Error>> {
         let invention = serde_json::from_str::<Invention>(json)?;

@@ -25,6 +25,7 @@ type BuildModulesResult = (
     Vec<String>,
     IndexMap<String, ControlSurfaceInstance>,
     InventionHandles,
+    Vec<super::load_warnings::Warning>,
 );
 
 /// Invention builder that uses named port routing.
@@ -163,7 +164,15 @@ impl InventionBuilder {
         self.validate_invention(&invention)?;
 
         // Build all module instances (including sinks)
-        let (modules, sinks, control_surfaces, handles) = self.build_modules(&invention)?;
+        let (modules, sinks, control_surfaces, handles, warnings) =
+            self.build_modules(&invention)?;
+        // A build nested in a development's reports through the module it
+        // builds (see `load_warnings`); the outermost one says them.
+        if !super::load_warnings::collecting() {
+            for warning in &warnings {
+                eprintln!("Warning: {warning}");
+            }
+        }
 
         // Share the control-surface directory now so control schedulers can
         // resolve their schedules against it (and re-resolve live edits
@@ -205,7 +214,9 @@ impl InventionBuilder {
         // Build the routing graph
         let routing = self.build_routing(&invention, &modules)?;
 
-        let state = Arc::new(Mutex::new(self.build_runtime_state(&invention, document)));
+        let mut state = self.build_runtime_state(&invention, document);
+        state.load_warnings = warnings;
+        let state = Arc::new(Mutex::new(state));
 
         let runtime = InventionRuntime {
             modules,
@@ -263,6 +274,7 @@ impl InventionBuilder {
             written_since: Default::default(),
             authored_epoch: 0,
             authored_log: Default::default(),
+            load_warnings: Vec::new(),
         }
     }
 
@@ -299,15 +311,24 @@ impl InventionBuilder {
         let mut sinks = Vec::new();
         let mut control_surfaces = IndexMap::new();
         let mut all_handles: HashMap<String, Arc<dyn Any + Send + Sync>> = HashMap::new();
+        let mut warnings = Vec::new();
 
         for spec in &invention.modules {
             // Build module via factory; a refusal names the module, and
             // refuses the whole document before anything plays.
-            let result = super::seeding::within_module(&spec.id, || {
-                self.registry
-                    .build(&spec.module_type, self.sample_rate, &spec.config)
-            })
-            .map_err(|error| format!("module '{}': {error}", spec.id))?;
+            let (result, reported) = super::load_warnings::collected(|| {
+                super::seeding::within_module(&spec.id, || {
+                    self.registry
+                        .build(&spec.module_type, self.sample_rate, &spec.config)
+                })
+            });
+            let result = result.map_err(|error| format!("module '{}': {error}", spec.id))?;
+            // What the build set aside without refusing it, named by module
+            // as a refusal is.
+            for mut warning in reported {
+                warning.modules.insert(0, spec.id.clone());
+                warnings.push(warning);
+            }
 
             // If this is a sink, track its module id for output collection.
             if matches!(result.module, GraphModule::Sink(_)) {
@@ -333,6 +354,7 @@ impl InventionBuilder {
             sinks,
             control_surfaces,
             InventionHandles::new(all_handles),
+            warnings,
         ))
     }
 
