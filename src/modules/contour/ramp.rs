@@ -396,7 +396,10 @@ mod tests {
         }
         for c in 0..CHANNELS {
             let p = ramp.phase(c);
-            assert!(p < 1e-3 || p > 1.0 - 1e-3, "output {c} at {p}");
+            assert!(
+                !p.is_nan() && !(1e-3..=1.0 - 1e-3).contains(&p),
+                "output {c} at {p}"
+            );
         }
     }
 

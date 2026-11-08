@@ -3,7 +3,7 @@
 //! An offline render edits through the same change a live graph does: an
 //! upsert drops connections through ports the new module lacks, surviving
 //! schedulers whose targets the change rebuilds re-resolve against the new
-//! instances (see [`Rescheduling`]), and a change removing a module a
+//! instances (see [`super::rebind::Rescheduling`]), and a change removing a module a
 //! schedule still targets, without writing a schedule that no longer does,
 //! is refused with nothing changed. The change compiles the same
 //! publication, with the same handovers (see `publish::rebind`), and the

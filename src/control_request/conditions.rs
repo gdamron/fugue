@@ -105,7 +105,7 @@ impl WatchSlots {
     pub(crate) fn release(&self) {
         let released = self
             .taken
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
         debug_assert!(released.is_ok(), "released a slot never taken");
     }
 

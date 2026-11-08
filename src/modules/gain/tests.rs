@@ -53,7 +53,9 @@ fn a_decibels_change_glides_for_about_a_block() {
     assert!(step < 0.05, "largest step {step}");
     let landed = control_glide_frames(SR) as usize - 1;
     assert!(out[landed - 1] < out[landed]);
-    assert!(out[landed..].iter().all(|&y| (y - decibels_to_level(12.0)).abs() < 1e-5));
+    assert!(out[landed..]
+        .iter()
+        .all(|&y| (y - decibels_to_level(12.0)).abs() < 1e-5));
 }
 
 #[test]

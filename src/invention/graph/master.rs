@@ -98,12 +98,8 @@ fn channel_levels(samples: &[f32]) -> (f32, f32) {
     let peak = samples
         .iter()
         .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
-    let chunks = samples.chunks_exact(LANES);
-    let tail: f32 = chunks
-        .remainder()
-        .iter()
-        .map(|sample| sample * sample)
-        .sum();
+    let (chunks, rest) = samples.as_chunks::<LANES>();
+    let tail: f32 = rest.iter().map(|sample| sample * sample).sum();
     let mut sums = [0.0f32; LANES];
     for chunk in chunks {
         for (sum, sample) in sums.iter_mut().zip(chunk) {

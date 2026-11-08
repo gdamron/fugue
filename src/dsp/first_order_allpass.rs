@@ -56,6 +56,9 @@ impl FirstOrderAllpass {
         // A decaying state is flushed before it turns subnormal (slow on
         // some CPUs), and a NaN or infinity let in is forgotten rather than
         // kept for good.
+        // The negated comparison is deliberate: unlike `<`, it is also true
+        // for NaN, so one test forgets both.
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
         if !(self.state.abs() >= SUBNORMAL_FLUSH) {
             self.state = 0.0;
         }

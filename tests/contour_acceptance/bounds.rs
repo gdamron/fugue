@@ -39,7 +39,7 @@ fn random_gate(rng: &mut Rng, len: usize, longest: usize) -> Vec<f32> {
     let mut high = false;
     while x.len() < len {
         let run = 1 + rng.below(longest);
-        x.extend(std::iter::repeat(f32::from(high)).take(run));
+        x.extend(std::iter::repeat_n(f32::from(high), run));
         high = !high;
     }
     x.truncate(len);
@@ -50,7 +50,7 @@ fn steps(rng: &mut Rng, len: usize, top: f32) -> Vec<f32> {
     let mut x = Vec::with_capacity(len);
     while x.len() < len {
         let v = top * rng.f32();
-        x.extend(std::iter::repeat(v).take(1 + rng.below(4000)));
+        x.extend(std::iter::repeat_n(v, 1 + rng.below(4000)));
     }
     x.truncate(len);
     x

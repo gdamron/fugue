@@ -75,7 +75,13 @@ fn a_live_sessions_write_inside_the_ending_block_keeps_its_end_frame() {
     let mut replayed = Vec::new();
     for _ in 0..=END / 64 {
         engine.render_interleaved(&mut buffer).unwrap();
-        replayed.extend(buffer.chunks_exact(2).map(|frame| frame[0].to_bits()));
+        replayed.extend(
+            buffer
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|frame| frame[0].to_bits()),
+        );
     }
     let bits = played.iter().chain(&last).map(|sample| sample.to_bits());
     assert_eq!(

@@ -64,7 +64,7 @@ fn partial_mix_of_full_scale_input_stays_within_unity() {
                     "mix": mix, "level": 1.0, "post_tone": 1.0 }));
                 let sig = move |i: usize| {
                     if square {
-                        if (i / 50) % 2 == 0 {
+                        if (i / 50).is_multiple_of(2) {
                             1.0
                         } else {
                             -1.0

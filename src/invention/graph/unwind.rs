@@ -116,7 +116,7 @@ impl SignalGraph {
 
     /// Keeps, for teardown, what the unwind just caught set aside as it
     /// dropped it (see `crate::payload::take_caught`). Past room for
-    /// [`CAUGHT`], which one panic never fills, the rest is leaked rather
+    /// [`crate::payload::CAUGHT`], which one panic never fills, the rest is leaked rather
     /// than freed here. Allocation-, free- and lock-free.
     pub(super) fn keep_caught(&mut self) {
         for retired in take_caught().into_iter().flatten() {

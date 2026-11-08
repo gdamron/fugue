@@ -114,7 +114,12 @@ impl Rig {
             Inner::Offline(engine) => {
                 let mut buffer = vec![0.0f32; frames * 2];
                 engine.render_interleaved(&mut buffer).expect("renders");
-                buffer.chunks_exact(2).map(|frame| frame[0]).collect()
+                buffer
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|frame| frame[0])
+                    .collect()
             }
             Inner::Live { slot, .. } => {
                 let mut out = Vec::with_capacity(frames);

@@ -28,7 +28,7 @@ pub fn module(id: &str, kind: &str, config: Value) -> Value {
 }
 
 /// A document under construction.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Doc {
     pub modules: Vec<Value>,
     pub connections: Vec<Value>,
@@ -275,8 +275,7 @@ pub fn rising_edges(x: &[f32], level: f32) -> Vec<usize> {
 pub fn echo_offsets(left: &[f32], right: &[f32], from: usize, to: usize) -> Vec<usize> {
     let dry = rising_edges(&left[from..to], EDGE);
     let start = from + *dry.first().expect("a dry gate in the window");
-    let echoes = rising_edges(&right[start..to], EDGE);
-    echoes
+    rising_edges(&right[start..to], EDGE)
 }
 
 /// The first `n` repeats of a delay of `d` samples whose loop is exact.
@@ -307,6 +306,8 @@ pub fn assert_bits(a: &[f32], b: &[f32], label: &str) {
     }
 }
 
+// `!(difference <= tol)` is deliberate: a NaN difference must fail the check.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn assert_close(a: &[f32], b: &[f32], tol: f32, label: &str) {
     assert_eq!(a.len(), b.len(), "{label}: lengths differ");
     if let Some(i) = a.iter().zip(b).position(|(x, y)| !((x - y).abs() <= tol)) {

@@ -84,7 +84,9 @@ fn run_triggered(module: &mut dyn Module, frames: usize, gate: impl Fn(usize) ->
 fn retriggers_carry_on_from_the_current_level() {
     for (mode, gate) in [
         ("ad", (|i| i % 3000 < 10) as fn(usize) -> bool),
-        ("ar", |i| i % 30_000 < 12_000 || (19_000..19_500).contains(&(i % 30_000))),
+        ("ar", |i| {
+            i % 30_000 < 12_000 || (19_000..19_500).contains(&(i % 30_000))
+        }),
     ] {
         let mut m = contour(serde_json::json!({
             "mode": mode, "output_mode": "envelope", "shift": 1.0, "frequency": 2.0,

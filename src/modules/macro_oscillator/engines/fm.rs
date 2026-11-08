@@ -80,8 +80,10 @@ impl FmEngine {
 
         let high = self
             .carrier_high
-            .chunks_exact_mut(OVERSAMPLING)
-            .zip(self.sub_high.chunks_exact_mut(OVERSAMPLING));
+            .as_chunks_mut::<OVERSAMPLING>()
+            .0
+            .iter_mut()
+            .zip(self.sub_high.as_chunks_mut::<OVERSAMPLING>().0.iter_mut());
         for ((carrier_out, sub_out), ((carrier_f, modulator_f), (amount, feedback))) in
             high.zip(carriers.zip(modulators).zip(amounts.zip(feedbacks)))
         {

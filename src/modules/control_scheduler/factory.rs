@@ -109,7 +109,7 @@ pub(crate) fn name_unattached_from_handles(
     }
 }
 
-/// Like [`attach_from_handle`], but resolves the schedule against `surfaces`
+/// Like `attach_from_handle`, but resolves the schedule against `surfaces`
 /// (the directory as a pending graph change will leave it), so a scheduler
 /// may target a module added in the same change. Nothing outside the new
 /// scheduler changes until that change commits.

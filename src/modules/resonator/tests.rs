@@ -136,8 +136,8 @@ fn a_hot_input_stays_within_full_scale() {
         r.set_control("model", model as f32).unwrap();
         r.set_input_connected(AUDIO_IN, true);
         for b in 0..200 {
-            for i in 0..HOST {
-                r.inputs[AUDIO_IN][i] = if (b * HOST + i) % 97 < 3 { 8.0 } else { -8.0 };
+            for (i, x) in r.inputs[AUDIO_IN][..HOST].iter_mut().enumerate() {
+                *x = if (b * HOST + i) % 97 < 3 { 8.0 } else { -8.0 };
             }
             r.process(HOST);
             for out in [&r.odd, &r.even, &r.audio] {

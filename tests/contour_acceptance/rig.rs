@@ -93,8 +93,8 @@ impl Contour {
                 m.input_block_mut(*port)[..n].copy_from_slice(&signal[self.pos..self.pos + n]);
             }
             assert!(m.process(n), "contour stays active");
-            for k in 0..4 {
-                out[k].extend_from_slice(&m.output_block(self.outs[k])[..n]);
+            for (k, channel) in out.iter_mut().enumerate() {
+                channel.extend_from_slice(&m.output_block(self.outs[k])[..n]);
             }
             self.pos += n;
             left -= n;

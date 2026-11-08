@@ -2,7 +2,7 @@
 //!
 //! The manifest is the shared declarative format used by every (β) Fugue
 //! extension kind. The struct is intentionally permissive on parse and
-//! strict on [`crate::pkg::validate`] — round-tripping unknown reserved
+//! strict on [`crate::pkg::validate()`] — round-tripping unknown reserved
 //! fields (`signing`) is supported so Phase 2 trust work is non-breaking.
 
 use serde::{Deserialize, Serialize};

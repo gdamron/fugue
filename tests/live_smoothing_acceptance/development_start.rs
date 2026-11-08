@@ -139,7 +139,7 @@ fn a_development_instance_plays_its_starting_values_from_the_first_block_offline
             engine.set_block_size(block);
             let mut buffer = vec![0.0f32; WINDOW * 2];
             engine.render_interleaved(&mut buffer).expect("renders");
-            let got: Vec<f32> = buffer.chunks_exact(2).map(|f| f[0]).collect();
+            let got: Vec<f32> = buffer.as_chunks::<2>().0.iter().map(|f| f[0]).collect();
             cases_.check(
                 format!("{} / block {block}", case.name),
                 matches(&got, &want),

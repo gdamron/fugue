@@ -125,7 +125,7 @@ fn a_timed_write_applied_while_a_batch_is_planned_gives_way_to_it() {
     let window = pump.clone();
     author_at(&running, "osc1", 330.0, 64 * 2 + 7);
     // Checked, validated, then the commit's build lets it apply.
-    let hook = Step::Run(Box::new(move || window.render(4).truncate(0)));
+    let hook = Step::Run(Box::new(move || window.render(4).clear()));
     scripted.then(None).then(None).then(Some(hook));
     let mut batch = retune(false);
     batch.insert(0, add("t", SCRIPTED, json!({})));

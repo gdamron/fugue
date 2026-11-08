@@ -200,7 +200,7 @@ pub(crate) struct RequestDrain {
 }
 
 /// Gives an offline render's `graph` a request drain no request reaches,
-/// built as [`link_requests`] builds one: it plays the modules' tables as
+/// built as `link_requests` builds one: it plays the modules' tables as
 /// a live graph's drain does (see `super::beats`), so a render plays them
 /// as live playback does. Allocates: control thread.
 pub(crate) fn offline_requests(graph: &mut SignalGraph) {

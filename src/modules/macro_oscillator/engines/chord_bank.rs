@@ -150,12 +150,12 @@ impl ChordBank {
         let fractional = inversion - integral as f32;
         let rotations = integral / NOTES;
         let rotated = integral % NOTES;
-        for i in 0..NOTES {
+        for (i, &base) in self.ratios.iter().enumerate() {
             let octave = (NOTES - 1 + integral - i) / NOTES;
             let transposition = 0.25 * (1u32 << octave) as f32;
             let target = (i + VOICES * 4 - rotations) % VOICES;
             let previous = (target + VOICES - 1) % VOICES;
-            let ratio = self.ratios[i] * transposition;
+            let ratio = base * transposition;
             if i == rotated {
                 v.ratios[target] = ratio;
                 v.ratios[previous] = ratio * 2.0;

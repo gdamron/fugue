@@ -28,7 +28,7 @@ fn lowpass_plus_k_bandpass_plus_highpass_equals_input() {
             let x = match n {
                 0 => 1.0,
                 _ if n % 1000 == 0 => 0.9,
-                _ => 0.6 * noise.next() + 0.3 * (n as f32 * 0.05).sin(),
+                _ => 0.6 * noise.sample() + 0.3 * (n as f32 * 0.05).sin(),
             };
             let o = svf.process(x);
             assert_sums_to_input(&svf, o, x, &format!("cutoff {fc}, q {q}, n {n}"));
@@ -47,7 +47,7 @@ fn the_sum_identity_holds_while_the_settings_change() {
             300.0 + 4000.0 * (0.5 + 0.5 * (t * 0.02).sin()),
             0.5 + 20.0 * (0.5 + 0.5 * (t * 0.003).sin()),
         );
-        let x = noise.next();
+        let x = noise.sample();
         let o = svf.process(x);
         assert_sums_to_input(&svf, o, x, &format!("n {n}"));
     }
@@ -58,7 +58,7 @@ fn notch_is_lowpass_plus_highpass() {
     let mut svf = Svf::new(RATE, 1500.0, 3.0);
     let mut noise = Noise::new(3);
     for _ in 0..2000 {
-        let o = svf.process(noise.next());
+        let o = svf.process(noise.sample());
         assert_eq!(o.notch(), o.lowpass + o.highpass);
     }
 }
@@ -127,7 +127,7 @@ fn nan_arguments_to_set_are_ignored() {
     // The state is not poisoned: output stays finite.
     let mut noise = Noise::new(5);
     for _ in 0..4800 {
-        let o = svf.process(noise.next());
+        let o = svf.process(noise.sample());
         assert!(o.lowpass.is_finite() && o.bandpass.is_finite() && o.highpass.is_finite());
     }
 }

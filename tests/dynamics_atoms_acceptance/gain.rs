@@ -94,7 +94,7 @@ fn decibels_mod_sums_with_decibels_at_audio_rate() {
         assert_ratio(&out[0], &x, 256, &|_| want, 1e-4 * want);
     }
     let six = (20.0 * 2f64.log10()) as f32;
-    let m = move |t: usize| if t % 2 == 0 { 0.0 } else { six };
+    let m = move |t: usize| if t.is_multiple_of(2) { 0.0 } else { six };
     let out = build("gain", json!({})).run(secs(0.1), &[("audio", &x), ("decibels_mod", &m)]);
     assert_ratio(
         &out[0],

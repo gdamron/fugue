@@ -1,8 +1,8 @@
 //! Audio file sink module for recording graph audio.
 //!
 //! This module holds the cross-platform module plumbing. The actual capture
-//! backend is platform-specific and lives in [`native`] (background writer
-//! thread + filesystem, WAV/FLAC) or [`wasm`] (synchronous in-memory WAV).
+//! backend is platform-specific and lives in `native` (background writer
+//! thread + filesystem, WAV/FLAC) or `wasm` (synchronous in-memory WAV).
 //! Both expose the same small interface on their shared state — `activate`,
 //! `push`, `is_stopping`, `stop`, `finish`, `frames_written`,
 //! `frames_dropped` — so the code here never branches on the target.

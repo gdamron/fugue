@@ -305,7 +305,7 @@ impl SignalGraph {
     /// and sinks, then brings input connectivity in line with it.
     ///
     /// While the previous connectivity still describes the modules by index
-    /// (nothing was added or removed since: see [`Self::apply_command`],
+    /// (nothing was added or removed since: see `Self::apply_command`,
     /// which forgets it otherwise), only ports whose connectivity changed are
     /// reset, so an unconnected input keeps the value last written to it
     /// across a block size change or an install that fell back to

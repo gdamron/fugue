@@ -205,7 +205,10 @@ fn elapsed_counts_on_across_a_reset() {
     set(&mut clock, RESET, RtValue::Bool(true));
     clock.process(64);
     assert_eq!(clock.cells.load(POSITION), Some(RtValue::F32(63.0 / 128.0)));
-    assert_eq!(clock.cells.load(ELAPSED), Some(RtValue::F32(2.0 + 63.0 / 128.0)));
+    assert_eq!(
+        clock.cells.load(ELAPSED),
+        Some(RtValue::F32(2.0 + 63.0 / 128.0))
+    );
     assert!(clock.set_control("elapsed", 3.0).is_err(), "read-only");
 }
 

@@ -52,7 +52,7 @@ impl Noise {
         Noise(seed)
     }
 
-    pub fn next(&mut self) -> f32 {
+    pub fn sample(&mut self) -> f32 {
         self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
         (self.0 >> 8) as f32 / (1 << 24) as f32 - 0.5
     }

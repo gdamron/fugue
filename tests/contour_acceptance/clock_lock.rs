@@ -110,8 +110,8 @@ fn check_divisions(edges: &[usize], out: &Out, what: &str) {
 
 /// Output k at ratio n starts at every edge.
 fn check_multiples_start_on_edges(edges: &[usize], out: &Out, what: &str) {
-    for k in 1..4 {
-        let starts = cycle_starts(&out[k]);
+    for (k, channel) in out.iter().enumerate().skip(1) {
+        let starts = cycle_starts(channel);
         for e in &edges[1..edges.len() - 1] {
             assert!(
                 starts.iter().any(|s| s.abs_diff(*e) <= 1),

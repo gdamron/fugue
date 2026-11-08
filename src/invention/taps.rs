@@ -120,14 +120,14 @@ impl TapRegistry {
     /// under the publisher.
     pub(crate) fn close_gone(&self, mirror: &TopologyMirror) {
         let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
-        for slot in 0..MAX_OUTPUT_TAPS {
-            let Some(opened) = slots.open[slot] else {
+        for (slot, open) in slots.open.iter_mut().enumerate() {
+            let Some(opened) = *open else {
                 continue;
             };
             let running =
                 (mirror.modules.values()).any(|module| module.instance == opened.instance);
             if !running {
-                slots.open[slot] = None;
+                *open = None;
                 self.board.close(slot);
             }
         }

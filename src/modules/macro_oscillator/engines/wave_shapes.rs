@@ -104,7 +104,10 @@ fn harmonic(row: usize, x: f64) -> Spectrum {
 }
 
 fn is_prime(n: usize) -> bool {
-    n >= 2 && (2..n).take_while(|d| d * d <= n).all(|d| !n.is_multiple_of(d))
+    n >= 2
+        && (2..n)
+            .take_while(|d| d * d <= n)
+            .all(|d| !n.is_multiple_of(d))
 }
 
 /// Bank 1. A dark base (`n^-2`) under resonances shaped as bumps in log
@@ -311,10 +314,10 @@ mod tests {
     fn a_saw_segment_has_the_saw_series() {
         // A rising saw from -1 to 1 has harmonics of amplitude 2 / πn.
         let s = synced(0, 1.0);
-        for n in 1..=8 {
+        for (n, &partial) in s.iter().enumerate().take(9).skip(1) {
             let expected = 2.0 / (PI * n as f64);
             assert!(
-                (magnitude(s[n]) * 2.0 - expected).abs() < 1e-9,
+                (magnitude(partial) * 2.0 - expected).abs() < 1e-9,
                 "harmonic {n}"
             );
         }

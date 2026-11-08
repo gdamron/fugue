@@ -31,8 +31,8 @@ pub mod audio_file_sink;
 pub mod cell_sequencer;
 pub mod chance;
 pub mod clock;
-pub mod contour;
 pub mod code;
+pub mod contour;
 pub mod control_scheduler;
 pub mod dac;
 pub mod delay;
@@ -47,9 +47,9 @@ pub mod granular;
 pub(crate) mod indexed_names;
 pub mod lfo;
 pub mod limiter;
-pub mod macro_oscillator;
 #[cfg(test)]
 mod lock_scan_tests;
+pub mod macro_oscillator;
 pub mod melody;
 pub mod mixer;
 pub mod noise;
@@ -80,8 +80,8 @@ pub use audio_file_sink::{
 pub use cell_sequencer::CellSequencer;
 pub use chance::Chance;
 pub use clock::Clock;
-pub use contour::{Contour, ContourFactory};
 pub use code::CodeControls;
+pub use contour::{Contour, ContourFactory};
 pub use control_scheduler::{
     ControlScheduler, ControlSchedulerControls, ScheduleEntry, ScheduleValue,
 };
@@ -99,12 +99,12 @@ pub use filter::{Filter, FilterType};
 pub use follower::{Follower, FollowerFactory};
 pub use gain::{Gain, GainFactory};
 pub use gain_curve::{GainCurve, GainCurveFactory};
-pub use phaser::{Phaser, PhaserFactory};
 pub use granular::{Granular, GranularFactory};
 pub use lfo::Lfo;
 pub use limiter::{Limiter, LimiterFactory};
 pub use macro_oscillator::{MacroOscillator, MacroOscillatorFactory};
 pub use melody::MelodyGenerator;
+pub use phaser::{Phaser, PhaserFactory};
 
 pub use drive::{Drive, DriveFactory};
 pub use mixer::Mixer;
