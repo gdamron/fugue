@@ -183,6 +183,20 @@ impl ModuleRegistry {
         matches!(self.mode, BuildMode::Live)
     }
 
+    /// A throwaway instance of `type_id` at `config`, built to validate
+    /// (see [`ModuleFactory::build_for_validation`]) without the checks of
+    /// [`Self::build`], to ask it about its controls; `None` when it does
+    /// not build.
+    pub(crate) fn probe(
+        &self,
+        type_id: &str,
+        sample_rate: u32,
+        config: &serde_json::Value,
+    ) -> Option<ModuleBuildResult> {
+        let factory = self.factories.get(type_id)?;
+        factory.build_for_validation(sample_rate, config).ok()
+    }
+
     /// Returns true if a factory is registered for the given type.
     pub fn has_type(&self, type_id: &str) -> bool {
         self.factories.contains_key(type_id)

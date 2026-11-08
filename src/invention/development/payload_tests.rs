@@ -33,6 +33,7 @@ fn factory(controls: serde_json::Value) -> DevelopmentFactory {
         registered: Arc::new(Mutex::new(HashSet::new())),
         loaded: Arc::new(LoadedDevelopments::default()),
         held_starts: Default::default(),
+        events: Default::default(),
     }
 }
 
@@ -156,6 +157,7 @@ fn a_development_has_an_asset_built_by_its_aliass_own_surface() {
         registered: Arc::new(Mutex::new(HashSet::new())),
         loaded: Arc::new(LoadedDevelopments::default()),
         held_starts: Default::default(),
+        events: Default::default(),
     };
     // Written from its config while building, then live offline: each time
     // loaded with the sampler's own rate, which the development lacks.

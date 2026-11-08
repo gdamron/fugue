@@ -1,8 +1,9 @@
 //! A development instance's config, written to its exposed controls once
 //! it is built.
 
+use crate::control_request::DeclKind;
 use crate::invention::load_warnings;
-use crate::ControlSurface;
+use crate::{ControlSurface, ControlValue};
 
 /// Applies a development instance's config as initial values for its exposed
 /// controls. A development has no other config surface, so every key must
@@ -13,11 +14,15 @@ use crate::ControlSurface;
 /// read and ignored, as a plain module's build ignores one, and a reload
 /// ignores it too (see `plan_reload`). A value its control refuses, as a
 /// live write to it would be refused, is set aside so the rest still
-/// start: returned as a load warning each.
+/// start: returned as a load warning each. A payload key in `folded`,
+/// whose value the build already started its inner modules at, is not
+/// written again while its control reads back that value: written again,
+/// it would only be prepared again (its sample loaded twice, say).
 pub(super) fn apply_development_config(
     name: &str,
     config: &serde_json::Value,
     surface: &(dyn ControlSurface + Send + Sync),
+    folded: &[String],
 ) -> Result<Vec<load_warnings::Warning>, Box<dyn std::error::Error>> {
     let map = match config {
         serde_json::Value::Null => return Ok(Vec::new()),
@@ -40,7 +45,11 @@ pub(super) fn apply_development_config(
         })?;
         // Number text an f32 misreads stays text only for a whole-number
         // control; any other number control is handed a number.
-        pending.push((key, surface.coerce_value(key, value)));
+        let value = surface.coerce_value(key, value);
+        if folded.contains(key) && prepared(surface, key, &value) {
+            continue;
+        }
+        pending.push((key, value));
     }
     // A payload (a melody's whole scale) applies before the scalars, which
     // may write within it.
@@ -94,4 +103,13 @@ pub(super) fn apply_development_config(
             .map(|(key, value, _)| (key, value))
             .collect();
     }
+}
+
+/// Whether the payload control `key` already holds `value`, prepared as
+/// its inner modules were built.
+fn prepared(surface: &(dyn ControlSurface + Send + Sync), key: &str, value: &ControlValue) -> bool {
+    let payload = surface
+        .declaration(key)
+        .is_some_and(|found| matches!(found.decl.kind, DeclKind::Payload));
+    payload && surface.get_control(key).is_ok_and(|now| now == *value)
 }

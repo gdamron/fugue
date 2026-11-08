@@ -19,6 +19,8 @@ mod asset;
 pub(crate) mod elastic;
 mod local;
 
+#[cfg(test)]
+pub(crate) use asset::LOADS;
 #[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use asset::{AssetLoader, SAMPLE_ASSET};
 
