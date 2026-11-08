@@ -2,7 +2,7 @@
 //! keeps reading the mix before the clamp.
 
 use super::RenderEngine;
-use crate::modules::dac::{device_sample, MAX_BELOW_ONE};
+use crate::modules::dac::MAX_BELOW_ONE;
 
 /// A sine at +12 dB into a dac without soft clip: peaks near 4.
 const LOUD: &str = r#"{
@@ -44,11 +44,4 @@ fn an_over_level_render_is_clamped_and_the_meter_reads_the_mix() {
         "pre-clamp peak {}",
         levels.right_peak
     );
-}
-
-#[test]
-fn the_device_clamp_leaves_in_range_samples_untouched() {
-    for sample in [0.0, -0.0, 0.5, -1.0, MAX_BELOW_ONE, f32::MIN_POSITIVE] {
-        assert_eq!(device_sample(sample).to_bits(), sample.to_bits());
-    }
 }

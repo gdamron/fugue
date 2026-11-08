@@ -94,6 +94,13 @@ mod tests {
     }
 
     #[test]
+    fn the_device_clamp_leaves_in_range_samples_untouched() {
+        for sample in [0.0, -0.0, 0.5, -1.0, MAX_BELOW_ONE, f32::MIN_POSITIVE] {
+            assert_eq!(device_sample(sample).to_bits(), sample.to_bits());
+        }
+    }
+
+    #[test]
     fn a_huge_finite_sample_soft_clips_to_full_scale_not_nan() {
         for sample in [f32::MAX, -f32::MAX, 1.0e38] {
             let out = soft_clip(sample);

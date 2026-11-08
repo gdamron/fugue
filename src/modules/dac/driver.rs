@@ -188,8 +188,9 @@ impl AudioBackend for AudioDriver {
 /// Writes one stereo frame in the device's sample format and channel layout.
 ///
 /// Each sample goes through [`device_sample`] first: clamped to
-/// `-1.0..1.0`, and silenced when it is not finite. A mono device gets the average of both channels; devices with more than
-/// two channels get left on even and right on odd channels.
+/// `-1.0..1.0`, and silenced when it is not finite. A mono device gets the
+/// average of both channels; devices with more than two channels get left
+/// on even and right on odd channels.
 #[inline]
 pub(super) fn write_frame<T: cpal::Sample + cpal::FromSample<f32>>(
     frame: &mut [T],
