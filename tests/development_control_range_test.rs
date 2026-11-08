@@ -181,7 +181,7 @@ impl Rig {
             Rig::Offline(engine) => {
                 let mut buffer = vec![0.0f32; frames * 2];
                 engine.render_interleaved(&mut buffer).expect("renders");
-                buffer.chunks_exact(2).map(|f| f[0]).collect()
+                buffer.as_chunks::<2>().0.iter().map(|f| f[0]).collect()
             }
             Rig::Live(live) => live.render(frames),
         }

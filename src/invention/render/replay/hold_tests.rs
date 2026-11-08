@@ -68,7 +68,7 @@ fn replayed(log: &RequestLog, frames: usize) -> Vec<f32> {
     let mut buffer = [0.0f32; BLOCK * 2];
     for _ in 0..frames / BLOCK {
         engine.render_interleaved(&mut buffer).unwrap();
-        left.extend(buffer.chunks_exact(2).map(|frame| frame[0]));
+        left.extend(buffer.as_chunks::<2>().0.iter().map(|frame| frame[0]));
     }
     assert_eq!(engine.replay_refused(), 0);
     left

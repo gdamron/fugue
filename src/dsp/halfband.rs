@@ -71,7 +71,8 @@ impl HalfbandStage {
     /// which must be twice as long.
     pub(super) fn upsample(&mut self, input: &[f32], output: &mut [f32]) {
         debug_assert_eq!(output.len(), input.len() * 2);
-        for (&sample, pair) in input.iter().zip(output.chunks_exact_mut(2)) {
+        let (pairs, _) = output.as_chunks_mut::<2>();
+        for (&sample, pair) in input.iter().zip(pairs) {
             self.taps_history.push(sample);
             let recent = self.taps_history.recent();
             // A zero-stuffed input loses half its level; the factor 2 puts
@@ -85,7 +86,8 @@ impl HalfbandStage {
     /// `output`, which must be half as long.
     pub(super) fn downsample(&mut self, input: &[f32], output: &mut [f32]) {
         debug_assert_eq!(input.len(), output.len() * 2);
-        for (pair, out) in input.chunks_exact(2).zip(output.iter_mut()) {
+        let (pairs, _) = input.as_chunks::<2>();
+        for (pair, out) in pairs.iter().zip(output.iter_mut()) {
             // The output lines up with the first of each pair, so the
             // off-centre taps fall on first samples and the centre tap on
             // the second sample of the pair `m + 1` back, read before this
@@ -117,15 +119,10 @@ impl HalfbandStage {
 #[inline]
 fn dot(taps: &[f32], samples: &[f32]) -> f32 {
     let mut sums = [0.0f32; 4];
-    let tap_quads = taps.chunks_exact(4);
-    let sample_quads = samples.chunks_exact(4);
-    let tail: f32 = tap_quads
-        .remainder()
-        .iter()
-        .zip(sample_quads.remainder())
-        .map(|(t, s)| t * s)
-        .sum();
-    for (t, s) in tap_quads.zip(sample_quads) {
+    let (tap_quads, tap_rest) = taps.as_chunks::<4>();
+    let (sample_quads, sample_rest) = samples.as_chunks::<4>();
+    let tail: f32 = tap_rest.iter().zip(sample_rest).map(|(t, s)| t * s).sum();
+    for (t, s) in tap_quads.iter().zip(sample_quads) {
         for k in 0..4 {
             sums[k] += t[k] * s[k];
         }

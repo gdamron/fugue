@@ -158,7 +158,7 @@ fn offline(log: Option<&RequestLog>, frames: usize) -> Output {
     let mut buffer = [0.0f32; BLOCK * 2];
     for _ in 0..frames / BLOCK {
         engine.render_interleaved(&mut buffer).unwrap();
-        for frame in buffer.chunks_exact(2) {
+        for frame in buffer.as_chunks::<2>().0 {
             out.left.push(frame[0]);
             out.right.push(frame[1]);
         }

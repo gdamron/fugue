@@ -936,7 +936,7 @@ PY
         fn push_smoke_media(backend: &FfmpegStreamBackend) {
             for frame_index in 0..10 {
                 let mut frame = vec![0u8; 16 * 16 * 4];
-                for pixel in frame.chunks_exact_mut(4) {
+                for pixel in frame.as_chunks_mut::<4>().0 {
                     pixel[0] = (frame_index * 20) as u8;
                     pixel[1] = 64;
                     pixel[2] = 192;
