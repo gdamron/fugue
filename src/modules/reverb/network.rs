@@ -68,7 +68,7 @@ const DIFFUSER_SCALE: f32 = {
     scale
 };
 const _: () = assert!(
-    STAGES % 2 == 0,
+    STAGES.is_multiple_of(2),
     "DIFFUSER_SCALE needs an even number of stages"
 );
 

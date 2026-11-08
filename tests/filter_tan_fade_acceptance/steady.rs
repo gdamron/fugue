@@ -9,6 +9,10 @@
 //! old and exact tan agree at these cutoffs, and libm differences across
 //! platforms are far smaller still).
 
+// These checks are written `!(measured <= limit)` on purpose: a NaN
+// measurement must count as a miss, which `measured > limit` would let pass.
+#![allow(clippy::neg_cmp_op_on_partial_ord)]
+
 use crate::reference::{rbj, svf, Eq, Tap};
 use crate::{filter, max_diff, noise, render, type_position, MINUS_90_DBFS, RATES, TYPES};
 use serde_json::json;

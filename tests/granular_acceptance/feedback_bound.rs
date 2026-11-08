@@ -18,7 +18,7 @@ const FRAMES: usize = 60 * SR as usize;
 fn square(len: usize, period: usize, amp: f32) -> Vec<f32> {
     (0..len)
         .map(|n| {
-            if (n / (period / 2)) % 2 == 0 {
+            if (n / (period / 2)).is_multiple_of(2) {
                 amp
             } else {
                 -amp
@@ -26,6 +26,9 @@ fn square(len: usize, period: usize, amp: f32) -> Vec<f32> {
         })
         .collect()
 }
+
+/// A named input, its grain settings and the controls it starts with.
+type Case = (&'static str, Feed, Vec<(&'static str, f32)>);
 
 fn run(mode: f32) {
     let sine = sine(FRAMES, 997.0, 1.0);
@@ -36,7 +39,7 @@ fn run(mode: f32) {
     // those modes at or below neutral so DC passes. Granular mode keeps 0.9 so
     // the case still covers diffusion.
     let dc_texture = if mode == GRANULAR { 0.9 } else { 0.5 };
-    let cases: [(&str, Feed, Vec<(&str, f32)>); 4] = [
+    let cases: [Case; 4] = [
         ("sine", Feed::mono(sine), vec![]),
         (
             "square",

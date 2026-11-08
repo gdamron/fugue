@@ -5,7 +5,7 @@
 //! environment variable is checked in child processes.
 //!
 //! With the flag off every feedback group runs per sample (a loop is its delay
-//! + 1 sample per pass); on, the loop is exact; and every fallback case
+//! plus 1 sample per pass); on, the loop is exact; and every fallback case
 //! renders the same, bit for bit, in either state.
 
 #[path = "feedback_chunks_acceptance/rig.rs"]

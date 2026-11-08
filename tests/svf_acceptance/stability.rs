@@ -38,7 +38,7 @@ fn stays_bounded_when_the_cutoff_is_swept_at_audio_rate() {
                     let fc = 40.0 * (400.0f32).powf(0.5 + 0.5 * phase.sin());
                     svf.set(fc, q);
                     let x = match input {
-                        0 => noise.next() * 2.0,
+                        0 => noise.sample() * 2.0,
                         1 => (TAU * 1000.0 * n as f32 / rate).sin(),
                         _ => (TAU * fc * n as f32 / rate).sin(),
                     };
@@ -65,7 +65,7 @@ fn stays_bounded_when_settings_jump_between_extremes_every_sample() {
             2 => svf.set(23_900.0, 0.1),
             _ => svf.set(400.0, 100.0),
         }
-        assert_bounded(&mut svf, noise.next() * 2.0, &format!("n {n}"));
+        assert_bounded(&mut svf, noise.sample() * 2.0, &format!("n {n}"));
     }
 }
 
@@ -84,7 +84,7 @@ fn stays_bounded_at_fixed_extreme_settings() {
         for n in 0..4 * RATE as usize {
             assert_bounded(
                 &mut svf,
-                noise.next() * 2.0,
+                noise.sample() * 2.0,
                 &format!("cutoff {fc}, q {q}, n {n}"),
             );
         }

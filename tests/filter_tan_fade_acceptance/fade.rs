@@ -8,6 +8,10 @@
 //! old and new responses differ most, the worst moment for an instant cut.
 //! References are fresh filters of each type run over the whole saw.
 
+// These checks are written `!(measured <= limit)` on purpose: a NaN
+// measurement must count as a miss, which `measured > limit` would let pass.
+#![allow(clippy::neg_cmp_op_on_partial_ord)]
+
 use crate::{filter, max_diff, max_step, render, saw, type_position, Write};
 use serde_json::{json, Value};
 

@@ -48,7 +48,7 @@ impl Noise {
     }
 
     pub fn render_blocks(&mut self, frames: usize, block: usize) -> (Vec<f32>, Vec<f32>) {
-        assert!(block >= 1 && block <= fugue::MAX_BLOCK);
+        assert!((1..=fugue::MAX_BLOCK).contains(&block));
         let mut white = Vec::with_capacity(frames);
         let mut pink = Vec::with_capacity(frames);
         let mut left = frames;

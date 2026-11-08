@@ -191,7 +191,7 @@ impl Reso {
     /// Renders `frames` frames in `block`-sized calls, calling `each` with
     /// the module after every call.
     pub fn run(&mut self, frames: usize, block: usize, mut each: impl FnMut(&Reso, usize)) {
-        assert!(block >= 1 && block <= fugue::MAX_BLOCK);
+        assert!((1..=fugue::MAX_BLOCK).contains(&block));
         let mut done = 0;
         while done < frames {
             let n = (frames - done).min(block);

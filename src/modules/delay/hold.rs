@@ -83,7 +83,7 @@ impl Hold {
     /// fades a fresh hold and its release record still keep it in the line.
     fn reusable(&self) -> bool {
         let fade = self.fade_frames;
-        self.engaged && self.since + 3 * fade + self.seam + 1 <= Self::headroom_frames(fade)
+        self.engaged && self.since + 3 * fade + self.seam < Self::headroom_frames(fade)
     }
 
     /// Takes the last `length` samples of a line `line_len` long as the

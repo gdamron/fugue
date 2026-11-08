@@ -78,7 +78,7 @@ fn ad_attack_and_decay_times_are_accurate() {
             near(&format!("{what} attack"), end_of_attack - REST, attack);
             near(&format!("{what} decay"), end - end_of_attack, decay);
             let (top, peak) = peak_at(&out[0], REST, end);
-            assert!(peak >= 0.99 && peak <= 1.0, "{what}: peak {peak}");
+            assert!((0.99..=1.0).contains(&peak), "{what}: peak {peak}");
             near(&format!("{what} peak time"), top - REST, attack);
             assert!(
                 out[0][end + 5..].iter().all(|v| v.abs() <= 1e-3),
@@ -109,7 +109,7 @@ fn ar_attack_and_release_times_are_accurate() {
                 attack,
             );
             let (top, peak) = peak_at(&out[0], REST, fall);
-            assert!(peak >= 0.99 && peak <= 1.0, "{what}: peak {peak}");
+            assert!((0.99..=1.0).contains(&peak), "{what}: peak {peak}");
             near(&format!("{what} peak time"), top - REST, attack);
             assert!(
                 out[0][fall - 1] >= 0.99,

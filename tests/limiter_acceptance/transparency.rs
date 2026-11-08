@@ -74,10 +74,10 @@ fn one_gain_is_shared_by_both_sides() {
     let mut lim = build("limiter", json!({ "ceiling": -1.0 }));
     let out = lim.run(secs(0.5), &[("audio_left", &l), ("audio_right", &r)]);
     let mut pulled = false;
-    for n in secs(0.1)..out[0].len() {
+    for (n, (&yl, &yr)) in out[0].iter().zip(&out[1]).enumerate().skip(secs(0.1)) {
         let (xl, xr) = (l(n - delay), r(n - delay));
         if xl.abs() > 0.5 && xr.abs() > 0.05 {
-            let (gl, gr) = (out[0][n] / xl, out[1][n] / xr);
+            let (gl, gr) = (yl / xl, yr / xr);
             assert!(
                 (gl - gr).abs() < 1e-4,
                 "sample {n}: left gain {gl}, right {gr}"

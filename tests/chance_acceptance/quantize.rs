@@ -32,8 +32,8 @@ fn assert_all_quantized(steps: &[Step], tonic: i32, intervals: &[i32], context: 
         channel_live[0] |= s.fired(0);
         channel_live[1] |= s.fired(1);
         channel_live[2] = true;
-        for ch in 0..3 {
-            if !channel_live[ch] {
+        for (ch, &live) in channel_live.iter().enumerate() {
+            if !live {
                 continue;
             }
             let f = s.freq[ch];
