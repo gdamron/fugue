@@ -52,6 +52,7 @@ fn worst_case() -> StatusSummary {
             right_peak: f32::MAX,
             left_rms: Some(f32::MAX),
             right_rms: Some(f32::MAX),
+            non_finite_samples: u64::MAX,
         }),
         session: Some(SessionDurability {
             state: SessionSaveState::Failing,
@@ -157,4 +158,35 @@ fn a_reader_ignores_fields_a_later_version_adds() {
     }))
     .unwrap();
     assert_eq!(summary.pinned, Some(Vec::new()));
+}
+
+#[test]
+fn replaced_non_finite_samples_reach_the_summary_once_counted() {
+    let clean = OutputLevels {
+        left_peak: 0.5,
+        right_peak: 0.25,
+        left_rms: None,
+        right_rms: None,
+        non_finite_samples: 0,
+    };
+    // Omitted while zero, as on a meter reading, so summaries from before
+    // the field and from clean sessions look alike.
+    assert_eq!(
+        serde_json::to_value(clean).unwrap(),
+        json!({ "left_peak": 0.5, "right_peak": 0.25 })
+    );
+    let poisoned = OutputLevels {
+        non_finite_samples: 3,
+        ..clean
+    };
+    let wire = serde_json::to_value(poisoned).unwrap();
+    assert_eq!(wire["non_finite_samples"], 3);
+    assert_eq!(
+        serde_json::from_value::<OutputLevels>(wire).unwrap(),
+        poisoned
+    );
+    // An older daemon's levels carry no count.
+    let older: OutputLevels =
+        serde_json::from_value(json!({ "left_peak": 0.5, "right_peak": 0.25 })).unwrap();
+    assert_eq!(older, clean);
 }
