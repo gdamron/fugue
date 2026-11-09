@@ -105,11 +105,86 @@ fn a_file_development_that_cannot_be_read_keeps_its_own_error() {
 }
 
 #[test]
-fn a_range_of_the_wrong_type_still_names_the_control() {
+fn a_null_bound_is_reported_as_missing() {
     let error = message(Invention::from_json(&inline_document(
-        json!({ "min": "low", "max": 10 }),
+        json!({ "min": null, "max": 10 }),
     )));
-    names(&error, "invalid type");
+    names(&error, "missing `min`:");
+}
+
+#[test]
+fn a_duplicate_bound_in_a_range_is_refused() {
+    let control = r#"{ "name": "cutoff", "module": "f", "control": "cutoff",
+                       "range": { "min": 0, "min": 1, "max": 10 } }"#;
+    let error = serde_json::from_str::<DevelopmentControl>(control)
+        .expect_err("a duplicate bound must not load")
+        .to_string();
+    assert!(error.contains("duplicate field `min`"), "{error}");
+}
+
+#[test]
+fn a_duplicate_field_in_an_inline_definition_is_refused() {
+    let document = r#"{
+        "developments": [{ "name": "voice", "definition": {
+            "modules": [{ "id": "f", "type": "filter" }],
+            "connections": [],
+            "connections": [{ "from": "f", "from_port": "out", "to": "f", "to_port": "in" }]
+        } }],
+        "modules": [{ "id": "v", "type": "voice" }],
+        "connections": []
+    }"#;
+    let error = message(Invention::from_json(document));
+    assert!(error.contains("duplicate field `connections`"), "{error}");
+    assert!(error.contains("Development 'voice'"), "{error}");
+}
+
+#[test]
+fn a_duplicate_field_in_a_definition_written_before_its_name_is_refused() {
+    let document = r#"{
+        "developments": [{ "definition": {
+            "modules": [{ "id": "f", "type": "filter" }],
+            "connections": [],
+            "connections": [{ "from": "f", "from_port": "out", "to": "f", "to_port": "in" }]
+        }, "name": "voice" }],
+        "modules": [{ "id": "v", "type": "voice" }],
+        "connections": []
+    }"#;
+    let error = message(Invention::from_json(document));
+    assert!(error.contains("duplicate field `connections`"), "{error}");
+    assert!(error.contains("Development 'voice'"), "{error}");
+}
+
+#[test]
+fn a_partial_range_names_the_development_with_the_name_first_in_text() {
+    let definition = development(json!({ "max": 10 }));
+    let document = format!(
+        r#"{{ "developments": [{{ "name": "voice", "definition": {definition} }}],
+             "modules": [{{ "id": "v", "type": "voice" }}], "connections": [] }}"#
+    );
+    names(&message(Invention::from_json(&document)), "missing `min`:");
+}
+
+#[test]
+fn a_definition_read_in_either_order_parses_the_same() {
+    let definition = development(json!({ "min": 0, "max": 10 }));
+    let first = format!(
+        r#"{{ "developments": [{{ "name": "voice", "definition": {definition} }}],
+             "modules": [], "connections": [] }}"#
+    );
+    let last = format!(
+        r#"{{ "developments": [{{ "definition": {definition}, "name": "voice" }}],
+             "modules": [], "connections": [] }}"#
+    );
+    assert_eq!(
+        Invention::from_json(&first).unwrap(),
+        Invention::from_json(&last).unwrap()
+    );
+}
+
+#[test]
+fn an_error_after_the_name_in_an_inline_definition_reports_one_position() {
+    let error = message(Invention::from_json(&inline_document(json!({ "max": 10 }))));
+    assert_eq!(error.matches(" at line ").count(), 1, "{error}");
 }
 
 #[test]
