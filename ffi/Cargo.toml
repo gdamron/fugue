@@ -3,13 +3,15 @@
 # wasm module behind the web archive. They live in their own crate so a Rust
 # consumer of `fugue` links only its rlib. The library keeps the name `fugue`,
 # so the artifacts keep today's names (libfugue.a, libfugue.dylib, fugue.dll,
-# fugue.wasm) and the packaging scripts read them from the same paths.
+# fugue.wasm) and the packaging scripts read them from the same paths. Crate
+# types cannot depend on the target, so a wasm build that needs only the
+# module asks for it: `cargo rustc -p fugue-ffi --crate-type cdylib`.
 [package]
 name = "fugue-ffi"
 version.workspace = true
-edition = "2021"
-rust-version = "1.95"
-license = "MIT"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 publish = false
 
 [lib]

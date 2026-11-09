@@ -169,7 +169,7 @@ jobs:
           echo "Installing wasm-bindgen-cli $version (from Cargo.lock)"
           cargo install wasm-bindgen-cli --version "$version" --locked
       - name: Build wasm module
-        run: cargo build --release -p fugue-ffi --target wasm32-unknown-unknown
+        run: cargo rustc --release -p fugue-ffi --target wasm32-unknown-unknown --crate-type cdylib
       - name: Generate web package
         run: |
           mkdir -p dist/wasm
