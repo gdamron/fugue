@@ -46,6 +46,7 @@ pub(crate) use edits::non_finite_refusal;
 pub use edits::{
     check_edit_batch, ApplyEditsReport, ControlWriteFailure, EditFailure, EditFailureReason,
     EditOp, StructuralEdit, WrittenControl, MAX_EDITS_PER_BATCH, MAX_EDIT_NAME_BYTES,
+    MAX_MOVES_PER_EDIT,
 };
 pub use error::{RpcError, RpcErrorCode};
 pub use event::{

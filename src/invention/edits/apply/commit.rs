@@ -119,7 +119,11 @@ impl RunningInvention {
         // writes, unordered against both (see `Committed::contested`).
         let authoring = self.live.authoring();
         let committed = self.live.commit_with(change, |state| {
-            previous = state.document.replace(document.clone());
+            let mut document = document.clone();
+            if let Some(current) = &state.document {
+                document.carry_layout(&current.layout, &batch.candidate.layout_changes);
+            }
+            previous = state.document.replace(document);
             // A survivor's stored config takes the batch's writes to keys it
             // already has with the document, as an authored `set_control`
             // does (see `RuntimeState::write_stored_control`), so a later

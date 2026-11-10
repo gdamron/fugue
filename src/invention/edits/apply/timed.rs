@@ -94,8 +94,14 @@ impl RunningInvention {
             .filter(|write| kept(&write.module_id))
             .map(|write| triple(&write.module_id, &write.key, &write.value))
             .collect();
-        let document = batch.candidate.document.clone();
+        let mut document = batch.candidate.document.clone();
+        let layout_changes = batch.candidate.layout_changes.clone();
+        // Adopted with the layout the retained document has as it lands: a
+        // module moved while the batch waited keeps where it was moved.
         let retain = move |state: &mut RuntimeState| {
+            if let Some(current) = &state.document {
+                document.carry_layout(&current.layout, &layout_changes);
+            }
             state.document = Some(document);
             for (module_id, key, value) in &stored {
                 state.write_stored_control(module_id, key, value);

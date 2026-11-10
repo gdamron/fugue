@@ -42,6 +42,7 @@ impl Layout {
 /// Both coordinates are finite.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct Position {
     pub x: f64,
     pub y: f64,
@@ -54,7 +55,32 @@ impl Position {
     }
 }
 
+/// One change an edit batch makes to the layout, in batch order: a module
+/// placed, or unplaced (`None`, as `move_modules` with `null` or
+/// `remove_module` leaves it).
+pub(crate) type LayoutChange = (String, Option<Position>);
+
 impl Invention {
+    /// Takes `current`, the layout the retained document has as this
+    /// document replaces it, with `changes` made on top, keeping only the
+    /// modules this document has. A batch's document was edited from the
+    /// layout as the batch read it; a module moved since (while a timed
+    /// batch waited, say) keeps where it was moved.
+    pub(crate) fn carry_layout(&mut self, current: &Layout, changes: &[LayoutChange]) {
+        let mut layout = current.clone();
+        for (id, position) in changes {
+            match position {
+                Some(position) => layout.modules.insert(id.clone(), *position),
+                None => layout.modules.remove(id),
+            };
+        }
+        let modules = &self.modules;
+        layout
+            .modules
+            .retain(|id, _| modules.iter().any(|spec| &spec.id == id));
+        self.layout = layout;
+    }
+
     /// Drops the layout entries that cannot place a module: one naming no
     /// module in the document, or one whose position is not finite. Returns
     /// a message for each, for the load to report as a warning; the piece
@@ -138,6 +164,12 @@ mod tests {
         let saved = std::fs::read_to_string(&path).unwrap();
         assert_eq!(saved, format!("{}\n", document.to_json().unwrap()));
         assert!(!saved.contains("layout"), "{saved}");
+    }
+
+    #[test]
+    fn a_position_with_an_unknown_field_is_refused() {
+        let json = PLACED.replace(r#""y": -40"#, r#""y": -40, "z": 3"#);
+        assert!(Invention::from_json(&json).is_err());
     }
 
     #[test]

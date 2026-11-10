@@ -183,6 +183,7 @@ fn candidate(named: &[&str], replaced: &[&str]) -> EditedCandidate {
         control_writes: Vec::new(),
         named_modules: named.iter().map(|id| id.to_string()).collect(),
         replaced: replaced.iter().map(|id| id.to_string()).collect(),
+        layout_changes: Vec::new(),
     }
 }
 

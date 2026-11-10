@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{CandidateWrite, EditFacts, EditedCandidate, ModuleFacts};
 use crate::invention::format::{Connection, Invention};
-use crate::invention::layout::Position;
+use crate::invention::layout::{LayoutChange, Position};
 use crate::invention::{audio_assets, authored_document};
 use crate::rpc::{
     non_finite_refusal, truncate_on_char_boundary, ControlWrite, EditFailureReason, StructuralEdit,
@@ -38,6 +38,7 @@ pub(super) struct Candidate<'f, F> {
     original: BTreeSet<String>,
     /// Ids from `original` that an edit removed.
     removed_originals: BTreeSet<String>,
+    layout_changes: Vec<LayoutChange>,
 }
 
 impl<'f, F: EditFacts> Candidate<'f, F> {
@@ -56,6 +57,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             named_modules: BTreeSet::new(),
             original,
             removed_originals: BTreeSet::new(),
+            layout_changes: Vec::new(),
         }
     }
 
@@ -70,6 +72,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             control_writes: self.control_writes,
             named_modules: self.named_modules,
             replaced,
+            layout_changes: self.layout_changes,
         }
     }
 
@@ -112,6 +115,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         }
         for (id, position) in positions {
             authored_document::place_module(&mut self.document, id, *position);
+            self.layout_changes.push((id.clone(), *position));
         }
         Ok(())
     }
@@ -153,6 +157,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             return Err(unknown_module(id));
         }
         authored_document::remove_module(&mut self.document, id);
+        self.layout_changes.push((id.to_string(), None));
         if self.original.contains(id) {
             self.removed_originals.insert(id.to_string());
         }

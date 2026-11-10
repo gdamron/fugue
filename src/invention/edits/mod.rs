@@ -199,6 +199,11 @@ pub(crate) struct EditedCandidate {
     /// type and config came back identical, which a diff of the documents
     /// cannot see.
     pub(crate) replaced: BTreeSet<String>,
+    /// The layout changes the batch made, in order: its moves, and each
+    /// removed module unplaced. Made again on the layout the retained
+    /// document has as the batch commits, which a move since may have
+    /// changed (see [`Invention::carry_layout`]).
+    pub(crate) layout_changes: Vec<crate::invention::layout::LayoutChange>,
 }
 
 impl EditedCandidate {

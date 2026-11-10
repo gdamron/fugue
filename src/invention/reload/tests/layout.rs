@@ -81,10 +81,34 @@ fn a_load_ignores_a_position_for_an_unknown_module_with_a_warning() {
     assert_eq!(ids(state.document.as_ref().unwrap()), ["osc1"]);
 }
 
+/// No checked-in example re-saves byte for byte (the save format's own
+/// spacing differs from the hand-written files), so this compares a save of
+/// a loaded and played example against a save of the file as parsed, and
+/// re-saves the result to check it is a fixed point.
 #[test]
-fn a_document_without_a_layout_saves_byte_identically() {
-    let running = start(BASE);
-    let saved = running.document().unwrap().to_json().unwrap();
-    assert_eq!(saved, doc(BASE).to_json().unwrap());
-    assert!(!saved.contains("layout"));
+fn an_example_without_a_layout_saves_as_it_did_before() {
+    let path = "examples/lfo_vibrato.json";
+    let parsed = Invention::from_file(path).unwrap();
+    assert!(parsed.layout.is_empty());
+    let (runtime, _) = InventionBuilder::new(48_000).build(parsed.clone()).unwrap();
+    let running = Settled::start(runtime);
+    running.pump.render(4);
+
+    let dir = tempfile::tempdir().unwrap();
+    let (played, direct) = (
+        dir.path().join("played.json"),
+        dir.path().join("direct.json"),
+    );
+    running.document().unwrap().save_to_file(&played).unwrap();
+    parsed.save_to_file(&direct).unwrap();
+    let saved = std::fs::read(&played).unwrap();
+    assert_eq!(saved, std::fs::read(&direct).unwrap());
+    assert!(!String::from_utf8_lossy(&saved).contains("layout"));
+
+    let again = dir.path().join("again.json");
+    Invention::from_file(played.to_str().unwrap())
+        .unwrap()
+        .save_to_file(&again)
+        .unwrap();
+    assert_eq!(std::fs::read(&again).unwrap(), saved);
 }

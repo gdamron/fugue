@@ -152,3 +152,112 @@ fn a_module_added_and_placed_in_one_batch_keeps_its_place() {
     assert_eq!(report.added, ["lfo1"]);
     assert_eq!(placed(&running)["lfo1"], Position { x: 40.0, y: 80.0 });
 }
+
+#[test]
+fn moving_and_removing_a_module_in_one_batch_leaves_no_position() {
+    let (mut running, _pump) = start(BASE);
+    running
+        .apply_edits(&[moves(&[("spare", at(1.0, 1.0))]), remove("spare")])
+        .unwrap();
+    assert!(placed(&running).is_empty());
+}
+
+#[test]
+fn removing_and_adding_an_id_again_drops_its_position() {
+    let (mut running, _pump) = start(BASE);
+    running
+        .apply_edits(&[moves(&[("spare", at(1.0, 1.0))])])
+        .unwrap();
+    running
+        .apply_edits(&[remove("spare"), add("spare", "oscillator", json!({}))])
+        .unwrap();
+    assert!(placed(&running).is_empty());
+}
+
+/// Queues `lfo1` to be added 2048 samples from now.
+fn timed_add(running: &mut RunningInvention) {
+    let when = crate::rpc::EditWhen::AfterSamples { samples: 2048 };
+    let lfo = [add("lfo1", "lfo", json!({ "rate": 2.0 }))];
+    running
+        .apply_edits_at(&lfo, &when, None)
+        .expect("the edit is queued");
+}
+
+#[test]
+fn a_move_while_a_timed_edit_waits_neither_cancels_it_nor_is_lost() {
+    let (mut running, pump) = start(BASE);
+    timed_add(&mut running);
+    let published = publications(&running);
+    running
+        .apply_edits(&[moves(&[("osc1", at(7.0, 8.0))])])
+        .expect("the move commits");
+    assert_eq!(publications(&running), published);
+    assert!(running
+        .document()
+        .unwrap()
+        .modules
+        .iter()
+        .all(|spec| spec.id != "lfo1"));
+
+    // Past its sample: the edit lands and is adopted.
+    pump.render(64);
+    running.live.adopt_landed();
+    let document = running.document().unwrap();
+    assert!(
+        document.modules.iter().any(|spec| spec.id == "lfo1"),
+        "the edit landed"
+    );
+    assert_eq!(document.layout.modules["osc1"], Position { x: 7.0, y: 8.0 });
+}
+
+#[test]
+fn a_timed_batch_moving_and_adding_keeps_moves_made_while_it_waits() {
+    let (mut running, pump) = start(BASE);
+    let when = crate::rpc::EditWhen::AfterSamples { samples: 2048 };
+    let batch = [
+        add("lfo1", "lfo", json!({ "rate": 2.0 })),
+        moves(&[("lfo1", at(1.0, 1.0)), ("osc2", at(2.0, 2.0))]),
+        remove("spare"),
+    ];
+    running
+        .apply_edits(&[moves(&[("spare", at(9.0, 9.0))])])
+        .unwrap();
+    running.apply_edits_at(&batch, &when, None).expect("queued");
+    // While it waits, a module it does not move is moved, and one it does.
+    running
+        .apply_edits(&[moves(&[("osc1", at(5.0, 5.0)), ("osc2", at(6.0, 6.0))])])
+        .unwrap();
+    pump.render(64);
+    running.live.adopt_landed();
+    let layout = placed(&running);
+    let ids: Vec<&str> = layout.keys().map(String::as_str).collect();
+    // The batch's own moves land on top; the removed module is unplaced.
+    assert_eq!(ids, ["lfo1", "osc1", "osc2"]);
+    assert_eq!(layout["osc1"], Position { x: 5.0, y: 5.0 });
+    assert_eq!(layout["osc2"], Position { x: 2.0, y: 2.0 });
+}
+
+#[test]
+fn a_timed_batch_of_moves_alone_is_refused_as_changing_no_structure() {
+    let (mut running, _pump) = start(BASE);
+    let before = observe(&running);
+    let when = crate::rpc::EditWhen::AfterSamples { samples: 2048 };
+    let error = running
+        .apply_edits_at(&[moves(&[("osc1", at(1.0, 1.0))])], &when, None)
+        .unwrap_err();
+    assert!(error.message.contains("structural"), "{}", error.message);
+    assert_eq!(observe(&running), before);
+}
+
+#[test]
+fn swapping_a_module_keeps_its_position() {
+    let (mut running, _pump) = start(BASE);
+    running
+        .apply_edits(&[moves(&[("osc1", at(3.0, 4.0))])])
+        .unwrap();
+    let square = json!({ "waveform": "square", "frequency": 440.0 });
+    running
+        .swap_module("osc1", "oscillator", &square, true)
+        .unwrap();
+    assert_eq!(placed(&running)["osc1"], Position { x: 3.0, y: 4.0 });
+}

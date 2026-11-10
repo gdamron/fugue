@@ -191,13 +191,11 @@ fn validation_probe(document: &Invention, candidate: &EditedCandidate) -> Invent
     probe
 }
 
-/// Whether `candidate` differs from `document` in its layout alone.
-fn only_layout_changed(document: &Invention, candidate: &Invention) -> bool {
-    let unplaced = |document: &Invention| Invention {
-        layout: Default::default(),
-        ..document.clone()
-    };
-    unplaced(document) == unplaced(candidate)
+/// Whether every edit in a non-empty batch is a `move_modules`, which
+/// changes the document's layout alone.
+fn only_moves(edits: &[StructuralEdit]) -> bool {
+    !edits.is_empty()
+        && (edits.iter()).all(|edit| matches!(edit, StructuralEdit::MoveModules { .. }))
 }
 
 /// The `invalid_edit` refusal for a control write the module refused, at
@@ -234,6 +232,9 @@ impl RunningInvention {
     /// one `ControlChanged` per control the batch wrote is announced to the
     /// event sink. The caller announces the new topology after that.
     ///
+    /// A batch of `move_modules` edits alone changes the retained
+    /// document's layout and nothing else (see [`Self::move_modules`]).
+    ///
     /// Refusals change nothing (no module, connection, control, document or
     /// event):
     ///
@@ -259,6 +260,9 @@ impl RunningInvention {
     /// batch is planned or prepared, it is planned and prepared again from
     /// the same candidate, up to three times in all.
     pub fn apply_edits(&mut self, edits: &[StructuralEdit]) -> Result<ApplyEditsReport, RpcError> {
+        if only_moves(edits) {
+            return self.move_modules(edits);
+        }
         let mut batch = self.live.graph_policy().run(|| self.batch(edits))?;
         let mut attempt = 1;
         loop {
@@ -278,6 +282,56 @@ impl RunningInvention {
                 Err(Refused::Batch(error)) => return Err(error),
             }
         }
+    }
+
+    /// A batch of `move_modules` edits alone: written straight into the
+    /// retained document's layout under the publisher, all or nothing. It
+    /// publishes nothing, cancels no timed edit waiting (whose adoption
+    /// keeps the layout as moved, see `Invention::carry_layout`), builds
+    /// nothing and announces nothing, so a drag on the canvas is never
+    /// heard. Refused as any batch is: by size, by a bad name or position,
+    /// or by a module that does not exist (`unknown_module` at its edit).
+    fn move_modules(&self, edits: &[StructuralEdit]) -> Result<ApplyEditsReport, RpcError> {
+        check_edit_batch(edits)?;
+        for (index, edit) in edits.iter().enumerate() {
+            edit.check_names(index).map_err(RpcError::invalid_edit)?;
+        }
+        self.live.edit_document(|state| {
+            let untouched = state.modules.len();
+            let document = state.document.as_mut().ok_or_else(|| {
+                RpcError::new(
+                    RpcErrorCode::Unsupported,
+                    "the running invention keeps no authored document to edit; \
+                     nothing was applied",
+                )
+            })?;
+            let mut layout = document.layout.clone();
+            for (index, edit) in edits.iter().enumerate() {
+                let StructuralEdit::MoveModules { positions } = edit else {
+                    unreachable!("only moves take this path");
+                };
+                for (id, position) in positions {
+                    if !document.modules.iter().any(|spec| &spec.id == id) {
+                        return Err(RpcError::invalid_edit(EditFailure::new(
+                            index,
+                            EditOp::MoveModules,
+                            EditFailureReason::UnknownModule,
+                            format!("no module '{id}' exists at this point in the batch"),
+                        )));
+                    }
+                    match position {
+                        Some(position) => layout.modules.insert(id.clone(), *position),
+                        None => layout.modules.remove(id),
+                    };
+                }
+            }
+            document.layout = layout;
+            Ok(ApplyEditsReport {
+                edit_count: edits.len(),
+                untouched,
+                ..ApplyEditsReport::default()
+            })
+        })
     }
 
     /// Applies `edits` again, as [`Self::batch`] does, to the retained
@@ -322,13 +376,7 @@ impl RunningInvention {
         // prepared directory before publishing.
         check_writes(&facts.directory_after(&candidate.document), &candidate)?;
         let provisional = facts.into_provisional();
-        // A batch that only moves modules builds what is already running,
-        // so it skips the throwaway build: dragging a module never reloads
-        // a sample.
-        let resolved = match only_layout_changed(&document, &candidate.document) {
-            true => HashMap::new(),
-            false => self.validate_candidate(&validation_probe(&document, &candidate))?,
-        };
+        let resolved = self.validate_candidate(&validation_probe(&document, &candidate))?;
         Ok(Batch {
             edit_count: edits.len(),
             candidate,

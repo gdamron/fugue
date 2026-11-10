@@ -70,10 +70,24 @@ It writes the document's `layout` (see the invention format's `layout`
 section) and nothing else: no module is rebuilt, no graph change is published,
 and nothing heard changes. The revision still advances, so a client tracking
 revisions sees the move. Positions are absolute, so the same edit made twice
-leaves the same document. A batch that only moves modules skips the throwaway
-build described in [What checking a batch touches](#what-checking-a-batch-touches).
-Removing a module drops its position with it. A `move_modules` cannot be
-timed on its own: a timed batch must change structure.
+leaves the same document. A position with a field other than `x` and `y` is
+refused when the request is parsed.
+
+A batch of `move_modules` edits alone takes a path of its own: it writes the
+layout straight into the retained document, all or nothing, without the
+throwaway build described in
+[What checking a batch touches](#what-checking-a-batch-touches), and it does
+not cancel a timed edit waiting to land. When that timed edit lands, its
+document keeps the layout as moved meanwhile, with its own moves made on top.
+A `move_modules` cannot be timed on its own: a timed batch must change
+structure.
+
+Coordinates are numbers: an integer re-saves as a float (`120` becomes
+`120.0`), and every value round-trips exactly.
+
+Removing a module drops its position with it, so removing and adding the same
+id in one batch leaves the new module unplaced. `SwapModule` keeps the
+module's position.
 
 Unknown fields inside an edit, and unknown ops, are refused when the request
 is parsed, so a misspelled edit field fails loudly instead of being ignored.
