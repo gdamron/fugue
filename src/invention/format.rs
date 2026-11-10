@@ -6,6 +6,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+mod partial_range;
+pub(crate) use partial_range::refuse_partial_ranges;
+#[cfg(test)]
+mod partial_range_tests;
+
 /// A complete invention document defining a modular synthesis setup.
 ///
 /// Inventions can be loaded from JSON files or strings and define
@@ -158,7 +163,10 @@ pub struct DevelopmentOutput {
 ///
 /// Like the exposed inputs and outputs, an exposed control is called by its
 /// `name`; listing one name more than once fans it out to every target.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// Deserializes through `partial_range`, which keeps a range missing a bound
+/// for the loader to refuse by the development's name.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct DevelopmentControl {
     pub name: String,
@@ -171,6 +179,12 @@ pub struct DevelopmentControl {
     /// must agree.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub range: Option<ControlRange>,
+    /// The bounds the document wrote a `range` without, as "`min`", "`max`"
+    /// or both. Never saved: a development with a control holding one
+    /// does not load.
+    #[serde(skip)]
+    #[cfg_attr(feature = "rpc-schema", schemars(skip))]
+    pub range_missing: Option<&'static str>,
 }
 
 /// A number control's range, from `min` to `max`, kept as written so a

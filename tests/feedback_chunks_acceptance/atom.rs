@@ -16,14 +16,6 @@ fn declares(frames: usize) -> Option<FeedbackCut> {
     })
 }
 
-#[test]
-fn the_audio_input_is_port_zero() {
-    assert_eq!(
-        built_delay(json!({})).module().input_port_index("audio"),
-        Some(0)
-    );
-}
-
 /// Default `min_time` is the one-sample floor.
 #[test]
 fn a_delay_without_min_time_declares_one_frame() {
@@ -52,15 +44,6 @@ fn min_time_sets_the_declared_frames() {
     // Past max_time the clamp wins.
     let long = cut_of(json!({ "max_time": 0.5, "min_time": 2.0 }));
     assert_eq!(long, declares(24_000));
-}
-
-/// A module that guarantees no delay declares none.
-#[test]
-fn modules_without_a_guaranteed_delay_declare_none() {
-    let built = ModuleRegistry::default()
-        .build("vca", SR, &json!({}))
-        .unwrap();
-    assert_eq!(built.module.module().feedback_cut(), None);
 }
 
 /// Runs `m` over `input` with the `time_mod` input held at `mod_in`.

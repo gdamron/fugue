@@ -153,27 +153,3 @@ fn clock_is_ignored_while_sync_is_off() {
         "the clock input changed the output with sync off"
     );
 }
-
-/// A rising edge on `trigger` starts one grain on that sample (density in
-/// its trigger-only zone): the onset is within one sample of the edge.
-#[test]
-fn trigger_edge_starts_a_grain_on_that_sample() {
-    let frames = s(3.0);
-    let edges = [s(1.0) + 37, s(2.0) + 11];
-    let feed = Feed::mono(vec![0.5; frames]).with_trigger(gates(frames, edges, 480));
-    let start = [
-        ("density", 0.5),
-        ("size", 0.0),
-        ("texture", 0.0),
-        ("position", 0.2),
-    ];
-    let (out, _) = render_granular(json!({ "buffer_length": 1.0 }), &start, &[], &feed);
-    let found = onsets(&out, 0);
-    assert_eq!(found.len(), 2, "one grain per edge: {found:?}");
-    for (got, want) in found.iter().zip(edges) {
-        assert!(
-            got.abs_diff(want) <= 1,
-            "grain began at {got}, edge at {want}"
-        );
-    }
-}

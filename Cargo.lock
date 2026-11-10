@@ -1105,6 +1105,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fugue-ffi"
+version = "2026.11.0"
+dependencies = [
+ "fugue",
+]
+
+[[package]]
 name = "futures"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"

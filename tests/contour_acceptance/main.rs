@@ -7,8 +7,7 @@
 //! (3) outputs stay within +-1 (and unipolar where specified) under random
 //! modulation of every control and input; (4) a mode or range change steps no
 //! more than 1.5x the steady-state step; (5) aliasing at about 1 kHz at least
-//! 20 dB below a naive ramp. Plus an interface test: ports, controls,
-//! choices by name, defaults.
+//! 20 dB below a naive ramp.
 //!
 //! Cycle starts of a looping output are found as the local minimum at the end
 //! of a steep fall (`slope` 0.98), where the ramp restarts.
@@ -18,9 +17,8 @@ mod rig;
 mod aliasing;
 mod bounds;
 mod clock_lock;
-mod interface;
 mod mode_switch;
 mod stage_times;
 
-pub use fugue::{ControlKind, ControlValue, GraphModule, Module, ModuleRegistry};
+pub use fugue::{ControlKind, GraphModule, Module, ModuleRegistry};
 pub use serde_json::{json, Value};

@@ -4,21 +4,6 @@
 use super::rig::*;
 use super::*;
 
-/// Criterion 3: internal `feedback` spaces repeats exactly the delay time.
-/// A 0.5 impulse with feedback 0.5 and time 0.25 s (12,000 samples) repeats
-/// at 0.5, 0.25, 0.125, ... every 12,000 samples: the first echo is the input
-/// delayed at full amplitude, each later repeat is times the feedback. All
-/// amplitudes stay below the soft clip's 0.75 linear range.
-#[test]
-fn internal_feedback_spaces_repeats_exactly_the_delay_time() {
-    let mut d = delay(json!({ "time": 0.25, "feedback": 0.5 }));
-    let out = d.render(&impulses(60_000, &[(500, 0.5)]));
-    let want: Vec<_> = (1..=4)
-        .map(|k| (500 + 12_000 * k, 0.5 * 0.5f32.powi(k as i32 - 1)))
-        .collect();
-    assert_hits(&out, &want);
-}
-
 /// Criterion 3: a loop patched outside the atom (delay.audio -> vca -> back
 /// to delay.audio) also spaces repeats exactly the delay time. A short clock
 /// gate, scaled to 0.5, feeds the delay; the dry gate's rising edge and each

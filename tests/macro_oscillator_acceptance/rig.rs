@@ -66,10 +66,6 @@ pub fn voice(config: Value) -> Voice {
 }
 
 impl Voice {
-    pub fn control(&self, key: &str) -> Option<&ControlMeta> {
-        self.controls.iter().find(|c| c.key == key)
-    }
-
     pub fn set(&mut self, key: &str, value: f32) {
         self.module
             .module_mut()

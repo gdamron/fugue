@@ -144,6 +144,7 @@ fn development_with_inner_scheduler() -> crate::Invention {
         module: "sched".to_string(),
         control: "schedule".to_string(),
         range: None,
+        range_missing: None,
     });
     let mut root = blank(vec![module("lead", "pattern")]);
     root.developments.push(DevelopmentSpec {

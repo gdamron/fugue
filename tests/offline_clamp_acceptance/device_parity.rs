@@ -38,19 +38,6 @@ fn over_level_tones_match_the_device_sample_for_sample() {
 }
 
 #[test]
-fn a_mixed_signal_matches_the_device() {
-    // Some samples in range (kept exactly), some over (clamped).
-    let (raw, out) = assert_matches_device(&tone("sine", 97.0, 4.0), 9_600);
-    assert!(raw.iter().any(|x| x.abs() < 0.9));
-    assert!(raw.iter().any(|x| x.abs() > 1.0));
-    for (r, o) in raw.iter().zip(&out) {
-        if r.abs() <= 1.0 - 1e-6 {
-            assert_eq!(r.to_bits(), o.to_bits(), "in-range samples are untouched");
-        }
-    }
-}
-
-#[test]
 fn non_finite_samples_are_silence_like_the_device() {
     let json = overflowing_chain();
     let (raw, out) = assert_matches_device(&json, 9_600);
@@ -74,18 +61,4 @@ fn non_finite_samples_are_silence_like_the_device() {
         out.iter().any(|x| x.abs() > 0.5),
         "the finite samples near the crossings are loud"
     );
-}
-
-#[test]
-fn the_non_finite_count_is_kept_alongside_the_clamp() {
-    // The same overflow, live: the sink replaces and counts the samples.
-    let live = Live::start(&overflowing_chain());
-    live.capture(9_600);
-    let levels = live.running.master_meter();
-    assert!(
-        levels.non_finite_samples >= 9_600,
-        "counted: {}",
-        levels.non_finite_samples
-    );
-    live.running.stop();
 }

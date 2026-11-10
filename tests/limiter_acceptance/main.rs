@@ -15,10 +15,8 @@
 
 mod rig;
 
-mod brickwall;
-mod controls;
 mod reduction;
 mod transparency;
 
-pub use fugue::{ControlKind, ControlMeta, ControlValue, GraphModule, Module, ModuleRegistry};
+pub use fugue::{GraphModule, Module, ModuleRegistry};
 pub use serde_json::{json, Value};

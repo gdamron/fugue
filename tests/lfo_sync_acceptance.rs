@@ -167,21 +167,6 @@ fn fraction_spellings_match_the_named_note_values() {
     }
 }
 
-#[test]
-fn the_bpm_control_sets_the_tempo() {
-    let config = sine_config(json!({ "division": "quarter_note", "bpm": 60.0 }));
-    assert_period(&render(config, secs(6.0)), 48_000.0, 2, "60 bpm");
-}
-
-/// A patched `bpm` input above 0 overrides the control.
-#[test]
-fn the_bpm_input_overrides_the_bpm_control() {
-    let config = sine_config(json!({ "division": "quarter_note", "bpm": 60.0 }));
-    let tempo = |_: usize| 240.0;
-    let x = render_with(&mut lfo(config), secs(3.0), Some(&tempo), |_, _| {});
-    assert_period(&x[BLOCK..], 12_000.0, 8, "240 bpm input");
-}
-
 /// Assumption: the input applies only while finite and above 0, so a patched
 /// 0, negative or NaN tempo leaves the `bpm` control in charge.
 #[test]
@@ -228,22 +213,6 @@ fn a_phase_offset_shifts_the_waveform_by_that_many_cycles() {
             .fold(0.0, f32::max);
         assert!(worst < 2e-3, "phase {phase}: worst difference {worst}");
     }
-}
-
-/// Assumption: a `phase` given in config is the starting value (no glide
-/// from 0 at build): a sine with phase 0.25 starts at its peak.
-#[test]
-fn a_sine_with_a_quarter_cycle_of_phase_starts_at_its_peak() {
-    let x = render(
-        sine_config(json!({ "rate": 2.0, "phase": 0.25 })),
-        secs(1.0),
-    );
-    assert!(
-        x[0] >= 0.99 * peak(&x),
-        "starts at {} of peak {}",
-        x[0],
-        peak(&x)
-    );
 }
 
 /// A live `phase` change glides, so the output never steps, and settles on

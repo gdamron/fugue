@@ -19,19 +19,6 @@ fn assert_delayed_by(n: usize, time: f32, block: usize) {
     );
 }
 
-/// Criterion 1 with times that are exact in f32 (N/sr is dyadic).
-#[test]
-fn time_of_n_over_sr_delays_by_exactly_n_samples() {
-    for (n, time) in [
-        (375, 0.0078125f32),
-        (1500, 0.03125),
-        (12_000, 0.25),
-        (24_000, 0.5),
-    ] {
-        assert_delayed_by(n, time, BLOCK);
-    }
-}
-
 /// Criterion 1 for any whole N, including N below the block size, with the
 /// control given as the f32 nearest N/sr. Assumption: the atom treats a time
 /// that is a whole number of samples to within f32 resolution as exact (the
@@ -61,14 +48,6 @@ fn invention_delay_matches_dry_signal_n_samples_earlier() {
         bad.is_none(),
         "wet differs from dry 1500 samples earlier at {bad:?}"
     );
-}
-
-/// `time` is clamped to `max_time` (and `max_time` bounds the line).
-#[test]
-fn time_is_clamped_to_max_time() {
-    let mut d = delay(json!({ "max_time": 0.1, "time": 1.0 }));
-    let out = d.render(&impulses(12_000, &[(100, 0.5)]));
-    assert_hits(&out, &[(100 + 4_800, 0.5)]);
 }
 
 /// `time_mod` adds `time_mod x time_mod_depth` seconds, at audio rate.

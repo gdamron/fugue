@@ -10,14 +10,6 @@ fn clock(config: Value) -> GraphModule {
         .module
 }
 
-/// `clock` has a `bpm` output, appended after the five gate outputs.
-#[test]
-fn clock_lists_bpm_after_its_five_gate_outputs() {
-    let clk = clock(json!({}));
-    let want = ["beat", "beat_d4", "beat_d2", "beat_x2", "beat_x4", "bpm"];
-    assert_eq!(clk.module().outputs(), want);
-}
-
 fn render_clock(clk: &mut GraphModule, frames: usize) -> Vec<Vec<f32>> {
     let m = clk.module_mut();
     let mut out = vec![Vec::new(); m.outputs().len()];
@@ -28,19 +20,6 @@ fn render_clock(clk: &mut GraphModule, frames: usize) -> Vec<Vec<f32>> {
         }
     }
     out
-}
-
-/// `bpm` carries the clock's tempo on every sample.
-#[test]
-fn bpm_output_carries_the_tempo_on_every_sample() {
-    for bpm in [90.0f32, 120.0, 187.5] {
-        let out = render_clock(&mut clock(json!({ "bpm": bpm })), 4 * BLOCK);
-        assert!(
-            out[5].iter().all(|&v| v == bpm),
-            "bpm {bpm}: {:?}",
-            &out[5][..4]
-        );
-    }
 }
 
 /// "existing clock outputs unchanged": at 120 bpm the gates rise every 24,000

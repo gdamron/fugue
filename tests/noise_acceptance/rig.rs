@@ -74,17 +74,6 @@ impl Noise {
             .set_control("level", level)
             .unwrap_or_else(|err| panic!("level accepts {level}: {err}"));
     }
-
-    pub fn level(&self) -> f32 {
-        self.module
-            .module()
-            .get_control("level")
-            .expect("level is readable")
-    }
-
-    pub fn module(&self) -> &dyn Module {
-        self.module.module()
-    }
 }
 
 pub fn seconds(s: f64) -> usize {

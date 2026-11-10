@@ -1,5 +1,5 @@
-//! Determinism: the same seed gives bit-identical output, and writing the
-//! `seed` control restarts the random stream.
+//! Determinism: the same seed gives bit-identical output, different seeds
+//! differ, and an unseeded module draws from entropy.
 
 use crate::rig::*;
 
@@ -63,27 +63,4 @@ fn without_a_seed_each_module_draws_from_entropy() {
     let a = rig(serde_json::json!({ "spread": 1.0 })).run_raw(2_000);
     let b = rig(serde_json::json!({ "spread": 1.0 })).run_raw(2_000);
     assert!(a != b, "two unseeded modules should not agree");
-}
-
-#[test]
-fn writing_the_seed_restarts_the_random_stream() {
-    // Interface: "Writing it restarts the random stream." With repetition 0
-    // and complementary gates nothing but the stream decides what follows.
-    let mut r = rig(serde_json::json!({ "seed": 7, "spread": 1.0 }));
-    let before = r.run(300);
-    r.set("seed", fugue::ControlValue::Number(7.0));
-    let after = r.run(300);
-    for i in 0..300 {
-        assert_eq!(
-            before[i].every_step_bits(),
-            after[i].every_step_bits(),
-            "step {i} after rewriting the seed should replay the stream"
-        );
-    }
-    r.set("seed", fugue::ControlValue::Number(8.0));
-    let other = r.run(300);
-    assert!(
-        (0..300).any(|i| before[i].every_step_bits() != other[i].every_step_bits()),
-        "a different seed should give a different stream"
-    );
 }

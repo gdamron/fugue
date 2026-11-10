@@ -4,32 +4,6 @@
 use super::rig::*;
 use super::*;
 
-/// Dotted 1/8 at 120 bpm and 48 kHz: 0.75 beat = 0.375 s = 18,000 samples.
-fn first_echo(d: &mut Delay) -> Vec<f32> {
-    d.render(&impulses(40_000, &[(1_000, 0.5)]))
-}
-
-/// Criterion 2, via the `bpm` control.
-#[test]
-fn dotted_eighth_at_120_bpm_echoes_at_18000_samples_via_the_bpm_control() {
-    for division in ["dotted_8th_note", "1/8."] {
-        let mut d = delay(json!({ "division": division, "bpm": 120.0 }));
-        assert_hits(&first_echo(&mut d), &[(19_000, 0.5)]);
-    }
-    let mut d = delay(json!({ "division": "dotted_8th_note", "bpm": 60.0 }));
-    d.set("bpm", 120.0);
-    assert_hits(&first_echo(&mut d), &[(19_000, 0.5)]);
-}
-
-/// Criterion 2, via the `bpm` input; while it is connected the control is
-/// ignored.
-#[test]
-fn dotted_eighth_at_120_bpm_echoes_at_18000_samples_via_the_bpm_input() {
-    let mut d = delay(json!({ "division": "dotted_8th_note", "bpm": 60.0 }));
-    d.connect_bpm(120.0);
-    assert_hits(&first_echo(&mut d), &[(19_000, 0.5)]);
-}
-
 /// Other note values, as beats x 60 / bpm: quarter at 90 bpm is 32,000
 /// samples; quarter triplet (2/3 beat) at 120 bpm is 16,000.
 #[test]

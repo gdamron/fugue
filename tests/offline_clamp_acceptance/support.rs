@@ -77,21 +77,6 @@ pub fn overflowing_chain() -> String {
     document(modules, connections)
 }
 
-/// Seeded white noise through a gain stage into a dac without soft clip.
-pub fn noise(decibels: f64) -> String {
-    document(
-        vec![
-            json!({ "id": "noise", "type": "noise", "config": { "seed": 7, "level": 0.5 } }),
-            json!({ "id": "gain", "type": "gain", "config": { "decibels": decibels } }),
-            dac(false),
-        ],
-        vec![
-            json!({ "from": "noise", "from_port": "white", "to": "gain", "to_port": "audio" }),
-            wire("gain", "dac"),
-        ],
-    )
-}
-
 /// `frames` frames rendered offline, seeded, in buffers of `chunk` frames
 /// (the last one shorter), as interleaved stereo.
 pub fn offline(json: &str, frames: usize, chunk: usize) -> Vec<f32> {

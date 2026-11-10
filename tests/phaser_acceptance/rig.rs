@@ -39,11 +39,6 @@ impl Unit {
             .unwrap_or_else(|err| panic!("{key} accepts {value}: {err}"));
     }
 
-    pub fn meta(&self, key: &str) -> ControlMeta {
-        let found = self.m().controls().into_iter().find(|c| c.key == key);
-        found.unwrap_or_else(|| panic!("declares a {key} control"))
-    }
-
     /// Renders as many frames as the shortest input has; only the listed
     /// inputs are connected. Returns the (left, right) outputs.
     /// `hook(t, unit)` runs before each block starting at frame `t`.

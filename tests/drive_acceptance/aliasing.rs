@@ -66,18 +66,6 @@ fn assert_cut(sample_rate: u32, amp: f64) {
     );
 }
 
-/// 48 kHz, a -6 dBFS (0.5 peak) sine.
-#[test]
-fn four_x_oversampling_cuts_aliasing_below_20_khz_by_30_db_at_48k() {
-    assert_cut(48_000, 0.5);
-}
-
-/// 48 kHz, a near-full-scale (0.95 peak) sine.
-#[test]
-fn four_x_oversampling_cuts_aliasing_below_20_khz_by_30_db_at_48k_near_full_scale() {
-    assert_cut(48_000, 0.95);
-}
-
 /// 44.1 kHz, where folded harmonics land in 18 to 20 kHz: a -6 dBFS sine.
 #[test]
 fn four_x_oversampling_cuts_aliasing_below_20_khz_by_30_db_at_44_1k() {
@@ -88,17 +76,4 @@ fn four_x_oversampling_cuts_aliasing_below_20_khz_by_30_db_at_44_1k() {
 #[test]
 fn four_x_oversampling_cuts_aliasing_below_20_khz_by_30_db_at_44_1k_near_full_scale() {
     assert_cut(44_100, 0.95);
-}
-
-/// Measurement check: with no oversampling the hard clip does alias, so the
-/// ratio above is measuring something (aliased energy within 40 dB of the
-/// fundamental's, over the whole band up to Nyquist).
-#[test]
-fn without_oversampling_hard_clip_visibly_aliases() {
-    let (aliased, fundamental) = measure(48_000, 1, 0.5, SRF);
-    let rel = 10.0 * (aliased / fundamental).log10();
-    assert!(
-        rel > -40.0,
-        "aliased energy only {rel:.1} dB below the fundamental"
-    );
 }

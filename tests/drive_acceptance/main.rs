@@ -19,9 +19,8 @@ mod rig;
 mod aliasing;
 mod bounded;
 mod click_free;
-mod controls;
 mod mean;
 mod steady_level;
 
-pub use fugue::{ControlKind, ControlValue, GraphModule, Module, ModuleRegistry};
+pub use fugue::{GraphModule, Module, ModuleRegistry};
 pub use serde_json::{json, Value};

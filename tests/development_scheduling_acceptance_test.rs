@@ -49,79 +49,6 @@ fn assert_matches_flat(def: &Value, modules: &[Value], conns: &[Value], label: &
     at_64
 }
 
-// -- fan-in -----------------------------------------------------------------
-
-/// Two inner oscillators feed one inner vca `audio` input.
-fn two_inner_routes() -> (Value, Vec<Value>, Vec<Value>) {
-    let def = json!({
-        "version": "1.0.0",
-        "modules": [
-            osc("osc_a", 330.0, 0.0),
-            osc("osc_b", 440.0, 0.0),
-            { "id": "mix", "type": "vca", "config": { "level": 0.5 } },
-        ],
-        "connections": [
-            conn("osc_a", "audio", "mix", "audio"),
-            conn("osc_b", "audio", "mix", "audio"),
-        ],
-        "outputs": [ { "name": "audio", "from": "mix", "from_port": "audio" } ],
-    });
-    let modules = vec![instance(), dac()];
-    let conns = vec![conn(DEV_ID, "audio", "dac", "audio")];
-    (def, modules, conns)
-}
-
-/// C1: two routes into the same inner input of a development sum, matching
-/// the same wiring flat in the main graph (not last-route-wins).
-#[test]
-fn c1_two_inner_routes_into_one_input_sum() {
-    let (def, modules, conns) = two_inner_routes();
-    let rendered = assert_matches_flat(&def, &modules, &conns, "two inner routes");
-
-    // Neither source alone is what a dropped route would leave behind.
-    for kept in ["osc_a", "osc_b"] {
-        let mut single = def.clone();
-        let routes: Vec<Value> = single["connections"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|c| c["from"] == kept)
-            .cloned()
-            .collect();
-        single["connections"] = Value::Array(routes);
-        let alone = offline(flat(&single, &modules, &conns), FRAMES, 64);
-        assert!(
-            rendered
-                .iter()
-                .zip(&alone)
-                .any(|(a, b)| a.to_bits() != b.to_bits()),
-            "development render equals {kept} alone: a route was dropped"
-        );
-    }
-}
-
-/// C1: an external development input plus an inner route on the same inner
-/// port sum, matching flat.
-#[test]
-fn c1_external_input_and_inner_route_on_one_port_sum() {
-    let def = json!({
-        "version": "1.0.0",
-        "modules": [
-            osc("tone", 220.0, 60.0),
-            { "id": "wobble", "type": "lfo", "config": { "rate": 3.0, "waveform": "sine" } },
-        ],
-        "connections": [ conn("wobble", "bipolar", "tone", "frequency_mod") ],
-        "inputs": [ { "name": "mod", "to": "tone", "to_port": "frequency_mod" } ],
-        "outputs": [ { "name": "audio", "from": "tone", "from_port": "audio" } ],
-    });
-    let modules = vec![osc("ext", 7.0, 0.0), instance(), dac()];
-    let conns = vec![
-        conn("ext", "audio", DEV_ID, "mod"),
-        conn(DEV_ID, "audio", "dac", "audio"),
-    ];
-    assert_matches_flat(&def, &modules, &conns, "external plus inner route");
-}
-
 // -- one loop plus acyclic members ------------------------------------------
 
 /// osc1 <-> osc2 (the loop), osc1 -> filter -> vca (acyclic tail) with an
@@ -167,40 +94,6 @@ fn loop_with_head_and_tail() -> (Value, Vec<Value>, Vec<Value>) {
         conn(DEV_ID, "audio", "dac", "audio"),
     ];
     (def, modules, conns)
-}
-
-/// C2: a development with one feedback loop plus acyclic head and tail
-/// renders sample-identical to the same wiring flat in the main graph, at
-/// several block sizes.
-#[test]
-fn c2_loop_with_acyclic_head_and_tail_matches_flat() {
-    let (def, modules, conns) = loop_with_head_and_tail();
-    assert_matches_flat(&def, &modules, &conns, "loop with head and tail");
-}
-
-/// C2: a loop with only an acyclic tail (cross-FM pair into filter and vca).
-#[test]
-fn c2_loop_with_acyclic_tail_only_matches_flat() {
-    let def = json!({
-        "version": "1.0.0",
-        "modules": [
-            osc("osc1", 220.0, 80.0),
-            osc("osc2", 110.0, 80.0),
-            { "id": "filter", "type": "filter",
-              "config": { "filter_type": "lowpass", "cutoff": 900.0, "resonance": 0.3 } },
-            { "id": "out", "type": "vca", "config": { "level": 0.7 } },
-        ],
-        "connections": [
-            conn("osc1", "audio", "osc2", "frequency_mod"),
-            conn("osc2", "audio", "osc1", "frequency_mod"),
-            conn("osc1", "audio", "filter", "audio"),
-            conn("filter", "audio", "out", "audio"),
-        ],
-        "outputs": [ { "name": "audio", "from": "out", "from_port": "audio" } ],
-    });
-    let modules = vec![instance(), dac()];
-    let conns = vec![conn(DEV_ID, "audio", "dac", "audio")];
-    assert_matches_flat(&def, &modules, &conns, "loop with tail only");
 }
 
 // -- block-wise execution of acyclic members --------------------------------

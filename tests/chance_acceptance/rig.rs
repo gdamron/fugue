@@ -127,11 +127,6 @@ impl Rig {
         (0..steps).map(|_| self.step()).collect()
     }
 
-    /// A reset pulse with no clock edge in it.
-    pub fn reset_pulse(&mut self) {
-        self.block([0.0; BLOCK], [1.0, 1.0, 0.0, 0.0]);
-    }
-
     /// Writes a control through the module itself with `Module::set_control`.
     /// A module built outside a graph has no bound control surface (writes to
     /// it are staged until it joins one), so the write goes to the module.

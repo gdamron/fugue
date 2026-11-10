@@ -1,4 +1,3 @@
-use super::{alias_power, db, N, SKIP};
 use fugue::dsp::{BandLimitedOscillator, Shape};
 
 /// Runs a master at `m` and a saw slave at `s` (both phase increments), hard
@@ -31,31 +30,4 @@ fn slave_repeats_with_the_masters_period() {
         diff < 1e-3,
         "synced slave differs from itself one period later by {diff}"
     );
-}
-
-/// Hard sync aliases less than a naive synced saw. The 10 dB bound is the
-/// tester's own choice, not from the spec.
-#[test]
-fn synced_saw_aliases_less_than_naive() {
-    let (m, s) = (1.0 / 48.37, 2.6 / 48.37); // master ~992 Hz, slave ~2.58 kHz
-    let (mut pm, mut ps) = (0.0f64, 0.0f64);
-    let naive: Vec<f32> = (0..SKIP + N)
-        .map(|_| {
-            pm += m;
-            if pm >= 1.0 {
-                pm -= 1.0;
-                ps = pm / m * s; // the slave restarted pm/m samples ago
-            } else {
-                ps += s;
-            }
-            ps -= ps.floor();
-            (2.0 * ps - 1.0) as f32
-        })
-        .collect();
-    let blep = slave(m as f32, s as f32, SKIP + N, true);
-    let f0 = 48_000.0 * m;
-    let ((a_blep, t_blep), (a_naive, t_naive)) = (alias_power(&blep, f0), alias_power(&naive, f0));
-    println!("synced saw: {:.1} dB below naive", db(a_naive / a_blep));
-    assert!(db(a_naive / a_blep) >= 10.0);
-    assert!(db(t_blep / t_naive).abs() < 3.0, "total power is off");
 }

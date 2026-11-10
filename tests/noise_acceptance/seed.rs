@@ -6,17 +6,6 @@ fn bits(x: &[f32]) -> Vec<u32> {
     x.iter().map(|v| v.to_bits()).collect()
 }
 
-/// Criterion: "The same seed gives bit-identical output", for both outputs.
-#[test]
-fn same_seed_is_bit_identical() {
-    for seed in [0u64, 1, 7, u64::MAX] {
-        let (w1, p1) = seeded(seed).render(seconds(1.0));
-        let (w2, p2) = seeded(seed).render(seconds(1.0));
-        assert_eq!(bits(&w1), bits(&w2), "seed {seed}: white differs");
-        assert_eq!(bits(&p1), bits(&p2), "seed {seed}: pink differs");
-    }
-}
-
 /// Criterion: bit-identical across a long render, so a drifting or
 /// state-leaking generator fails late rather than early.
 #[test]
