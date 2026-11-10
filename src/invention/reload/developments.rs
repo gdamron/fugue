@@ -57,12 +57,12 @@ pub(crate) struct LoadedDevelopment {
 }
 
 /// Two declarations build the same development when they differ at most in
-/// the minimum core they declare: saving writes that minimum into the file,
-/// and reloading the saved file must not rebuild instances nobody touched.
+/// the minimum core they declare or their layout: saving writes that minimum
+/// into the file, a layout builds nothing, and reloading must not rebuild
+/// instances nobody touched.
 impl PartialEq for LoadedDevelopment {
     fn eq(&self, other: &Self) -> bool {
-        self.scope == other.scope
-            && self.definition.without_minimum_core() == other.definition.without_minimum_core()
+        self.scope == other.scope && self.definition.as_built() == other.definition.as_built()
     }
 }
 

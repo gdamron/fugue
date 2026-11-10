@@ -51,3 +51,27 @@ fn unknown_fields_are_refused_inside_an_edit_but_not_on_the_envelope() {
     outside["dry_run"] = json!(true);
     assert!(serde_json::from_value::<RpcRequest>(outside).is_ok());
 }
+
+#[test]
+fn the_documented_move_parses_and_round_trips() {
+    let json =
+        r#"{ "op": "move_modules", "positions": { "osc": { "x": 120, "y": 40 }, "vca": null } }"#;
+    let edit: StructuralEdit = serde_json::from_str(json).unwrap();
+    assert_eq!(edit.op(), EditOp::MoveModules);
+    assert_eq!(EditOp::MoveModules.as_str(), "move_modules");
+    let StructuralEdit::MoveModules { positions } = &edit else {
+        panic!("expected move_modules, got {edit:?}");
+    };
+    let osc = positions["osc"].expect("osc is placed");
+    assert_eq!((osc.x, osc.y), (120.0, 40.0));
+    assert_eq!(positions["vca"], None);
+    let again: StructuralEdit = serde_json::to_string(&edit)
+        .and_then(|json| serde_json::from_str(&json))
+        .unwrap();
+    assert_eq!(again, edit);
+    // A misspelled field is refused, as in every other edit.
+    assert!(
+        serde_json::from_str::<StructuralEdit>(r#"{ "op": "move_modules", "position": {} }"#)
+            .is_err()
+    );
+}

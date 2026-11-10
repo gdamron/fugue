@@ -150,9 +150,12 @@ impl InventionBuilder {
 
     fn build_seeded(
         mut self,
-        invention: Invention,
+        mut invention: Invention,
     ) -> Result<(InventionRuntime, InventionHandles), Box<dyn std::error::Error>> {
         let base_registry = self.registry.clone();
+        // A layout entry that places no module of this document is dropped
+        // from it with a warning; the piece loads all the same.
+        let unplaced = invention.settle_layout();
         // Retain the authored document (before asset resolution) so the
         // runtime can be saved back to disk without inlining `$asset`
         // references or losing developments, title, and the exposed sections.
@@ -164,8 +167,13 @@ impl InventionBuilder {
         self.validate_invention(&invention)?;
 
         // Build all module instances (including sinks)
-        let (modules, sinks, control_surfaces, handles, warnings) =
+        let (modules, sinks, control_surfaces, handles, mut warnings) =
             self.build_modules(&invention)?;
+        warnings.extend(
+            unplaced
+                .into_iter()
+                .map(super::load_warnings::Warning::of_document),
+        );
         // A build nested in a development's reports through the module it
         // builds (see `load_warnings`); the outermost one says them.
         if !super::load_warnings::collecting() {

@@ -16,6 +16,7 @@ mod after_timed_edit;
 mod authored_races;
 mod commit;
 mod config_refusals;
+mod layout;
 mod melody;
 mod payload_order;
 mod real_modules;

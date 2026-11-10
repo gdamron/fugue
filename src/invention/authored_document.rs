@@ -9,6 +9,7 @@
 //! [`RuntimeState`]: super::state::RuntimeState
 
 use crate::invention::format::{Invention, ModuleSpec};
+use crate::invention::layout::Position;
 use crate::module_config::{names, replaced_by, ConfigKey};
 use crate::ControlValue;
 
@@ -33,9 +34,20 @@ pub(crate) fn upsert_module(
     }
 }
 
-/// Removes a module's spec. Connections are left to the caller.
+/// Removes a module's spec and its place in the layout. Connections are
+/// left to the caller.
 pub(crate) fn remove_module(document: &mut Invention, id: &str) {
     document.modules.retain(|spec| spec.id != id);
+    document.layout.modules.remove(id);
+}
+
+/// Places module `id` at `position` in the layout, or unplaces it with
+/// `None`. The caller checks that the module exists.
+pub(crate) fn place_module(document: &mut Invention, id: &str, position: Option<Position>) {
+    match position {
+        Some(position) => document.layout.modules.insert(id.to_string(), position),
+        None => document.layout.modules.remove(id),
+    };
 }
 
 /// Writes a control value into a module's config so the document reproduces

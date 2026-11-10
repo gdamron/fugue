@@ -191,6 +191,15 @@ fn validation_probe(document: &Invention, candidate: &EditedCandidate) -> Invent
     probe
 }
 
+/// Whether `candidate` differs from `document` in its layout alone.
+fn only_layout_changed(document: &Invention, candidate: &Invention) -> bool {
+    let unplaced = |document: &Invention| Invention {
+        layout: Default::default(),
+        ..document.clone()
+    };
+    unplaced(document) == unplaced(candidate)
+}
+
 /// The `invalid_edit` refusal for a control write the module refused, at
 /// its edit's index.
 fn refused_write(candidate: &CandidateWrite, mut reason: String) -> RpcError {
@@ -313,7 +322,13 @@ impl RunningInvention {
         // prepared directory before publishing.
         check_writes(&facts.directory_after(&candidate.document), &candidate)?;
         let provisional = facts.into_provisional();
-        let resolved = self.validate_candidate(&validation_probe(&document, &candidate))?;
+        // A batch that only moves modules builds what is already running,
+        // so it skips the throwaway build: dragging a module never reloads
+        // a sample.
+        let resolved = match only_layout_changed(&document, &candidate.document) {
+            true => HashMap::new(),
+            false => self.validate_candidate(&validation_probe(&document, &candidate))?,
+        };
         Ok(Batch {
             edit_count: edits.len(),
             candidate,

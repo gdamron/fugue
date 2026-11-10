@@ -25,9 +25,12 @@
 //! [`RpcCommand::replay_policy`]: super::RpcCommand::replay_policy
 //! [`MutationTicket`]: super::MutationTicket
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::{RpcError, RpcErrorCode};
+use crate::invention::layout::Position;
 use crate::ControlValue;
 
 /// The most edits one `ApplyEdits` batch may carry. An empty batch is refused
@@ -37,6 +40,10 @@ pub const MAX_EDITS_PER_BATCH: usize = 256;
 /// The longest module id, module type, port name or control key an edit may
 /// name, in UTF-8 bytes. Every such name must also be non-empty.
 pub const MAX_EDIT_NAME_BYTES: usize = 256;
+
+/// The most modules one `move_modules` edit may place. A `move_modules`
+/// places at least one, so it holds `1..=MAX_MOVES_PER_EDIT` positions.
+pub const MAX_MOVES_PER_EDIT: usize = 1024;
 
 /// One structural change in an `ApplyEdits` batch, tagged by `op`.
 ///
@@ -85,6 +92,16 @@ pub enum StructuralEdit {
         #[serde(deserialize_with = "crate::traits::exact_number::deserialize")]
         value: ControlValue,
     },
+    /// Places modules on the canvas that shows the graph: each id maps to
+    /// its new position, in the document's canvas units, or to `null` to
+    /// unplace it. Changes only the document's `layout`: no module is
+    /// rebuilt, no graph change is published, and nothing heard changes.
+    /// Positions are absolute, so the edit means the same however often it
+    /// is made. Every id must name a module that exists at this point in the
+    /// batch.
+    MoveModules {
+        positions: BTreeMap<String, Option<Position>>,
+    },
 }
 
 /// The kind of a [`StructuralEdit`], as named on the wire by its `op` tag.
@@ -97,6 +114,7 @@ pub enum EditOp {
     Connect,
     Disconnect,
     SetControl,
+    MoveModules,
 }
 
 impl EditOp {
@@ -108,6 +126,7 @@ impl EditOp {
             Self::Connect => "connect",
             Self::Disconnect => "disconnect",
             Self::SetControl => "set_control",
+            Self::MoveModules => "move_modules",
         }
     }
 }
@@ -127,6 +146,7 @@ impl StructuralEdit {
             Self::Connect { .. } => EditOp::Connect,
             Self::Disconnect { .. } => EditOp::Disconnect,
             Self::SetControl { .. } => EditOp::SetControl,
+            Self::MoveModules { .. } => EditOp::MoveModules,
         }
     }
 
@@ -174,12 +194,17 @@ impl StructuralEdit {
                 check("module_id", module_id)?;
                 check("key", key)
             }
+            Self::MoveModules { positions } => {
+                positions.keys().try_for_each(|id| check("positions", id))
+            }
         }
     }
 }
 
 /// Refuses a batch whose size is outside `1..=MAX_EDITS_PER_BATCH`, then a
-/// `set_control` whose value is a non-finite number.
+/// `set_control` whose value is a non-finite number, then a `move_modules`
+/// that places no module, more than [`MAX_MOVES_PER_EDIT`], or one at a
+/// non-finite position ([`EditFailureReason::InvalidPosition`]).
 ///
 /// A size refusal is batch-level: [`RpcErrorCode::InvalidRequest`] with no
 /// `edit` detail, since no single edit is at fault. A non-finite number (NaN,
@@ -206,23 +231,51 @@ pub fn check_edit_batch(edits: &[StructuralEdit]) -> Result<(), RpcError> {
         ));
     }
     for (index, edit) in edits.iter().enumerate() {
-        if let StructuralEdit::SetControl {
-            module_id,
-            key,
-            value,
-        } = edit
-        {
-            if let Some(message) = non_finite_refusal(module_id, key, value) {
-                return Err(RpcError::invalid_edit(EditFailure::new(
-                    index,
-                    EditOp::SetControl,
-                    EditFailureReason::InvalidControlValue,
-                    message,
-                )));
+        match edit {
+            StructuralEdit::SetControl {
+                module_id,
+                key,
+                value,
+            } => {
+                if let Some(message) = non_finite_refusal(module_id, key, value) {
+                    return Err(RpcError::invalid_edit(EditFailure::new(
+                        index,
+                        EditOp::SetControl,
+                        EditFailureReason::InvalidControlValue,
+                        message,
+                    )));
+                }
             }
+            StructuralEdit::MoveModules { positions } => {
+                if let Some(message) = move_refusal(positions) {
+                    return Err(RpcError::invalid_edit(EditFailure::new(
+                        index,
+                        EditOp::MoveModules,
+                        EditFailureReason::InvalidPosition,
+                        message,
+                    )));
+                }
+            }
+            _ => {}
         }
     }
     Ok(())
+}
+
+/// Why a `move_modules` edit's positions cannot apply, if they cannot.
+fn move_refusal(positions: &BTreeMap<String, Option<Position>>) -> Option<String> {
+    if positions.is_empty() {
+        return Some("move_modules needs at least one position".to_string());
+    }
+    if positions.len() > MAX_MOVES_PER_EDIT {
+        return Some(format!(
+            "move_modules places at most {MAX_MOVES_PER_EDIT} modules, got {}",
+            positions.len()
+        ));
+    }
+    let (id, _) = (positions.iter())
+        .find(|(_, position)| position.is_some_and(|position| !position.is_finite()))?;
+    Some(format!("module '{id}' must be placed at a finite position"))
 }
 
 /// Why `value` cannot be written to `module_id.key`, if it is a number a
@@ -274,6 +327,9 @@ pub enum EditFailureReason {
     /// refuses it as its own setter would (a read-only control, unparsable
     /// JSON, an option the control does not offer).
     InvalidControlValue,
+    /// `move_modules` places no module, too many, or one at a position that
+    /// is not finite.
+    InvalidPosition,
 }
 
 /// The structured detail of a refused edit, carried on

@@ -22,6 +22,7 @@ mod development_wholes;
 mod event_keys;
 mod exact_integers;
 mod implicit;
+mod layout;
 mod live_builds;
 mod melody;
 mod mixer_rebuild;

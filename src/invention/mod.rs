@@ -25,6 +25,7 @@ pub(crate) mod edits;
 pub mod format;
 pub mod graph;
 pub mod handles;
+pub mod layout;
 pub(crate) mod load_warnings;
 #[cfg(test)]
 pub(crate) mod manual_backend;
@@ -51,6 +52,7 @@ pub use format::{
 };
 pub use graph::{feedback_chunks, set_feedback_chunks, MasterLevels, FEEDBACK_CHUNKS_ENV};
 pub use handles::InventionHandles;
+pub use layout::{Layout, Position};
 pub use notes::{NoteChange, NoteChanges, NoteTime, Playhead};
 pub use orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
 pub use reload::{DevelopmentDefinitions, ReloadError, ReloadReport};
