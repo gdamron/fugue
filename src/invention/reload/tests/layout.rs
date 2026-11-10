@@ -44,6 +44,30 @@ fn a_layout_only_reload_rebuilds_nothing_and_keeps_the_new_layout() {
     let rest = expected.split_off(before.len());
     assert_eq!(running.pump.render(4), rest);
     assert_eq!(ids(&running.document().unwrap()), ["dac", "osc1"]);
+
+    // And back: a placed document reloaded with no layout clears it.
+    let report = running.reload(doc(BASE)).unwrap();
+    assert!(report.added.is_empty() && report.removed.is_empty() && report.swapped.is_empty());
+    assert!(running.document().unwrap().layout.is_empty());
+}
+
+#[test]
+fn a_layout_never_changes_what_is_heard() {
+    let (placed, _) = InventionBuilder::new(48_000)
+        .build(placed(&["osc1", "dac"]))
+        .unwrap();
+    let placed = Settled::start(placed);
+    let plain = start(BASE);
+    let bits = |(left, right): (Vec<f32>, Vec<f32>)| {
+        assert!(left.iter().any(|sample| sample.abs() > 0.01), "silent");
+        assert!(right.iter().any(|sample| sample.abs() > 0.01), "silent");
+        let bits = |channel: Vec<f32>| channel.into_iter().map(f32::to_bits).collect::<Vec<_>>();
+        (bits(left), bits(right))
+    };
+    assert_eq!(
+        bits(placed.pump.render_stereo(256)),
+        bits(plain.pump.render_stereo(256))
+    );
 }
 
 #[test]
