@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-mod named_errors;
+mod partial_range;
+pub(crate) use partial_range::refuse_partial_ranges;
 #[cfg(test)]
-mod named_errors_tests;
+mod partial_range_tests;
 
 /// A complete invention document defining a modular synthesis setup.
 ///
@@ -107,10 +108,7 @@ impl Invention {
 }
 
 /// A named development registered for use as a module type within an invention.
-///
-/// Deserializes through `named_errors`, so an error in an inline definition
-/// names the development.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct DevelopmentSpec {
     /// Module type name used when instantiating this development.
@@ -160,8 +158,8 @@ pub struct DevelopmentOutput {
 /// Like the exposed inputs and outputs, an exposed control is called by its
 /// `name`; listing one name more than once fans it out to every target.
 ///
-/// Deserializes through `named_errors`, so a range missing a bound names
-/// the control and the bound.
+/// Deserializes through `partial_range`, which keeps a range missing a bound
+/// for the loader to refuse by the development's name.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct DevelopmentControl {
@@ -175,6 +173,12 @@ pub struct DevelopmentControl {
     /// must agree.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub range: Option<ControlRange>,
+    /// The bounds the document wrote a `range` without, as "`min`", "`max`"
+    /// or both. Never saved: a development with a control holding one
+    /// does not load.
+    #[serde(skip)]
+    #[cfg_attr(feature = "rpc-schema", schemars(skip))]
+    pub range_missing: Option<&'static str>,
 }
 
 /// A number control's range, from `min` to `max`, kept as written so a

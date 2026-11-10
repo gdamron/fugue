@@ -457,6 +457,15 @@ pub(crate) fn load_development_definition(
     invention: &Invention,
     development: &super::format::DevelopmentSpec,
 ) -> Result<Invention, Box<dyn std::error::Error>> {
+    let definition = read_development_definition(invention, development)?;
+    super::format::refuse_partial_ranges(&development.name, &definition)?;
+    Ok(definition)
+}
+
+fn read_development_definition(
+    invention: &Invention,
+    development: &super::format::DevelopmentSpec,
+) -> Result<Invention, Box<dyn std::error::Error>> {
     if let Some(reference) = &development.reference {
         if development.path.is_some() || development.definition.is_some() {
             return Err(
@@ -477,15 +486,7 @@ pub(crate) fn load_development_definition(
     match (&development.path, &development.definition) {
         (Some(path), None) => {
             let resolved = resolve_development_path(invention.source_path.as_deref(), path)?;
-            Invention::from_file(&resolved.to_string_lossy()).map_err(|err| {
-                // A document that fails to parse names the development; any
-                // other failure (a lock refusal, a missing file) is kept as
-                // it was.
-                match err.downcast::<serde_json::Error>() {
-                    Ok(parse) => format!("Development '{}': {parse}", development.name).into(),
-                    Err(other) => other,
-                }
-            })
+            Invention::from_file(&resolved.to_string_lossy())
         }
         (None, Some(definition)) => Ok((**definition).clone()),
         (Some(_), Some(_)) => Err(format!(
