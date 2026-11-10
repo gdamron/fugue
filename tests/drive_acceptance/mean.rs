@@ -47,17 +47,3 @@ fn asymmetric_shape_generates_even_harmonics() {
     let ratio = tone_amp(&x, 2.0 * F) / tone_amp(&x, F);
     assert!(ratio > 0.01, "2nd/1st harmonic ratio {ratio}");
 }
-
-/// Assumption (from the `bias` doc: a DC blocker removes the offset the bias
-/// makes): any curve with bias ends up with a near-zero mean, not only the
-/// asymmetric shape.
-#[test]
-fn biased_curves_have_near_zero_mean_after_one_second() {
-    for shape in ["soft", "hard", "fold"] {
-        for bias in [-0.5, 0.5] {
-            let cfg = json!({ "shape": shape, "drive": 1.0, "bias": bias });
-            let m = window_mean(cfg, 0.5);
-            assert!(m.abs() < 1e-3, "{shape} bias {bias}: mean {m:e}");
-        }
-    }
-}

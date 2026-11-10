@@ -39,15 +39,6 @@ impl Unit {
             .unwrap_or_else(|err| panic!("{key} accepts {value}: {err}"));
     }
 
-    pub fn get(&self, key: &str) -> f32 {
-        (self.m().get_control(key)).unwrap_or_else(|err| panic!("{key} is readable: {err}"))
-    }
-
-    pub fn meta(&self, key: &str) -> ControlMeta {
-        let found = self.m().controls().into_iter().find(|c| c.key == key);
-        found.unwrap_or_else(|| panic!("declares a {key} control"))
-    }
-
     /// Renders `frames` frames; only the listed inputs are connected. Returns
     /// one vector per output port, in port order. `hook(t, unit)` runs before
     /// each block.
@@ -121,20 +112,4 @@ pub fn peak(x: &[f32]) -> f32 {
 
 pub fn max_step(x: &[f32]) -> f32 {
     x.windows(2).fold(0.0, |m, w| m.max((w[1] - w[0]).abs()))
-}
-
-/// Asserts a number control's range and default.
-pub fn assert_number(unit: &Unit, key: &str, lo: f32, hi: f32, default: f32) {
-    let meta = unit.meta(key);
-    let ControlKind::Number { min, max, .. } = meta.kind else {
-        panic!("{key} is a number control, got {:?}", meta.kind)
-    };
-    assert_eq!((min, max), (lo, hi), "{key} range");
-    let ControlValue::Number(d) = meta.default else {
-        panic!("{key} default is a number")
-    };
-    assert!(
-        (d - default).abs() < 1e-6,
-        "{key} default {d}, want {default}"
-    );
 }

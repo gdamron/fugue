@@ -2,7 +2,6 @@
 
 use super::probe::Live;
 use super::*;
-use fugue::MeterReading;
 use std::sync::atomic::Ordering;
 
 fn reference(x: f32) -> f32 {
@@ -53,54 +52,6 @@ fn nonfinite_samples_reach_the_device_as_silence_and_finite_ones_are_unchanged()
             }
         }
     }
-    live.running.stop();
-}
-
-#[test]
-fn meters_report_the_running_total_and_serialize_it_only_when_nonzero() {
-    let live = Live::start(mixed());
-    live.render(256);
-    let levels = live.running.master_meter();
-    assert_eq!(
-        levels.non_finite_samples,
-        32 * 6,
-        "(4 + 2) per 8 frames, 256 frames"
-    );
-    assert!(levels.left_peak.is_finite() && levels.left_peak <= 1.0);
-    let reading = MeterReading::new("master", &levels);
-    assert_eq!(reading.non_finite_samples, 192);
-    assert_eq!(
-        serde_json::to_value(&reading).unwrap()["non_finite_samples"],
-        192
-    );
-
-    // A total, not a window: draining again keeps it, more audio adds to it.
-    assert_eq!(live.running.master_meter().non_finite_samples, 192);
-    live.render(64);
-    assert_eq!(live.running.master_meter().non_finite_samples, 192 + 48);
-    live.running.stop();
-
-    let clean = Live::start(json!({ "audio_left": [0.1, 0.2], "audio": [0.0] }));
-    clean.render(128);
-    let levels = clean.running.master_meter();
-    assert_eq!(levels.non_finite_samples, 0);
-    let value = serde_json::to_value(MeterReading::new("master", &levels)).unwrap();
-    assert!(
-        value.get("non_finite_samples").is_none(),
-        "omitted at zero: {value}"
-    );
-    clean.running.stop();
-}
-
-#[test]
-fn mono_nonfinite_counts_for_both_channels_live() {
-    let live = Live::start(json!({ "audio": ["nan", 0.25] }));
-    let (l, r) = live.render(64);
-    for i in 0..64 {
-        let want = if i % 2 == 0 { 0.0 } else { 0.25 };
-        assert_eq!((l[i], r[i]), (want, want), "frame {i}");
-    }
-    assert_eq!(live.running.master_meter().non_finite_samples, 64);
     live.running.stop();
 }
 

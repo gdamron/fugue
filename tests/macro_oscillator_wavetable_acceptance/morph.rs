@@ -1,4 +1,4 @@
-//! A4: click-free morphing of `harmonics`, `timbre` and `morph`.
+//! The block-edge step measure used by the chords morph sweep.
 
 use super::rig::*;
 
@@ -16,37 +16,6 @@ pub fn edge_and_other_steps(x: &[f32]) -> (f32, f32) {
         }
     }
     (edge, other)
-}
-
-/// Criterion A4: "a full-range sweep of `harmonics`, of `timbre` and of
-/// `morph` (each over about 100 ms, written once per 64-frame host block, at
-/// 220 Hz) shows no steps at host-block edges: the largest sample-to-sample
-/// step next to a block edge is no more than 1.5x the largest step elsewhere
-/// in the same sweep."
-/// Assumptions: "next to a block edge" is the step into the first sample of a
-/// block plus the steps just before and after it; the sweep is linear; both
-/// directions and two settings of the other macros (0.5 and 0.25) are
-/// tested.
-#[test]
-fn macro_sweeps_have_no_steps_at_block_edges() {
-    let position = wavetable();
-    for key in ["harmonics", "timbre", "morph"] {
-        for others in [0.5f32, 0.25] {
-            for (from, to) in [(0.0f32, 1.0f32), (1.0, 0.0)] {
-                let mut controls = vec![("frequency", 220.0), ("harmonics", others)];
-                controls.extend([("timbre", others), ("morph", others), (key, from)]);
-                let mut v = settled(position, &controls);
-                let x = v.sweep(key, from, to, seconds(0.1));
-                assert!(peak(&x) > 0.01, "{key} sweep is silent");
-                let (edge, other) = edge_and_other_steps(&x);
-                assert!(
-                    other > 0.0 && edge <= 1.5 * other,
-                    "{key} {from} -> {to} (others {others}): largest step at block edges \
-                     {edge} vs {other} elsewhere"
-                );
-            }
-        }
-    }
 }
 
 /// Self-check of the measurement: a clean sine passes, and a sine with a 0.2

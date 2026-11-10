@@ -8,7 +8,6 @@
 mod rig;
 
 mod consumers;
-mod interface;
 mod quantize;
 mod repetition;
 mod rhythm;

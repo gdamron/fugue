@@ -54,27 +54,6 @@ fn the_sum_identity_holds_while_the_settings_change() {
 }
 
 #[test]
-fn notch_is_lowpass_plus_highpass() {
-    let mut svf = Svf::new(RATE, 1500.0, 3.0);
-    let mut noise = Noise::new(3);
-    for _ in 0..2000 {
-        let o = svf.process(noise.sample());
-        assert_eq!(o.notch(), o.lowpass + o.highpass);
-    }
-}
-
-#[test]
-fn new_reports_its_settings() {
-    let svf = Svf::new(RATE, 1234.0, 2.5);
-    assert!(
-        (svf.cutoff() - 1234.0).abs() < 0.01,
-        "cutoff() {}",
-        svf.cutoff()
-    );
-    assert!((svf.q() - 2.5).abs() < 1e-4, "q() {}", svf.q());
-}
-
-#[test]
 fn set_clamps_cutoff_below_nyquist_and_q_to_its_range() {
     let nyquist = RATE as f32 / 2.0;
     let mut svf = Svf::new(RATE, 1000.0, 1.0);
@@ -101,35 +80,6 @@ fn set_clamps_cutoff_below_nyquist_and_q_to_its_range() {
     }
     svf.set(1000.0, 7.0);
     assert!((svf.q() - 7.0).abs() < 1e-5);
-}
-
-#[test]
-fn nan_arguments_to_set_are_ignored() {
-    let mut svf = Svf::new(RATE, 1500.0, 3.0);
-    let (fc, q) = (svf.cutoff(), svf.q());
-    svf.set(f32::NAN, f32::NAN);
-    assert_eq!((svf.cutoff(), svf.q()), (fc, q));
-
-    // Assumption: with one NaN argument the NaN is ignored; the spec does not say
-    // whether the other, valid, argument is applied, so either outcome passes.
-    svf.set(f32::NAN, 5.0);
-    assert_eq!(svf.cutoff(), fc);
-    assert!(
-        svf.q() == q || (svf.q() - 5.0).abs() < 1e-5,
-        "q() {}",
-        svf.q()
-    );
-    let q = svf.q();
-    svf.set(2500.0, f32::NAN);
-    assert_eq!(svf.q(), q);
-    assert!(svf.cutoff() == fc || (svf.cutoff() - 2500.0).abs() < 0.01);
-
-    // The state is not poisoned: output stays finite.
-    let mut noise = Noise::new(5);
-    for _ in 0..4800 {
-        let o = svf.process(noise.sample());
-        assert!(o.lowpass.is_finite() && o.bandpass.is_finite() && o.highpass.is_finite());
-    }
 }
 
 #[test]

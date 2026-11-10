@@ -23,5 +23,5 @@ mod follower;
 mod gain;
 mod gain_curve;
 
-pub use fugue::{ControlKind, ControlMeta, ControlValue, GraphModule, Module, ModuleRegistry};
+pub use fugue::{GraphModule, Module, ModuleRegistry};
 pub use serde_json::{json, Value};

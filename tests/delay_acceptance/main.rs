@@ -2,7 +2,7 @@
 //! output, written from the interface spec alone. They drive only the public
 //! API (`ModuleRegistry`, `Module`, `RenderEngine`) and measure what is
 //! heard: echo positions, bit-exactness, steps (clicks), pitch glide,
-//! stability and the declared control surface.
+//! stability and live control writes.
 //!
 //! The `delay` type is built by name, so this suite compiles before the atom
 //! exists and fails at runtime until it does.
@@ -29,5 +29,5 @@ mod glide;
 mod hold;
 mod tempo;
 
-pub use fugue::{ControlKind, ControlValue, GraphModule, Module, ModuleRegistry, RenderEngine};
+pub use fugue::{ControlValue, GraphModule, Module, ModuleRegistry, RenderEngine};
 pub use serde_json::{json, Value};

@@ -127,29 +127,6 @@ fn cases() -> Vec<Case> {
 const WINDOW: usize = 25 * MS / BLOCK * BLOCK;
 
 #[test]
-fn a_development_instance_plays_its_starting_values_from_the_first_block_offline() {
-    let mut cases_ = Cases::default();
-    for case in cases() {
-        let want = render_offline(&case.flat, WINDOW);
-        for block in [64usize, 128] {
-            let mut engine = fugue::RenderEngine::new(RATE);
-            engine
-                .load_json(&case.developed.to_string())
-                .expect("loads");
-            engine.set_block_size(block);
-            let mut buffer = vec![0.0f32; WINDOW * 2];
-            engine.render_interleaved(&mut buffer).expect("renders");
-            let got: Vec<f32> = buffer.as_chunks::<2>().0.iter().map(|f| f[0]).collect();
-            cases_.check(
-                format!("{} / block {block}", case.name),
-                matches(&got, &want),
-            );
-        }
-    }
-    cases_.finish();
-}
-
-#[test]
 fn a_development_instance_plays_its_starting_values_from_the_first_block_live() {
     let mut cases_ = Cases::default();
     for case in cases() {

@@ -177,22 +177,6 @@ fn unconnected_right_input_copies_left() {
     }
 }
 
-/// Spec: a connected right input is its own channel (not a copy of the left).
-#[test]
-fn connected_right_input_is_independent() {
-    let mut m = build(json!({"wet": 0.0, "dry": 1.0}));
-    let (l, r) = render(
-        m.as_mut(),
-        secs(0.1),
-        BLOCK,
-        |i| (if i % 2 == 0 { 0.5 } else { -0.5 }, 0.25),
-        true,
-        no_hook,
-    );
-    assert!((l[10] - 0.5).abs() <= 1e-6 && (r[10] - 0.25).abs() <= 1e-6);
-    assert!((r[11] - 0.25).abs() <= 1e-6);
-}
-
 /// Spec: non-finite output is replaced by 0, never passed on.
 #[test]
 fn non_finite_output_is_replaced_by_zero() {

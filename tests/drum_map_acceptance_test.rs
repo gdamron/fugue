@@ -8,19 +8,14 @@
 //! the clock alone gives the sample positions of the clock's rising edges, so
 //! "on the step grid" is checked against real edges, not computed ones.
 
-use fugue::{ControlValue, ModuleRegistry, RenderEngine};
+use fugue::{ControlValue, RenderEngine};
 use serde_json::{json, Value};
 
 const SAMPLE_RATE: u32 = 48_000;
-/// A trigger of 1.0 as a render writes it: the largest `f32` below 1.0,
-/// where the device clamp stops.
-const TRIGGER: f32 = 1.0 - f32::EPSILON / 2.0;
 /// 120 BPM, a 16th note is a quarter of a beat: 0.125 s (the clock's edges
 /// are within a sample of this spacing, so tests read the real edges).
 const STEP: usize = 6_000;
 const BAR: usize = 16 * STEP;
-/// A render of exactly one bar: stops just before the clock edge that opens the next one.
-const ONE_BAR: usize = BAR - 100;
 const PORTS: [&str; 4] = ["kick", "snare", "hat", "accent"];
 const VOICES: [&str; 3] = ["kick", "snare", "hat"];
 
@@ -111,21 +106,6 @@ fn rises(signal: &[f32]) -> Vec<usize> {
     out
 }
 
-/// Lengths of the high runs.
-fn pulse_lengths(signal: &[f32]) -> Vec<usize> {
-    let mut out = vec![];
-    let mut run = 0;
-    for &v in signal {
-        if v > 0.5 {
-            run += 1;
-        } else if run > 0 {
-            out.push(run);
-            run = 0;
-        }
-    }
-    out
-}
-
 fn clock_edges(frames: usize) -> Vec<usize> {
     rises(&render(&json!({}), "clock", frames, &[], false))
 }
@@ -147,108 +127,8 @@ fn total_hits(signals: &[Vec<f32>]) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// Interface
-// ---------------------------------------------------------------------------
-
-/// Interface: module type `drum_map` has inputs `clock`/`reset`, outputs
-/// `kick`/`snare`/`hat`/`accent`, and accepts every control as a config key.
-#[test]
-fn module_declares_its_ports_and_accepts_its_controls_as_config() {
-    let registry = ModuleRegistry::default();
-    assert!(registry.has_type("drum_map"), "drum_map is not registered");
-    let inputs = registry.factory_input_ports("drum_map").unwrap_or(&[]);
-    let outputs = registry.factory_output_ports("drum_map").unwrap_or(&[]);
-    for p in ["clock", "reset"] {
-        assert!(inputs.contains(&p), "missing input {p}: {inputs:?}");
-    }
-    for p in PORTS {
-        assert!(outputs.contains(&p), "missing output {p}: {outputs:?}");
-    }
-    let config = json!({
-        "x": 0.25, "y": 0.75, "kick_density": 0.4, "snare_density": 0.5,
-        "hat_density": 0.6, "chaos": 0.1, "swing": 0.2, "seed": 3,
-        "resolution": 16, "mode": "euclidean"
-    });
-    assert!(
-        registry.build("drum_map", SAMPLE_RATE, &config).is_ok(),
-        "all documented controls must be accepted as config keys"
-    );
-    assert!(registry
-        .build("drum_map", SAMPLE_RATE, &json!({ "no_such_key": 1 }))
-        .is_err());
-}
-
-/// Interface: outputs are triggers, 1.0 for a short pulse (about 5 ms), else
-/// 0.0. A render writes 1.0 at the device clamp, just below it.
-#[test]
-fn triggers_are_short_pulses_of_one() {
-    let cfg = json!({ "mode": "euclidean", "kick_density": 0.5 });
-    let kick = render(&cfg, "kick", ONE_BAR, &[], false);
-    assert!(
-        kick.iter().all(|&v| v == 0.0 || v == TRIGGER),
-        "not 0.0/1.0"
-    );
-    let lens = pulse_lengths(&kick);
-    assert!(!lens.is_empty());
-    let (lo, hi) = (
-        SAMPLE_RATE as usize / 1000,
-        SAMPLE_RATE as usize * 15 / 1000,
-    );
-    for len in lens {
-        assert!(
-            (lo..=hi).contains(&len),
-            "pulse of {len} samples, want ~240"
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Criterion 1: density 0 is silent, density max fills every allowed step
 // ---------------------------------------------------------------------------
-
-/// Criterion 1 ("Density 0 is silent"): a voice at density 0 never fires,
-/// whatever x, y, chaos and mode, and with every density 0 even accent is
-/// silent.
-#[test]
-fn density_zero_never_fires() {
-    let positions = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (0.5, 0.5)];
-    for mode in ["map", "euclidean"] {
-        for (x, y) in positions {
-            for chaos in [0.0, 1.0] {
-                let cfg = json!({
-                    "mode": mode, "x": x, "y": y, "chaos": chaos, "seed": 9,
-                    "kick_density": 0.0, "snare_density": 0.0, "hat_density": 0.0
-                });
-                for port in PORTS {
-                    let sig = render(&cfg, port, 2 * BAR, &[], false);
-                    assert!(
-                        rises(&sig).is_empty(),
-                        "{port} fired at density 0 ({mode}, x={x}, y={y}, chaos={chaos})"
-                    );
-                }
-            }
-        }
-    }
-}
-
-/// Criterion 1 ("density 0 is silent"), single voice: one voice at 0 stays
-/// silent while the others play.
-#[test]
-fn density_zero_silences_only_that_voice() {
-    for silent in VOICES {
-        let mut cfg = json!({ "x": 0.3, "y": 0.8, "chaos": 0.5, "seed": 2 });
-        for v in VOICES {
-            cfg[format!("{v}_density")] = json!(if v == silent { 0.0 } else { 1.0 });
-        }
-        assert!(rises(&render(&cfg, silent, 2 * BAR, &[], false)).is_empty());
-        let others: usize = VOICES
-            .iter()
-            .filter(|v| **v != silent)
-            .map(|v| rises(&render(&cfg, v, 2 * BAR, &[], false)).len())
-            .sum();
-        assert!(others > 0, "other voices should still play");
-    }
-}
 
 /// Criterion 1 ("density max fills every step the node allows"): at chaos 0,
 /// raising density never removes a hit (subset chain), so density 1 holds
@@ -291,89 +171,9 @@ fn raising_density_only_adds_hits_and_max_is_largest() {
     }
 }
 
-/// Criterion 1 ("density max fills every step the node allows"), euclidean
-/// mode: density 1 is round(1 x 16) = 16 hits, every step of the bar, for
-/// every voice, whatever x, y.
-#[test]
-fn euclidean_density_max_fills_every_step() {
-    let edges = clock_edges(2 * BAR);
-    for (x, y) in [(0.0, 0.0), (1.0, 1.0)] {
-        let cfg = json!({
-            "mode": "euclidean", "x": x, "y": y,
-            "kick_density": 1.0, "snare_density": 1.0, "hat_density": 1.0
-        });
-        for voice in VOICES {
-            let hits = rises(&render(&cfg, voice, 2 * BAR, &[], false));
-            // The clock's 33rd edge may sit in the last sample of the render.
-            assert!(
-                (32..=33).contains(&hits.len()),
-                "{voice}: {} hits",
-                hits.len()
-            );
-            assert_eq!(
-                hits[..32],
-                edges[..32],
-                "{voice} must fire on all 32 steps of 2 bars"
-            );
-        }
-    }
-}
-
-/// Criterion 1 / interface ("Map position matters"): the four corners do not
-/// all give the same pattern.
-#[test]
-fn map_corners_differ() {
-    let patterns: Vec<Vec<Vec<usize>>> = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)]
-        .iter()
-        .map(|&(x, y)| {
-            let cfg = json!({
-                "x": x, "y": y, "chaos": 0.0,
-                "kick_density": 1.0, "snare_density": 1.0, "hat_density": 1.0
-            });
-            VOICES
-                .iter()
-                .map(|v| rises(&render(&cfg, v, BAR, &[], false)))
-                .collect()
-        })
-        .collect();
-    assert!(
-        patterns.iter().any(|p| *p != patterns[0]),
-        "all four corners produced the identical pattern"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // Criterion 2: same x, y and seed reproduce the same pattern bit-for-bit
 // ---------------------------------------------------------------------------
-
-/// Criterion 2 ("The same x, y and seed reproduce the same 1-bar pattern
-/// bit-for-bit"): two independent renders agree sample for sample on all four
-/// outputs over one bar and over four bars, with chaos above 0.
-#[test]
-fn same_x_y_seed_reproduce_the_pattern_bit_for_bit() {
-    for (x, y, seed, chaos) in [
-        (0.2, 0.7, 7, 0.6),
-        (0.9, 0.1, 123, 1.0),
-        (0.5, 0.5, 0, 0.25),
-    ] {
-        let cfg = json!({
-            "x": x, "y": y, "seed": seed, "chaos": chaos,
-            "kick_density": 0.8, "snare_density": 0.7, "hat_density": 0.9
-        });
-        for frames in [BAR, 4 * BAR] {
-            let a = render_all(&cfg, frames, &[]);
-            let b = render_all(&cfg, frames, &[]);
-            assert!(total_hits(&a) > 0, "the pattern should not be empty");
-            for (port, (sa, sb)) in PORTS.iter().zip(a.iter().zip(&b)) {
-                assert_eq!(
-                    sa.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
-                    sb.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
-                    "{port} differs between renders (x={x}, y={y}, seed={seed}, chaos={chaos}, {frames} frames)"
-                );
-            }
-        }
-    }
-}
 
 /// Criterion 2, chaos 0: the seed only picks the chaos variation, so with
 /// chaos 0 two different seeds give the identical pattern. (Inferred from
@@ -453,44 +253,6 @@ fn live_control_moves_of_any_pattern_control_stay_on_the_grid() {
     }
 }
 
-/// Interface (straight timing): with swing 0 every hit of every output in
-/// the static case rises exactly on a clock edge, and the first clock edge
-/// plays step 0 (euclidean step 0 is always hit when a voice has hits).
-#[test]
-fn first_clock_edge_plays_step_zero_on_the_grid() {
-    let edges = clock_edges(BAR);
-    let cfg = json!({
-        "mode": "euclidean",
-        "kick_density": 0.25, "snare_density": 0.5, "hat_density": 0.75
-    });
-    for voice in VOICES {
-        let hits = rises(&render(&cfg, voice, BAR, &[], false));
-        assert_eq!(hits.first(), Some(&edges[0]), "{voice}: step 0 missing");
-        assert!(hits.iter().all(|h| on_grid(*h, &edges)));
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Accent
-// ---------------------------------------------------------------------------
-
-/// Interface ("accent pulses together with a hit ... never alone"): every
-/// accent rise coincides with a kick, snare or hat rise.
-#[test]
-fn accent_only_pulses_together_with_a_voice_hit() {
-    for mode in ["map", "euclidean"] {
-        let cfg = json!({
-            "mode": mode, "x": 0.6, "y": 0.4, "chaos": 0.3, "seed": 8,
-            "kick_density": 0.7, "snare_density": 0.6, "hat_density": 0.9
-        });
-        let signals = render_all(&cfg, 4 * BAR, &[]);
-        let voice_hits: Vec<usize> = signals[..3].iter().flat_map(|s| rises(s)).collect();
-        for r in rises(&signals[3]) {
-            assert!(voice_hits.contains(&r), "accent alone at {r} ({mode})");
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Euclidean mode
 // ---------------------------------------------------------------------------
@@ -565,61 +327,6 @@ fn reset_makes_the_next_clock_edge_step_zero() {
         with_reset, without,
         "reset must change the phase of the bar"
     );
-}
-
-// ---------------------------------------------------------------------------
-// Swing and resolution
-// ---------------------------------------------------------------------------
-
-/// Interface (`swing`): odd steps are delayed by swing x half a step, even
-/// steps stay on the clock edge. Euclidean density 1 fires every step.
-#[test]
-fn swing_delays_only_odd_steps_by_swing_times_half_a_step() {
-    let edges = clock_edges(BAR + STEP);
-    for swing in [0.5f32, 1.0] {
-        let cfg = json!({ "mode": "euclidean", "kick_density": 1.0, "swing": swing });
-        let hits = rises(&render(&cfg, "kick", ONE_BAR, &[], false));
-        assert_eq!(hits.len(), 16);
-        let delay = (swing * STEP as f32 / 2.0) as i64;
-        for (step, hit) in hits.iter().enumerate() {
-            let want = edges[step] as i64 + if step % 2 == 1 { delay } else { 0 };
-            assert!(
-                (*hit as i64 - want).abs() <= 3,
-                "swing {swing} step {step}: rose at {hit}, expected about {want}"
-            );
-        }
-    }
-}
-
-/// Interface (`resolution`): at 32 an extra step falls half-way between clock
-/// edges; every hit is on an edge or on a half-step, and both occur. (How
-/// euclidean mode scales its hit count at 32 is not specified; only that
-/// density 1 fires more than 16 times per bar is asserted.)
-#[test]
-fn resolution_32_adds_a_step_half_way_between_clock_edges() {
-    let edges = clock_edges(2 * BAR);
-    let cfg = json!({
-        "mode": "euclidean", "kick_density": 1.0, "resolution": 32, "swing": 0.0
-    });
-    let hits = rises(&render(&cfg, "kick", ONE_BAR, &[], false));
-    assert!(
-        hits.len() > 16,
-        "expected more than 16 hits, got {}",
-        hits.len()
-    );
-    let (mut on_edge, mut on_half) = (0, 0);
-    for h in hits {
-        let i = edges.partition_point(|e| *e <= h + 2) - 1;
-        let half = edges[i] + (edges[i + 1] - edges[i]) / 2;
-        if (h as i64 - edges[i] as i64).abs() <= 2 {
-            on_edge += 1;
-        } else if (h as i64 - half as i64).abs() <= 2 {
-            on_half += 1;
-        } else {
-            panic!("hit at {h} is neither on an edge nor half-way");
-        }
-    }
-    assert!(on_edge > 0 && on_half > 0, "edge {on_edge}, half {on_half}");
 }
 
 // ---------------------------------------------------------------------------

@@ -27,6 +27,6 @@ mod fallback;
 mod reload;
 mod spacing;
 
-pub use fugue::{GraphModule, Module, ModuleRegistry, RenderEngine};
+pub use fugue::{GraphModule, Module, RenderEngine};
 pub use rig::*;
 pub use serde_json::{json, Value};

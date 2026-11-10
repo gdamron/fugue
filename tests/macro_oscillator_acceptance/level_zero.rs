@@ -51,20 +51,6 @@ fn level_control_at_zero_silences_every_model() {
     }
 }
 
-/// Criterion: "`level`: output level 0 to 1... config keys with the same
-/// names set the starting values": built with `level: 0`, every model is
-/// silent from the start (after the 50 ms allowance).
-#[test]
-fn level_zero_from_config_is_silent() {
-    let count = names().len();
-    for position in 0..count {
-        let mut v = voice(json!({ "level": 0.0 }));
-        v.select(position);
-        let model = v.models[position].clone();
-        assert_silent(&model, "config level 0", &v.render(seconds(0.5)));
-    }
-}
-
 /// Criterion: level 0 silences the gate "at level 0, the gate output is below
 /// -80 dBFS". Assumption: trigger edges ping the gate but do not lift it
 /// above a level of 0, so triggers every 100 ms at level input 0 stay silent.

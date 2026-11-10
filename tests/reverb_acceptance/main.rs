@@ -24,5 +24,5 @@ mod stability;
 mod stereo;
 
 pub use fugue::modules::{Reverb, ReverbFactory};
-pub use fugue::{ControlKind, ControlValue, GraphModule, Module, ModuleFactory, RenderEngine};
+pub use fugue::{GraphModule, Module, ModuleFactory, RenderEngine};
 pub use serde_json::{json, Map, Value};

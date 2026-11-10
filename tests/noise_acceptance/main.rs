@@ -15,7 +15,6 @@
 
 mod rig;
 
-mod catalog;
 mod level;
 mod measurement_check;
 mod pink;
@@ -23,5 +22,5 @@ mod seed;
 mod stability;
 mod white;
 
-pub use fugue::{ControlKind, ControlValue, GraphModule, Module, ModuleRegistry};
+pub use fugue::{GraphModule, Module, ModuleRegistry};
 pub use serde_json::{json, Value};

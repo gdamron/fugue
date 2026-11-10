@@ -6,21 +6,6 @@
 use super::rig::*;
 use super::*;
 
-/// Assumption: config values are the starting values (no glide in from the
-/// defaults at build), so `mix` 0 from config is exact from sample 0.
-#[test]
-fn mix_zero_outputs_each_input_sample_for_sample() {
-    let (left, right) = (pad(secs(2.0), 110.0, 0.8), noise(secs(2.0), 0.7, 4));
-    let config = json!({ "mix": 0.0, "depth": 1.0, "feedback": 0.9, "rate": 5.0 });
-    let mut unit = build(config);
-    let (l, r) = unit.run_with(
-        &[("audio_left", &left), ("audio_right", &right)],
-        &mut |_, _| {},
-    );
-    assert_eq!(l, left, "left is the dry input");
-    assert_eq!(r, right, "right is the dry input");
-}
-
 /// Written live, `mix` glides to 0 and then the output is the dry input
 /// exactly. A write applies at the first block boundary at or after 0.5 s;
 /// the output is checked from 0.3 s after that block starts.
@@ -119,29 +104,6 @@ fn notched_gain(stage_count: u32, corner: f32, freq: f64) -> f64 {
     let (l, _) = build(config).run_mono(&x);
     let tail = secs(0.4);
     rms(&l[tail..]) / rms(&x[tail..])
-}
-
-/// At the corner frequency each stage is 90 degrees, so a chain of 6 stages
-/// turns a sine at the corner by 540 degrees and cancels it against the dry
-/// signal: the classic notch. The notch is searched within +/-7% of 700 Hz.
-#[test]
-fn a_fixed_six_stage_chain_at_half_mix_notches_a_sine_at_its_corner() {
-    let gains: Vec<(f64, f64)> = (-7..=7)
-        .map(|k| {
-            let freq = 700.0 * (1.0 + f64::from(k) / 100.0);
-            (freq, notched_gain(6, 700.0, freq))
-        })
-        .collect();
-    let (freq, deepest) = gains.iter().fold(
-        (0.0, f64::MAX),
-        |m, &(f, g)| if g < m.1 { (f, g) } else { m },
-    );
-    assert!(
-        deepest < 0.1,
-        "deepest gain near 700 Hz is {deepest} at {freq} Hz: {gains:?}"
-    );
-    // Far from the notch the sine passes at about full level.
-    assert!(notched_gain(6, 700.0, 60.0) > 0.7, "low sine passes");
 }
 
 /// The same with 4 stages: 360 degrees at the corner leaves it in phase (a

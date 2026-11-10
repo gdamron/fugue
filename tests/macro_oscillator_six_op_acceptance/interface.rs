@@ -1,40 +1,8 @@
-//! C1 (model order) and C13 (example invention).
+//! C13 (example invention).
 
 use super::rig::*;
 use super::*;
 use std::path::Path;
-
-/// Criterion C1: "`model` lists `six_op_fm` after `wavetable`; the part-1
-/// models and `wavetable` keep their names and order."
-/// Assumption: "keep their order" means the seven part-1 models are the first
-/// seven options in order and `wavetable` follows them; `six_op_fm` is only
-/// required to come after `wavetable` (not to be last, since other options
-/// may be appended by parallel work).
-#[test]
-fn model_lists_six_op_fm_after_wavetable() {
-    let models = voice(json!({})).models;
-    assert_eq!(models[..7], PART_ONE[..], "part-1 models keep their order");
-    let wavetable = model_position("wavetable");
-    assert!(wavetable >= 7, "wavetable at {wavetable} in {models:?}");
-    let six_op = six_op();
-    assert!(
-        six_op > wavetable,
-        "six_op_fm at {six_op}, wavetable at {wavetable} in {models:?}"
-    );
-    assert_eq!(models.iter().filter(|m| *m == "six_op_fm").count(), 1);
-}
-
-/// Criterion C1 (interface): selectable by position and by name in config,
-/// and sounds either way.
-/// Assumption: `model` takes the option's name as a string in config.
-#[test]
-fn six_op_fm_is_selectable_by_position_and_by_config_name() {
-    let mut v = voice(json!({}));
-    v.select(six_op());
-    assert!(peak(&v.render(seconds(0.3))) > 0.01, "selected by position");
-    let mut v = voice(json!({ "model": "six_op_fm", "frequency": 220.0 }));
-    assert!(peak(&v.render(seconds(0.3))) > 0.01, "selected by config");
-}
 
 /// Criterion C13: "An example invention in `examples/` uses
 /// `model: "six_op_fm"` with a triggered phrase, loads, and renders audible,

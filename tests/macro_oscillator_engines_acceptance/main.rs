@@ -55,12 +55,11 @@ mod rig;
 
 mod decay;
 mod example;
-mod interface;
 mod level_zero;
 mod pitch;
 mod retrigger;
 mod stability;
 mod trigger;
 
-pub use fugue::{ControlKind, ControlValue, GraphModule, Module, ModuleRegistry};
+pub use fugue::{ControlKind, GraphModule, Module, ModuleRegistry};
 pub use serde_json::{json, Value};

@@ -27,5 +27,5 @@ mod sweeps;
 mod switching;
 mod voices;
 
-pub use fugue::{ControlKind, ControlValue, GraphModule, Module, ModuleRegistry};
+pub use fugue::{ControlKind, GraphModule, Module, ModuleRegistry};
 pub use serde_json::{json, Value};
