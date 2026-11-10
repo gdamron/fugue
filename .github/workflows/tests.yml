@@ -153,6 +153,9 @@ jobs:
       - name: Check Spectrogram on wasm32
         run: cargo check --lib --target wasm32-unknown-unknown --features spectrogram
 
+      - name: Check the Web Module Build
+        run: cargo check -p fugue-ffi --target wasm32-unknown-unknown
+
   # Formatting, lints and rustdoc links stay clean because a PR that breaks any
   # of them fails here. Clippy runs with every feature on and over tests,
   # examples and benches, with warnings denied; the default lint set only (no
@@ -187,10 +190,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check Formatting
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Check Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Check Rustdoc Links
         env:

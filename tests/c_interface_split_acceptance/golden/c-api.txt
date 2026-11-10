@@ -1,0 +1,10 @@
+fugue_engine_clear_error
+fugue_engine_free
+fugue_engine_last_error
+fugue_engine_load_json
+fugue_engine_new
+fugue_engine_render_interleaved
+fugue_engine_reset
+fugue_engine_set_control_bool
+fugue_engine_set_control_number
+fugue_engine_set_control_string

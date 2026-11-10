@@ -1,0 +1,6 @@
+fugue-<VERSION>-<TARGET>/LICENSE
+fugue-<VERSION>-<TARGET>/README.md
+fugue-<VERSION>-<TARGET>/THIRD_PARTY_LICENSES.txt
+fugue-<VERSION>-<TARGET>/fugue.h
+fugue-<VERSION>-<TARGET>/lib/libfugue.a
+fugue-<VERSION>-<TARGET>/lib/libfugue.dylib
