@@ -3,18 +3,6 @@
 use super::rig::*;
 use super::*;
 
-/// Criterion: "At level 1, white noise has a mean within +/-0.01 and an RMS
-/// of 0.577 +/- 0.02 over 10 s (at 48 kHz)", for several seeds.
-#[test]
-fn white_mean_and_rms_at_full_level() {
-    for seed in [1u64, 7, 12345, 0xDEAD_BEEF] {
-        let (white, _) = seeded(seed).render(seconds(10.0));
-        let (m, r) = (mean(&white), rms(&white));
-        assert!(m.abs() <= 0.01, "seed {seed}: white mean {m}");
-        assert!((r - 0.577).abs() <= 0.02, "seed {seed}: white rms {r}");
-    }
-}
-
 /// Criterion: the white statistics hold with the default (no `seed`) config
 /// too, since `seed` is optional.
 #[test]

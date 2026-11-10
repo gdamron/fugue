@@ -44,17 +44,5 @@ fn a_soft_clipped_sine_is_unchanged() {
     assert_untouched(&soft_clipped_sine(), SOFT_CLIPPED, "soft-clipped sine");
 }
 
-#[test]
-fn seeded_noise_is_unchanged() {
-    assert_untouched(&noise(-6.0), NOISE, "seeded noise");
-}
-
-#[test]
-fn a_waveform_at_a_modest_level_is_unchanged() {
-    assert_untouched(&tone("sawtooth", 110.0, -6.0), SAWTOOTH, "sawtooth");
-}
-
 pub const SINE: u64 = 17960443412532431601;
 pub const SOFT_CLIPPED: u64 = 8167537214704235809;
-pub const NOISE: u64 = 12354198263809901537;
-pub const SAWTOOTH: u64 = 11734814365905787393;

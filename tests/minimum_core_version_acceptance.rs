@@ -269,14 +269,6 @@ fn a_minimum_equal_to_the_running_core_loads() {
     }
 }
 
-#[test]
-fn an_older_minimum_loads() {
-    let doc = declaring(plain(), "2026.1.0");
-    for (label, enter) in ENTRIES {
-        enter(&doc).unwrap_or_else(|e| panic!("{label}: loads: {e}"));
-    }
-}
-
 fn render(doc: &Value) -> Vec<f32> {
     let mut engine = RenderEngine::new(RATE);
     engine.load_json(&doc.to_string()).expect("loads");

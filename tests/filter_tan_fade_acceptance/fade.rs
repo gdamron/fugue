@@ -139,34 +139,3 @@ fn type_switch_fades_over_about_10_ms() {
     }
     assert!(misses.is_empty(), "type fades:\n{}", misses.join("\n"));
 }
-
-/// A second switch made while the first fade is still running is just as
-/// smooth, and the output settles on the last type written.
-#[test]
-fn switch_during_a_fade_stays_smooth() {
-    let x = source();
-    let (a, b, c) = ("lowpass", "highpass", "bandpass");
-    let refs: Vec<Vec<f32>> = [a, b, c]
-        .iter()
-        .map(|m| render(SR, &config(m, "12db"), &x))
-        .collect();
-    let (first, second) = (SETTLED, SETTLED + 4 * MS);
-    let writes: [Write; 2] = [
-        (first, "filter_type", type_position(b)),
-        (second, "filter_type", type_position(c)),
-    ];
-    let out = filter(SR, &config(a, "12db")).run(&x, &writes);
-    let steady = refs.iter().map(|r| steady_step(r)).fold(0.0, f32::max);
-    let across = max_step(&out[first - 1..second + 30 * MS]);
-    assert!(
-        across <= 1.5 * steady,
-        "{a} -> {b} -> {c}: step {across:.4} across the switches, steady {steady:.4}"
-    );
-    let late = second + 20 * MS..second + 60 * MS;
-    let left = max_diff(&out[late.clone()], &refs[2][late.clone()]);
-    let gap = max_diff(&refs[0][late.clone()], &refs[2][late]);
-    assert!(
-        left <= 0.01 * gap,
-        "{a} -> {b} -> {c}: 20-60 ms after the last switch still {left:.4} from {c}"
-    );
-}

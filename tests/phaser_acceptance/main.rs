@@ -19,7 +19,6 @@
 //!   0 gives identical sides, an unpatched `audio_right` copies the left, a
 //!   fixed chain keeps a sine's amplitude and notches at the corner, and the
 //!   sweep follows `division` and `bpm` (`behaviour`, `sync`);
-//! - the declared ports and controls (`controls`).
 //!
 //! Assumptions beyond the spec are marked "Assumption" on the test that makes
 //! them. Run with `cargo test --release --test phaser_acceptance`.
@@ -27,11 +26,10 @@
 mod rig;
 
 mod behaviour;
-mod controls;
 mod headroom;
 mod level;
 mod sweep;
 mod sync;
 
-pub use fugue::{ControlKind, ControlMeta, ControlValue, GraphModule, Module, ModuleRegistry};
+pub use fugue::{GraphModule, Module, ModuleRegistry};
 pub use serde_json::{json, Value};

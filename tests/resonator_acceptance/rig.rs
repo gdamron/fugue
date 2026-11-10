@@ -7,8 +7,6 @@ use fugue::ControlMeta;
 pub const SR: u32 = 48_000;
 pub const SRF: f64 = SR as f64;
 pub const BLOCK: usize = 256;
-/// The fixed order in which the spec adds models.
-pub const MODEL_ORDER: [&str; 3] = ["modal", "sympathetic_strings", "string"];
 /// -90 dBFS as a linear amplitude.
 pub const MINUS_90_DB: f32 = 3.162_277_7e-5;
 /// Frames the strum pulse stays high after a strike.
@@ -98,10 +96,6 @@ pub fn reso(config: Value) -> Reso {
 }
 
 impl Reso {
-    pub fn control(&self, key: &str) -> Option<&ControlMeta> {
-        self.controls.iter().find(|c| c.key == key)
-    }
-
     pub fn set(&mut self, key: &str, value: f32) {
         self.module
             .module_mut()

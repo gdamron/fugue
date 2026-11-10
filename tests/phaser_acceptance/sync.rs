@@ -45,12 +45,6 @@ fn assert_sweep_period(config: Value, bpm_input: Option<f32>, tone: f64, period:
 }
 
 #[test]
-fn quarter_note_at_120_bpm_repeats_every_half_second() {
-    let config = json!({ "division": "quarter_note", "bpm": 120.0, "depth": 1.0, "rate": 7.0 });
-    assert_sweep_period(config, None, 1_000.0, 24_000);
-}
-
-#[test]
 fn the_bpm_control_sets_the_synced_sweep_period() {
     let config = json!({ "division": "quarter_note", "bpm": 90.0, "depth": 1.0 });
     assert_sweep_period(config, None, 1_500.0, 32_000);

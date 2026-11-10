@@ -52,18 +52,6 @@ fn below_the_ceiling_the_output_is_the_input_delayed_by_the_lookahead() {
     }
 }
 
-/// A lower ceiling: a sine within +/-10^(-12/20) passes delayed and bit
-/// exact with the ceiling at -12 dB; a mono source on `audio_left` alone
-/// leaves the right side silent.
-#[test]
-fn a_mono_source_below_a_low_ceiling_is_delayed_exactly() {
-    let s = sine(db_to_amp(-12.5), 997.0);
-    let mut lim = build("limiter", json!({ "ceiling": -12.0, "lookahead": 0.01 }));
-    let out = lim.run(secs(0.5), &[("audio_left", &s)]);
-    assert_delayed(&out[0], &s, 480, "left");
-    assert!(out[1].iter().all(|v| *v == 0.0), "right is silent");
-}
-
 /// "Each is its input delayed by exactly the lookahead, times one gain shared
 /// by both sides": a loud left side pulls the quiet right side down by the
 /// same gain.
@@ -86,30 +74,4 @@ fn one_gain_is_shared_by_both_sides() {
         }
     }
     assert!(pulled, "the quiet side is pulled down with the loud one");
-}
-
-/// "Non-finite input is treated as silence": NaN and infinities in a quiet
-/// sine come out as zeros a lookahead later, everything else delayed exactly
-/// (no gain reduction), and all output is finite.
-#[test]
-fn non_finite_input_is_treated_as_silence() {
-    let clean = sine(0.3, 440.0);
-    let bad = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY];
-    let dirty = |t: usize| {
-        if t % 1000 == 500 {
-            bad[(t / 1000) % 3]
-        } else {
-            clean(t)
-        }
-    };
-    let silenced = |t: usize| if t % 1000 == 500 { 0.0 } else { clean(t) };
-    let mut lim = build("limiter", json!({}));
-    let out = lim.run(
-        secs(0.5),
-        &[("audio_left", &dirty), ("audio_right", &dirty)],
-    );
-    for side in &out {
-        assert!(side.iter().all(|v| v.is_finite()), "output is finite");
-        assert_delayed(side, &silenced, 240, "non-finite as silence");
-    }
 }

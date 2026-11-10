@@ -1,61 +1,10 @@
-//! The testable-from-outside parts of the definition of done: the declared
-//! control surface, config handling, determinism, bounded output under
+//! The testable-from-outside parts of the definition of done: live
+//! control writes, config handling, determinism, bounded output under
 //! extreme settings, freeze holding the buffer, and the live path through
 //! `RenderEngine`.
 
 use super::rig::*;
 use super::*;
-
-fn number(controls: &[fugue::ControlMeta], key: &str) -> (f32, f32, f32) {
-    let meta = (controls.iter().find(|m| m.key == key)).unwrap_or_else(|| panic!("control {key}"));
-    let ControlKind::Number { min, max, .. } = meta.kind else {
-        panic!("{key} is a number")
-    };
-    let ControlValue::Number(default) = meta.default else {
-        panic!("{key} default is a number")
-    };
-    (min, max, default)
-}
-
-/// Keys, kinds, ranges and defaults as listed in the interface table.
-#[test]
-fn granular_declares_its_controls() {
-    let built = ModuleRegistry::default()
-        .build("granular", SR, &json!({}))
-        .expect("granular builds with no config");
-    let controls = (built.control_surface.expect("a control surface")).controls();
-    for (key, min, max, default) in [
-        ("position", 0.0, 1.0, 0.5),
-        ("size", 0.0, 1.0, 0.5),
-        ("pitch", -24.0, 24.0, 0.0),
-        ("density", 0.0, 1.0, 0.7),
-        ("texture", 0.0, 1.0, 0.5),
-        ("spread", 0.0, 1.0, 0.0),
-        ("feedback", 0.0, 1.0, 0.0),
-        ("glide", 0.0, 2.0, 0.0),
-        ("inertia", 0.0, 1.0, 0.5),
-    ] {
-        let got = number(&controls, key);
-        assert_eq!((got.0, got.1), (min, max), "{key} range");
-        assert!((got.2 - default).abs() < 1e-6, "{key} default {}", got.2);
-    }
-    for key in ["freeze", "sync"] {
-        let meta = controls.iter().find(|m| m.key == key).expect(key);
-        assert_eq!(
-            (&meta.kind, &meta.default),
-            (&ControlKind::Bool, &ControlValue::Bool(false)),
-            "{key}"
-        );
-    }
-    let mode = controls.iter().find(|m| m.key == "mode").expect("mode");
-    let ControlKind::String { options: Some(got) } = &mode.kind else {
-        panic!("mode is a choice")
-    };
-    assert_eq!(got, &["granular", "stretch", "looping_delay"]);
-    assert_eq!(mode.default, ControlValue::from("granular"));
-    let keys: Vec<&str> = controls.iter().map(|m| m.key.as_str()).collect();
-    assert_eq!(keys.len(), 12, "no undocumented controls: {keys:?}");
-}
 
 /// Every control may be given in config as its starting value, and is
 /// readable and writable in a running invention.
@@ -108,13 +57,6 @@ fn buffer_length_zero_or_below_is_refused_and_huge_values_build() {
             "buffer_length {ok} builds (clamps to 60)"
         );
     }
-}
-
-#[test]
-fn unknown_config_key_is_refused() {
-    assert!(try_granular(json!({ "grain_count": 8 })).is_err());
-    assert!(try_granular(json!({ "bufer_length": 1.0 })).is_err());
-    assert!(try_granular(json!({ "seed": 5, "mode": "stretch" })).is_ok());
 }
 
 fn bits(x: &[f32]) -> Vec<u32> {

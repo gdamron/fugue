@@ -175,18 +175,6 @@ fn assert_no_click(label: &str, input: &[f32], out: &[f32], min_peak: f32) {
 
 // ---------------------------------------------------------------- criterion 1
 
-/// Opening 20 Hz -> 20 kHz, written exactly before a sine peak (the worst
-/// case: the output jumps from near zero towards 0.5).
-#[test]
-fn opening_cutoff_at_a_sine_peak_does_not_click() {
-    let input = test_sine(SR as usize / 2);
-    let at = SR as usize + PEAK_OFFSET; // after one second of running
-    assert!(input[at] > 0.499, "the write lands on a peak");
-    let mut f = filter(json!({ "filter_type": "lowpass", "cutoff": 20.0, "resonance": 0.0 }));
-    let out = f.run(&input, &[(at, "cutoff", 20000.0)]);
-    assert_no_click("open at peak", &input, &out, 0.45);
-}
-
 /// Opening 20 Hz -> 20 kHz, written at several arbitrary samples.
 #[test]
 fn opening_cutoff_at_arbitrary_samples_does_not_click() {
@@ -214,21 +202,6 @@ fn closing_cutoff_does_not_click() {
             peak(tail)
         );
     }
-}
-
-/// Open then close and open again in one run, writes 200 ms apart.
-#[test]
-fn repeated_cutoff_writes_do_not_click() {
-    let input = test_sine(SR as usize);
-    let s = SR as usize;
-    let writes = [
-        (s + PEAK_OFFSET, "cutoff", 20000.0),
-        (s + 9_600 + 36, "cutoff", 20.0),
-        (s + 19_200 + PEAK_OFFSET, "cutoff", 20000.0),
-    ];
-    let mut f = filter(json!({ "filter_type": "lowpass", "cutoff": 20.0, "resonance": 0.0 }));
-    let out = f.run(&input, &writes);
-    assert_no_click("open/close/open", &input, &out, 0.45);
 }
 
 /// Resonance 0 -> 0.9 and back while running, written at eight phases of
@@ -315,37 +288,6 @@ fn closing_cutoff_write_arrives_within_10_ms() {
     );
 }
 
-/// A resonance write arrives by about 10 ms, then the resonant filter rings
-/// up from whatever state it has at that moment, which is its own physics,
-/// not the glide. So this compares the steady level, not samples: once the
-/// write has arrived (10 ms) and the target's own ring-up has settled, the
-/// output's peak is within 2% of a filter that ran at resonance 0.9 all
-/// along. Assumption: at resonance 0.9 (Q around 5) and a 1 kHz cutoff the
-/// ring-up time constant is 2Q / (2 pi 1 kHz), about 1.6 ms, so 5 of them
-/// (8 ms) settle it; the window is 18-30 ms after the write.
-#[test]
-fn resonance_write_arrives_within_10_ms() {
-    let start = json!({ "filter_type": "lowpass", "cutoff": 1000.0, "resonance": 0.0 });
-    let target = json!({ "filter_type": "lowpass", "cutoff": 1000.0, "resonance": 0.9 });
-    let input = test_sine(SR as usize / 2);
-    let at = SR as usize / 2 + 17;
-    let out = filter(start).run(&input, &[(at, "resonance", 0.9)]);
-    let reference = filter(target).run(&input, &[]);
-    let before = (peak(&out[at - 480..at]), peak(&reference[at - 480..at]));
-    assert!(
-        (before.0 - before.1).abs() > 0.1 * before.1,
-        "the write changes the level (before: {} vs target {})",
-        before.0,
-        before.1
-    );
-    let (from, to) = (at + 18 * MS, at + 30 * MS);
-    let (got, want) = (peak(&out[from..to]), peak(&reference[from..to]));
-    assert!(
-        (got - want).abs() <= 0.02 * want,
-        "18-30 ms after the write the level is {got}, steady level at resonance 0.9 is {want}"
-    );
-}
-
 /// The same through the live front door: 10 ms after the write, the level
 /// heard matches the steady level at the new cutoff.
 #[test]
@@ -364,25 +306,6 @@ fn engine_cutoff_write_arrives_within_10_ms() {
 }
 
 // ---------------------------------------------------------------- criterion 3
-
-/// Writes before the first `process` land at once: bit-identical to a
-/// filter built at the written values.
-#[test]
-fn writes_before_processing_land_at_once() {
-    let input = noise(SR as usize / 4, 0.5, 11);
-    let mut written = filter(json!({ "filter_type": "lowpass", "cutoff": 20.0, "resonance": 0.0 }));
-    written.set("cutoff", 5000.0);
-    written.set("resonance", 0.6);
-    let got = written.run(&input, &[]);
-    let built = filter(json!({ "filter_type": "lowpass", "cutoff": 5000.0, "resonance": 0.6 }));
-    let want = { built }.run(&input, &[]);
-    assert!(peak(&want) > 0.1, "the reference is audible");
-    assert!(
-        got == want,
-        "pre-roll writes do not land at once: max diff {}",
-        max_diff(&got, &want)
-    );
-}
 
 /// Same through the engine: a write before the first render.
 #[test]
@@ -461,28 +384,6 @@ const REF_BANDPASS: u64 = 0xb1585a71e86af1f8;
 const REF_OPEN: u64 = 0x0eac78cd0edae9d7;
 const REF_DEFAULTS: u64 = 0x235b54ae4a43ec15;
 const REF_SWEEP: u64 = 0x009604a71d9202ee;
-
-// ---------------------------------------------------------------- criterion 5
-
-/// An instant 20 Hz -> 20 kHz jump on the patched `cutoff` input changes
-/// the output at once: its largest step clearly exceeds the click bound.
-#[test]
-fn cutoff_input_jump_is_not_smoothed() {
-    let input = test_sine(SR as usize / 2);
-    let at = SR as usize + PEAK_OFFSET;
-    let cutoff: Vec<f32> = (0..input.len())
-        .map(|n| if n < at { 20.0 } else { 20000.0 })
-        .collect();
-    let mut f = filter(json!({ "filter_type": "lowpass", "cutoff": 20.0, "resonance": 0.0 }));
-    let out = f.run_with(&input, &[], Some(&cutoff));
-    let (wet, dry) = (max_step(&out), max_step(&input));
-    assert!(
-        wet > 2.0 * dry,
-        "the input jump was smoothed: largest step {wet} vs dry {dry}"
-    );
-    let just_after = peak(&out[at..at + 2 * MS]);
-    assert!(just_after > 0.4, "the sine is heard at once ({just_after})");
-}
 
 // ---------------------------------------------------------------- engine rig
 

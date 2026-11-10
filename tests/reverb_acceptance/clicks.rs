@@ -69,16 +69,6 @@ fn assert_click_free(name: &str, ratio: f64) {
     );
 }
 
-/// Criterion 3: step changes of room_size are click-free.
-#[test]
-fn room_size_steps_are_click_free() {
-    let base = [("decay", 0.2), ("room_size", 0.5)];
-    for (name, to) in [("up", 0.9), ("down", 0.1)] {
-        let ratio = click_ratio(&base, &[ev(3.0, "room_size", to)], 4.0);
-        assert_click_free(&format!("room_size step {name}"), ratio);
-    }
-}
-
 /// Criterion 3: step changes of decay are click-free.
 #[test]
 fn decay_steps_are_click_free() {

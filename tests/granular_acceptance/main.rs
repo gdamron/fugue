@@ -22,5 +22,5 @@ mod glide;
 mod step_continuity;
 mod wrap;
 
-pub use fugue::{ControlKind, ControlValue, GraphModule, Module, ModuleRegistry, RenderEngine};
+pub use fugue::{ControlValue, GraphModule, Module, ModuleRegistry, RenderEngine};
 pub use serde_json::{json, Value};

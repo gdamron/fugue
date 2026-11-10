@@ -21,5 +21,5 @@ mod model_switch;
 mod pitch;
 mod stability;
 
-pub use fugue::{ControlKind, ControlValue, GraphModule, Module, ModuleRegistry};
+pub use fugue::{ControlKind, GraphModule, Module, ModuleRegistry};
 pub use serde_json::{json, Value};

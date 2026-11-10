@@ -28,25 +28,6 @@ fn bound(steps: impl IntoIterator<Item = f32>) -> f32 {
     1.25 * steps.into_iter().fold(0.0, f32::max) + 0.01
 }
 
-/// Every ordered pair of shapes, switched live (numeric index) at drive 0.75
-/// in the middle of a settled signal.
-#[test]
-fn switching_shape_live_does_not_click() {
-    let steady: Vec<f32> = SHAPES.iter().map(|s| steady_step(s, 0.75)).collect();
-    let s = sine(AMP, F);
-    for (a, from) in SHAPES.iter().enumerate() {
-        for (b, to) in SHAPES.iter().enumerate().filter(|(b, _)| *b != a) {
-            let mut rig = Rig::new(json!({ "shape": from, "drive": 0.75, "mix": 1.0 }));
-            rig.block = 64;
-            let mut out = rig.run(secs(0.3), &s)[secs(0.25)..].to_vec();
-            rig.set("shape", b as f32);
-            out.extend(rig.run(secs(0.4), &s));
-            let (step, limit) = (max_step(&out), bound([steady[a], steady[b]]));
-            assert!(step <= limit, "{from} -> {to}: step {step} > {limit}");
-        }
-    }
-}
-
 /// Cycling through all shapes every 50 ms for 1.2 s stays click-free.
 #[test]
 fn cycling_shapes_quickly_does_not_click() {

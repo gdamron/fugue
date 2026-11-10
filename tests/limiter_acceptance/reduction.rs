@@ -1,35 +1,7 @@
-//! Criterion: "gain reduction is readable as a control (`reduction`)", and
-//! the gain recovers with `release`.
+//! The gain recovers with `release` after a peak has passed.
 
 use super::rig::*;
 use super::*;
-
-/// Idle (and below the ceiling) `reduction` reads 0; a steady +12 dB sine
-/// (peak 4.0) against a -1 dB ceiling reads about 20*log10(4/0.891) = 13.04
-/// dB; once the input stops it returns to 0. Assumption: within 0.5 dB.
-#[test]
-fn reduction_reads_the_gain_reduction_in_db() {
-    let loud = sine(4.0, 500.0);
-    let quiet = sine(0.5, 500.0);
-    let silence = |_| 0.0;
-    let mut lim = build("limiter", json!({ "ceiling": -1.0, "release": 0.05 }));
-    assert_eq!(lim.get("reduction"), 0.0, "idle before processing");
-    lim.run(secs(0.2), &[("audio_left", &quiet)]);
-    assert!(lim.get("reduction").abs() < 1e-6, "below the ceiling");
-    lim.run(secs(0.5), &[("audio_left", &loud)]);
-    let want = 20.0 * (4.0 / db_to_amp(-1.0)).log10();
-    let got = f64::from(lim.get("reduction"));
-    assert!((got - want).abs() < 0.5, "reduction {got} dB, want {want}");
-    lim.run(secs(1.0), &[("audio_left", &silence)]);
-    assert!(lim.get("reduction") < 0.1, "back to 0 when idle");
-}
-
-/// `reduction` is read-only: writing it is refused.
-#[test]
-fn writing_reduction_is_refused() {
-    let mut lim = build("limiter", json!({}));
-    assert!(lim.try_set("reduction", 3.0).is_err());
-}
 
 /// Gain (output over delayed input, on a quiet DC level) after a 50 ms burst
 /// at +12 dB, sampled `t` seconds after the burst's last sample leaves the

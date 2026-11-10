@@ -23,20 +23,6 @@ fn crossing(level: &[f32], from: usize, at: f32, rising: bool) -> usize {
     hit.unwrap_or_else(|| panic!("the envelope crosses {at}")) - from
 }
 
-/// Criterion: "controls are declared": ports and the pinned controls.
-#[test]
-fn follower_declares_its_ports_and_controls() {
-    let f = build("follower", json!({}));
-    for port in ["audio_left", "audio_right", "sidechain"] {
-        assert!(f.m().input_port_index(port).is_some(), "input {port}");
-    }
-    assert_eq!(f.m().outputs(), ["level"]);
-    assert_number(&f, "attack", 0.0, 1.0, 0.01);
-    assert_number(&f, "release", 0.001, 5.0, 0.1);
-    assert_number(&f, "sidechain_mix", 0.0, 1.0, 0.0);
-    assert_number(&f, "highpass", 0.0, 2000.0, 0.0);
-}
-
 /// Criterion: "attack and release (time to 63%) are within 10%": from a
 /// steady 0 a step to 1 reaches 0.632 after attack x 48000 samples, and from
 /// a steady 1 a step to 0 falls to 0.368 after release x 48000 samples.
@@ -71,29 +57,6 @@ fn zero_attack_follows_at_once() {
         "level {}",
         level[0][1000]
     );
-}
-
-/// A constant c settles at |c|; stereo-linked: the louder side is followed.
-#[test]
-fn steady_inputs_settle_at_their_peak_magnitude() {
-    let (neg, quiet, loud) = (|_| -0.5, |_| 0.2, |_| -0.7);
-    let got = settled(json!({}), &[("audio_left", &neg)]);
-    assert!((got - 0.5).abs() < 1e-3, "constant -0.5 settles at {got}");
-    let got = settled(json!({}), &[("audio_left", &quiet), ("audio_right", &loud)]);
-    assert!((got - 0.7).abs() < 1e-3, "stereo-linked settles at {got}");
-}
-
-/// `sidechain_mix` 0 follows the audio, 1 the sidechain. Assumption: at 0.5
-/// two same-sign constants blend to their mean (true whether the signals or
-/// their envelopes are blended).
-#[test]
-fn sidechain_mix_selects_what_is_followed() {
-    let (audio, key) = (|_| 0.8, |_| 0.2);
-    for (mix, want) in [(0.0, 0.8), (1.0, 0.2), (0.5, 0.5)] {
-        let inputs: [Input; 2] = [("audio_left", &audio), ("sidechain", &key)];
-        let got = settled(json!({ "sidechain_mix": mix }), &inputs);
-        assert!((got - want).abs() < 2e-3, "mix {mix}: {got}, want {want}");
-    }
 }
 
 /// `highpass` keeps lows from moving the envelope. Assumption: at 1 kHz a

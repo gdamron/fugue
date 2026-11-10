@@ -9,17 +9,6 @@ pub const SRF: f64 = SR as f64;
 pub const BLOCK: usize = 256;
 /// The host block size the morphing criteria write controls at.
 pub const HOST_BLOCK: usize = 64;
-/// The fixed order of the part-1 models, which `wavetable` follows.
-pub const PART_ONE: [&str; 7] = [
-    "virtual_analog",
-    "waveshaping",
-    "fm",
-    "grain_formant",
-    "additive",
-    "chords",
-    "speech",
-];
-
 /// A `macro_oscillator` built through the public registry, with ports
 /// resolved by name.
 pub struct Voice {

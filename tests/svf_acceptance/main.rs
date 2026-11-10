@@ -40,10 +40,6 @@ pub fn tone_amplitudes(svf: &mut Svf, freq_hz: f64) -> (f64, f64, f64) {
     (amp(lp), amp(bp), amp(hp))
 }
 
-pub fn db(ratio: f64) -> f64 {
-    20.0 * ratio.log10()
-}
-
 /// Deterministic noise in [-0.5, 0.5).
 pub struct Noise(u32);
 
