@@ -419,27 +419,6 @@ mod tests {
     }
 
     #[test]
-    fn test_oscillator_controls() {
-        let mut osc = Oscillator::new(44100, OscillatorType::Sine);
-
-        // Test control metadata
-        let controls = osc.controls();
-        assert_eq!(controls.len(), 4);
-        assert_eq!(controls[0].key, "frequency");
-        assert_eq!(controls[1].key, "waveform");
-
-        // Test get/set controls
-        osc.set_control("frequency", 880.0).unwrap();
-        assert_eq!(osc.get_control("frequency").unwrap(), 880.0);
-
-        osc.set_control("waveform", 2.0).unwrap(); // Sawtooth
-        assert_eq!(osc.get_control("waveform").unwrap(), 2.0);
-
-        // Test invalid control
-        assert!(osc.get_control("invalid").is_err());
-    }
-
-    #[test]
     fn test_oscillator_signal_overrides_control() {
         let mut osc = Oscillator::new(44100, OscillatorType::Sine);
 

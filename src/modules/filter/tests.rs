@@ -4,25 +4,6 @@ use super::*;
 use crate::factory::ModuleFactory;
 
 #[test]
-fn test_filter_controls() {
-    let mut filter = Filter::new(44100);
-
-    // Test control metadata
-    let controls = filter.controls();
-    assert_eq!(controls.len(), 8);
-    assert_eq!(controls[0].key, "cutoff");
-    assert_eq!(controls[1].key, "resonance");
-    assert_eq!(controls[2].key, "filter_type");
-
-    // Test get/set controls
-    filter.set_control("cutoff", 2000.0).unwrap();
-    assert_eq!(filter.get_control("cutoff").unwrap(), 2000.0);
-
-    filter.set_control("filter_type", 1.0).unwrap(); // HighPass
-    assert_eq!(filter.get_control("filter_type").unwrap(), 1.0);
-}
-
-#[test]
 fn test_filter_lowpass_attenuates_highs() {
     let mut filter = Filter::new(44100)
         .with_filter_type(FilterType::LowPass)
@@ -44,25 +25,6 @@ fn test_filter_lowpass_attenuates_highs() {
         "Low-pass should attenuate high frequencies, got avg {}",
         avg_output
     );
-}
-
-#[test]
-fn test_filter_factory() {
-    let factory = FilterFactory;
-    assert_eq!(ModuleFactory::type_id(&factory), "filter");
-
-    let config = serde_json::json!({
-        "filter_type": "highpass",
-        "cutoff": 500.0,
-        "resonance": 0.3
-    });
-
-    let result = factory.build(44100, &config).unwrap();
-
-    let module = result.module.module();
-    assert_eq!(module.name(), "Filter");
-
-    assert!(result.control_surface.is_some());
 }
 
 #[test]

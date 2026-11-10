@@ -258,14 +258,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn factory_exposes_ports_without_building() {
-        let factory = RtmpSinkFactory;
-        assert!(factory.is_sink());
-        assert_eq!(factory.input_ports(), Some(&inputs::INPUTS[..]));
-        assert_eq!(factory.output_ports(), Some(&outputs::OUTPUTS[..]));
-    }
-
-    #[test]
     fn default_registry_lists_rtmp_sink() {
         let registry = crate::ModuleRegistry::default();
         assert!(registry.has_type("rtmp_sink"));

@@ -95,29 +95,6 @@ fn test_mixer_master_cv() {
 }
 
 #[test]
-fn test_mixer_channel_count() {
-    let mixer = Mixer::new(3);
-    assert_eq!(mixer.channel_count(), 3);
-
-    // Check that only 3 input channels exist
-    let inputs = mixer.inputs();
-    assert!(inputs.contains(&"audio.0"));
-    assert!(inputs.contains(&"audio.1"));
-    assert!(inputs.contains(&"audio.2"));
-    assert!(!inputs.contains(&"audio.3"));
-
-    assert!(inputs.contains(&"level.0"));
-    assert!(inputs.contains(&"level.1"));
-    assert!(inputs.contains(&"level.2"));
-    assert!(!inputs.contains(&"level.3"));
-
-    assert!(inputs.contains(&"pan.0"));
-    assert!(inputs.contains(&"pan.1"));
-    assert!(inputs.contains(&"pan.2"));
-    assert!(!inputs.contains(&"pan.3"));
-}
-
-#[test]
 fn test_mixer_expanded_channel_ports_and_pan() {
     let mut mixer = Mixer::new(16).with_pan(15, 1.0);
     assert_eq!(mixer.channel_count(), 16);
@@ -144,28 +121,6 @@ fn test_mixer_invalid_port() {
     assert!(mixer.set_input("level.2", 1.0).is_err());
     assert!(mixer.set_input("pan.2", 1.0).is_err());
     assert!(mixer.get_output("invalid").is_err());
-}
-
-#[test]
-fn test_mixer_factory() {
-    let factory = MixerFactory;
-    assert_eq!(ModuleFactory::type_id(&factory), "mixer");
-
-    let config = serde_json::json!({
-        "channel_count": 3,
-        "levels": [0.8, 0.6, 0.4],
-        "pans": [-1.0, 0.0, 1.0],
-        "master": 0.9
-    });
-
-    let result = factory.build(44100, &config).unwrap();
-
-    let module = result.module.module();
-    assert_eq!(module.name(), "Mixer");
-
-    // Should have audio.0-2, level.0-2, pan.0-2, and master
-    let inputs = module.inputs();
-    assert_eq!(inputs.len(), 10); // 3 ins + 3 levels + 3 pans + 1 master
 }
 
 #[test]

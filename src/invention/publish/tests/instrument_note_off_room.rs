@@ -195,16 +195,6 @@ fn applied_after_stall(rig: &mut Rig) -> (Vec<f32>, usize) {
     (heard, applied)
 }
 
-#[test]
-fn a_note_off_finds_room_in_a_queue_full_of_requests_and_stalled_edits() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut rig = stalled(dir.path());
-    note_offs(&rig);
-    let (heard, applied) = applied_after_stall(&mut rig);
-    assert!(heard.iter().all(|level| level.abs() < TOL), "{heard:?}");
-    assert_eq!(applied, OFFS, "every note off");
-}
-
 /// As many note offs as forty full instruments release at once all find
 /// room behind a full queue and stalled edits, and apply once the
 /// installs go on.

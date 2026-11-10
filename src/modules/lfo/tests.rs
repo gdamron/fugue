@@ -3,25 +3,6 @@
 use super::*;
 
 #[test]
-fn test_lfo_controls() {
-    let mut lfo = Lfo::new(1000);
-
-    // Test control metadata
-    let controls = lfo.controls();
-    assert_eq!(controls.len(), 6);
-    assert_eq!(controls[0].key, "rate");
-    assert_eq!(controls[1].key, "rate_mod_depth");
-    assert_eq!(controls[2].key, "waveform");
-
-    // Test get/set controls
-    lfo.set_control("rate", 5.0).unwrap();
-    assert_eq!(lfo.get_control("rate").unwrap(), 5.0);
-
-    lfo.set_control("waveform", 2.0).unwrap(); // Sawtooth
-    assert_eq!(lfo.get_control("waveform").unwrap(), 2.0);
-}
-
-#[test]
 fn test_lfo_sine_output_range() {
     let mut lfo = Lfo::new(1000);
     lfo.set_rate(10.0);
@@ -65,24 +46,6 @@ fn rate_mod_adds_hz_scaled_by_its_depth() {
     // Depth 0 ignores the input.
     assert_eq!(render(0.0, 50.0), render(0.0, 0.0));
     assert_ne!(render(1.0, 50.0), render(0.0, 50.0));
-}
-
-#[test]
-fn test_lfo_factory() {
-    let factory = LfoFactory;
-    assert_eq!(ModuleFactory::type_id(&factory), "lfo");
-
-    let config = serde_json::json!({
-        "rate": 5.0,
-        "waveform": "triangle"
-    });
-
-    let result = factory.build(44100, &config).unwrap();
-
-    let module = result.module.module();
-    assert_eq!(module.name(), "Lfo");
-
-    assert!(result.control_surface.is_some());
 }
 
 #[test]

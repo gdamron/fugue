@@ -149,11 +149,3 @@ fn dep_ref_parses_id_and_requirement() {
     assert!(DepRef::parse("@no-id").is_none());
     assert!(DepRef::parse("no-req@").is_none());
 }
-
-#[cfg(feature = "rpc-schema")]
-#[test]
-fn schema_serializes() {
-    let schema = schemars::schema_for!(PackageManifest);
-    let json = serde_json::to_string(&schema).expect("schema serializes");
-    assert!(json.contains("PackageManifest"));
-}

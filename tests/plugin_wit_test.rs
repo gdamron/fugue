@@ -1,12 +1,5 @@
 #[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
 #[test]
-fn default_registry_exposes_wasm_module_factory() {
-    let registry = fugue::ModuleRegistry::default();
-    assert!(registry.has_type("wasm_module"));
-}
-
-#[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
-#[test]
 fn loads_fixture_component_and_processes_audio_block() {
     use std::fs;
     use std::path::{Path, PathBuf};

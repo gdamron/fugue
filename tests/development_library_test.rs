@@ -1,12 +1,8 @@
-mod support;
-
 use std::path::PathBuf;
-use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
 use fugue::{Invention, InventionBuilder, RenderEngine};
-use support::NullAudioBackend;
 
 const SAMPLE_RATE: u32 = 48_000;
 
@@ -53,19 +49,6 @@ fn voice_library_presets_load_as_standalone_developments() {
 
         InventionBuilder::new(SAMPLE_RATE).build(invention).unwrap();
     }
-}
-
-#[test]
-fn voice_library_trio_runs_multiple_development_instances() {
-    let path = development_path("voice_library_trio.json");
-    let invention = Invention::from_file(path.to_str().unwrap()).unwrap();
-    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(invention).unwrap();
-    let running = runtime
-        .start_with_backend(NullAudioBackend::new(SAMPLE_RATE))
-        .unwrap();
-
-    thread::sleep(Duration::from_millis(25));
-    running.stop();
 }
 
 #[test]

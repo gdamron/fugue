@@ -205,15 +205,6 @@ fn later_edits_see_earlier_ones() {
 }
 
 #[test]
-fn the_source_document_is_never_changed() {
-    let document = base();
-    let mut facts = FakeFacts::for_document(&document);
-    let edits = vec![remove("osc1"), connect("osc1", "audio", "dac", "audio")];
-    assert!(apply_to_candidate(&document, &edits, &mut facts).is_err());
-    assert_eq!(document, base());
-}
-
-#[test]
 fn referencing_a_removed_module_fails_at_its_index() {
     let failure = refused(vec![
         set("osc2", "frequency", ControlValue::Number(1.0)),

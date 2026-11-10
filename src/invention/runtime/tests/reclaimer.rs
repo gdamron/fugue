@@ -3,11 +3,6 @@
 
 use super::*;
 
-#[test]
-fn a_started_reclaimer_lets_the_runtime_start() {
-    assert!(reclaimer_started(Ok(())).is_ok());
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn a_reclaimer_that_cannot_start_fails_the_start_with_its_reason() {

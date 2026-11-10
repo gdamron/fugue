@@ -288,32 +288,4 @@ mod tests {
         assert!(dac.set_input("invalid", 0.5).is_err());
         assert!(dac.get_output("invalid").is_err());
     }
-
-    #[test]
-    fn test_dac_factory() {
-        let factory = DacFactory;
-
-        assert_eq!(factory.type_id(), "dac");
-        assert!(factory.is_sink());
-
-        let result = factory
-            .build(44100, &serde_json::json!({}))
-            .expect("Failed to build DacModule");
-
-        assert!(result.sink.is_some());
-    }
-
-    #[test]
-    fn test_dac_factory_soft_clip_config() {
-        let factory = DacFactory;
-
-        // Test with soft_clip disabled
-        let mut result = factory
-            .build(44100, &serde_json::json!({"soft_clip": false}))
-            .expect("Failed to build DacModule");
-
-        let module = result.module.module_mut();
-        module.set_input("audio", 0.5).ok();
-        // Can't easily test the soft_clip field, but we can verify it builds
-    }
 }

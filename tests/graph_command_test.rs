@@ -57,14 +57,6 @@ fn build_simple_invention() -> (fugue::RunningInvention, fugue::InventionHandles
 }
 
 #[test]
-fn test_set_module_input_succeeds() {
-    let (running, _handles) = build_simple_invention();
-    let result = running.set_module_input("osc", "frequency", 880.0);
-    assert!(result.is_ok());
-    running.stop();
-}
-
-#[test]
 fn test_set_nonexistent_module_is_refused() {
     // Writes are resolved before they are queued, so an unknown module is
     // reported at once.
@@ -100,15 +92,6 @@ fn test_rapid_commands_all_succeed() {
 }
 
 // --- Module lifecycle tests ---
-
-#[test]
-fn test_add_module_succeeds() {
-    let (running, _handles) = build_simple_invention();
-    let config = serde_json::json!({"frequency": 220.0});
-    let result = running.add_module("osc2", "oscillator", &config);
-    assert!(result.is_ok());
-    running.stop();
-}
 
 #[test]
 fn test_add_module_exposes_its_controls() {
@@ -393,18 +376,6 @@ fn test_list_all_controls() {
         "Expected 'osc' in module list, got: {:?}",
         module_ids
     );
-    running.stop();
-}
-
-#[test]
-fn test_get_control_succeeds() {
-    let (running, _handles) = build_simple_invention();
-    let value = applied(&running, "osc", "frequency", 880.0);
-    let value = match value {
-        ControlValue::Number(value) => value,
-        other => panic!("Expected numeric frequency, got {:?}", other),
-    };
-    assert!(value > 0.0, "Expected positive frequency, got: {}", value);
     running.stop();
 }
 

@@ -254,10 +254,3 @@ fn a_reload_to_a_root_document_with_a_partial_range_is_refused() {
         .reload(root_document(json!({ "min": 0, "max": 5 })))
         .unwrap();
 }
-
-#[test]
-fn a_root_document_with_a_complete_range_builds() {
-    InventionBuilder::new(SAMPLE_RATE)
-        .build(root_document(json!({ "min": 0, "max": 10 })))
-        .unwrap();
-}

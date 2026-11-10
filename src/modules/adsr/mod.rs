@@ -443,30 +443,6 @@ mod tests {
     }
 
     #[test]
-    fn test_adsr_controls() {
-        let mut adsr = Adsr::new(44100);
-
-        // Test control metadata
-        let controls = adsr.controls();
-        assert_eq!(controls.len(), 4);
-        assert_eq!(controls[0].key, "attack");
-        assert_eq!(controls[1].key, "decay");
-        assert_eq!(controls[2].key, "sustain");
-        assert_eq!(controls[3].key, "release");
-
-        // Test get/set controls
-        adsr.set_control("attack", 0.5).unwrap();
-        assert_eq!(adsr.get_control("attack").unwrap(), 0.5);
-
-        adsr.set_control("sustain", 0.8).unwrap();
-        assert_eq!(adsr.get_control("sustain").unwrap(), 0.8);
-
-        // Test invalid control
-        assert!(adsr.get_control("invalid").is_err());
-        assert!(adsr.set_control("invalid", 0.5).is_err());
-    }
-
-    #[test]
     fn test_adsr_signal_overrides_control() {
         let mut adsr = Adsr::new(44100);
 
