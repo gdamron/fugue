@@ -5,6 +5,8 @@
 use serde_json::json;
 
 use super::*;
+use crate::invention::builder::InventionBuilder;
+use crate::invention::manual_backend::{start_manual, SAMPLE_RATE};
 use crate::invention::reload::DevelopmentDefinitions;
 
 fn development(range: serde_json::Value) -> serde_json::Value {
@@ -197,4 +199,65 @@ fn the_array_form_still_parses() {
         serde_json::from_str(r#"["voice", "voice.json", null, null]"#).unwrap();
     assert_eq!(spec.name, "voice");
     assert_eq!(spec.path.as_deref(), Some("voice.json"));
+}
+
+/// A document with a dac and its own `cutoff` control, whose range is
+/// `range`, as one written to be built as a development holds.
+fn root_document(range: serde_json::Value) -> Invention {
+    serde_json::from_value(json!({
+        "version": "1.0.0",
+        "modules": [{ "id": "dac", "type": "dac" }],
+        "connections": [],
+        "controls": [{ "name": "cutoff", "module": "dac", "control": "level", "range": range }]
+    }))
+    .unwrap()
+}
+
+const ROOT_REFUSAL: &str =
+    "control 'cutoff': range is missing `min`: a range needs both `min` and `max`";
+
+#[test]
+fn a_root_document_with_a_partial_range_does_not_build() {
+    let error = InventionBuilder::new(SAMPLE_RATE)
+        .build(root_document(json!({ "max": 10 })))
+        .err()
+        .expect("a partial range must not build")
+        .to_string();
+    assert_eq!(error, ROOT_REFUSAL);
+}
+
+#[test]
+fn a_root_document_names_its_file_when_it_has_one() {
+    let mut document = root_document(json!({ "max": 10 }));
+    document.source_path = Some("/songs/voice.json".into());
+    let error = InventionBuilder::new(SAMPLE_RATE)
+        .build(document)
+        .err()
+        .expect("a partial range must not build")
+        .to_string();
+    assert_eq!(error, format!("/songs/voice.json: {ROOT_REFUSAL}"));
+}
+
+#[test]
+fn a_reload_to_a_root_document_with_a_partial_range_is_refused() {
+    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE)
+        .build(root_document(json!({ "min": 0, "max": 10 })))
+        .unwrap();
+    let (mut running, _pump) = start_manual(runtime);
+    let error = running
+        .reload(root_document(json!({ "max": 10 })))
+        .expect_err("a partial range must not reload")
+        .to_string();
+    assert!(error.contains(ROOT_REFUSAL), "{error}");
+    // A complete range reloads.
+    running
+        .reload(root_document(json!({ "min": 0, "max": 5 })))
+        .unwrap();
+}
+
+#[test]
+fn a_root_document_with_a_complete_range_builds() {
+    InventionBuilder::new(SAMPLE_RATE)
+        .build(root_document(json!({ "min": 0, "max": 10 })))
+        .unwrap();
 }

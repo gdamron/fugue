@@ -6,7 +6,8 @@
 //! a field written twice, an unknown field and a `null` are handled as ever,
 //! but a range with a missing or `null` bound parses and the control notes
 //! the bound. Where a development's definition is resolved, which knows the
-//! development's name, [`refuse_partial_ranges`] fails the load with it.
+//! development's name, [`refuse_partial_ranges`] fails the load with it; so
+//! does a build of a document whose own controls hold one.
 
 use serde::{Deserialize, Deserializer};
 
@@ -64,16 +65,18 @@ impl<'de> Deserialize<'de> for DevelopmentControl {
     }
 }
 
-/// Fails the load of the development `development`, whose definition is
-/// `definition`, when a control declares a range without both its bounds.
+/// Fails the load of `definition`, the controls of a development or of a
+/// document built as it is, when a control declares a range without both its
+/// bounds. `whose` begins the message: the development (`Development 'voice':
+/// `) or the document's file, or nothing when there is neither to name.
 pub(crate) fn refuse_partial_ranges(
-    development: &str,
+    whose: &str,
     definition: &Invention,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match (definition.controls.iter()).find_map(|control| Some((control, control.range_missing?))) {
         None => Ok(()),
         Some((control, missing)) => Err(format!(
-            "Development '{development}': control '{}': range is missing {missing}: \
+            "{whose}control '{}': range is missing {missing}: \
              a range needs both `min` and `max`",
             control.name
         )
