@@ -20,6 +20,7 @@ impl ControlMeta {
                 hints: NumberHints::default(),
             },
             read_only: false,
+            event: false,
         }
     }
 
@@ -84,6 +85,7 @@ impl ControlMeta {
             default: ControlValue::Bool(default),
             kind: ControlKind::Bool,
             read_only: false,
+            event: false,
         }
     }
 
@@ -95,6 +97,7 @@ impl ControlMeta {
             default: ControlValue::String(String::new()),
             kind: ControlKind::String { options: None },
             read_only: false,
+            event: false,
         }
     }
 

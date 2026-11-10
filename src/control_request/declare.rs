@@ -562,6 +562,7 @@ impl ControlTable {
                     default,
                     kind,
                     read_only: decl.writer == Writer::Telemetry,
+                    event: decl.event,
                 })
             })
             .collect()

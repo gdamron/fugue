@@ -159,3 +159,14 @@ fn a_saved_start_plays_nothing_where_the_definition_names_no_sample_it_can_load(
     let (graph, _) = running(pair(&missing), json!({ "sample": b, "start": true }));
     assert_eq!(frame(&graph), [0.0, 0.4, 0.0, 1.0]);
 }
+
+#[test]
+fn an_exposed_one_shot_is_listed_as_an_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = tone(dir.path(), "a.wav", 0.2, 64);
+    let built = pair(&a).build(48_000, &json!({})).unwrap();
+    let listed = built.control_surface.unwrap().controls();
+    let event = |key: &str| listed.iter().find(|meta| meta.key == key).unwrap().event;
+    assert!(event("start"), "play fires a start");
+    assert!(!event("sample"));
+}
