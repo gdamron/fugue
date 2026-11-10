@@ -178,3 +178,89 @@ fn two_cables_removed_one_after_another_glide_to_the_remaining_sum() {
     }
     cases.finish();
 }
+
+/// Criterion: removing one cable and then the last one still glides: the
+/// final full unpatch goes from the remaining cable's value to the
+/// control's, without a step, whether the first glide has finished or not.
+#[test]
+fn removing_one_cable_then_the_last_one_still_glides_without_a_step() {
+    let both = document_of(&[("a", 0.5), ("b", 0.25)]);
+    let mut cases = Cases::default();
+    for mode in [Mode::Offline, Mode::Live] {
+        // The last goes after the first has settled.
+        let mut rig = Rig::start(mode, &both);
+        let mut y = rig.render(BEFORE);
+        rig.apply(&disconnect("b"));
+        y.extend(rig.render(AFTER));
+        let last_at = y.len();
+        rig.apply(&disconnect("a"));
+        y.extend(rig.render(AFTER));
+        let label = format!("{mode:?} / after the first settled");
+        cases.check(
+            format!("{label} (first glides from 0.75 to 0.5)"),
+            only_falls_between(&y, BEFORE - 1, last_at, 0.5, 0.75).and(equals(
+                &y,
+                BEFORE + RELEASE + BLOCK,
+                last_at,
+                0.5,
+            )),
+        );
+        let first = largest_step(&y, BEFORE, last_at);
+        cases.check(
+            format!("{label} (first does not step)"),
+            if first <= 1.5 * 0.25 / RELEASE as f32 {
+                Ok(())
+            } else {
+                Err(format!("largest step {first}"))
+            },
+        );
+        cases.check(
+            format!("{label} (last glides from 0.5 to rest)"),
+            only_falls_between(&y, last_at - 1, y.len(), REST, 0.5).and(equals(
+                &y,
+                last_at + RELEASE + BLOCK,
+                y.len(),
+                REST,
+            )),
+        );
+        let step = largest_step(&y, last_at, y.len());
+        let even = 0.25 / RELEASE as f32;
+        cases.check(
+            format!("{label} (last does not step)"),
+            if step <= 1.5 * even {
+                Ok(())
+            } else {
+                Err(format!("largest step {step} past an even glide's {even}"))
+            },
+        );
+
+        // The last goes while the first still glides.
+        let mut rig = Rig::start(mode, &both);
+        let mut y = rig.render(BEFORE);
+        rig.apply(&disconnect("b"));
+        y.extend(rig.render(2 * BLOCK));
+        rig.apply(&disconnect("a"));
+        y.extend(rig.render(AFTER));
+        let label = format!("{mode:?} / during the first glide");
+        cases.check(
+            format!("{label} (falls to rest)"),
+            only_falls_between(&y, BEFORE - 1, y.len(), REST, 0.75).and(equals(
+                &y,
+                BEFORE + 2 * BLOCK + RELEASE + BLOCK,
+                y.len(),
+                REST,
+            )),
+        );
+        let step = largest_step(&y, BEFORE, y.len());
+        let limit = 1.5 * 0.75 / RELEASE as f32;
+        cases.check(
+            format!("{label} (no step)"),
+            if step <= limit {
+                Ok(())
+            } else {
+                Err(format!("largest step {step} past {limit}"))
+            },
+        );
+    }
+    cases.finish();
+}
