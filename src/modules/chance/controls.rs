@@ -98,7 +98,8 @@ const DECLS: &[ControlDecl] = &[
         "MIDI note a value of 0 plays",
     )
     .clamped(0.0, 127.0)
-    .whole(),
+    .whole()
+    .note(),
     ControlDecl::new(
         "range",
         DeclKind::Number {

@@ -22,6 +22,17 @@ pub enum ControlScale {
     Log,
 }
 
+/// What a number stands for, when an editor can show it better than as a
+/// plain number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum NumberFormat {
+    /// A MIDI note number, which an editor may show by its name: 60 is C4,
+    /// 69 is A4 (440 Hz).
+    Note,
+}
+
 /// Optional presentation hints for a number control (see the module docs).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
@@ -39,6 +50,10 @@ pub struct NumberHints {
     /// Decimal places worth showing: 0 for a whole-number control.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub precision: Option<u8>,
+    /// What the number stands for, such as a note, when an editor can name
+    /// it; a plain number when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<NumberFormat>,
 }
 
 impl NumberHints {

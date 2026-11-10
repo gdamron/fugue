@@ -19,6 +19,7 @@ impl ControlMeta {
                 max: 1.0,
                 hints: NumberHints::default(),
             },
+            read_only: false,
         }
     }
 
@@ -75,6 +76,7 @@ impl ControlMeta {
             description: description.into(),
             default: ControlValue::Bool(default),
             kind: ControlKind::Bool,
+            read_only: false,
         }
     }
 
@@ -85,6 +87,7 @@ impl ControlMeta {
             description: description.into(),
             default: ControlValue::String(String::new()),
             kind: ControlKind::String { options: None },
+            read_only: false,
         }
     }
 
