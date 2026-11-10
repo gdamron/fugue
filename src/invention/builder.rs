@@ -153,6 +153,14 @@ impl InventionBuilder {
         invention: Invention,
     ) -> Result<(InventionRuntime, InventionHandles), Box<dyn std::error::Error>> {
         let base_registry = self.registry.clone();
+        // A document's own controls take effect when it is built as a
+        // development, and are refused here as a partial range in a
+        // development is refused when it is loaded.
+        super::format::refuse_partial_ranges(
+            &(invention.source_path.as_deref())
+                .map_or(String::new(), |path| format!("{}: ", path.display())),
+            &invention,
+        )?;
         // Retain the authored document (before asset resolution) so the
         // runtime can be saved back to disk without inlining `$asset`
         // references or losing developments, title, and the exposed sections.
@@ -454,6 +462,18 @@ impl InventionBuilder {
 /// definition. Shared with reload, which re-resolves definitions to detect
 /// changes on disk.
 pub(crate) fn load_development_definition(
+    invention: &Invention,
+    development: &super::format::DevelopmentSpec,
+) -> Result<Invention, Box<dyn std::error::Error>> {
+    let definition = read_development_definition(invention, development)?;
+    super::format::refuse_partial_ranges(
+        &format!("Development '{}': ", development.name),
+        &definition,
+    )?;
+    Ok(definition)
+}
+
+fn read_development_definition(
     invention: &Invention,
     development: &super::format::DevelopmentSpec,
 ) -> Result<Invention, Box<dyn std::error::Error>> {
