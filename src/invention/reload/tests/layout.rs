@@ -112,3 +112,39 @@ fn an_example_without_a_layout_saves_as_it_did_before() {
         .unwrap();
     assert_eq!(std::fs::read(&again).unwrap(), saved);
 }
+
+#[test]
+fn a_timed_reload_keeps_a_drag_made_while_it_waits() {
+    let mut running = start(&placed(&["osc1", "osc2"]).to_json().unwrap());
+    // The reload adds a module, places it, and repositions osc2 only.
+    let mut next = placed(&["osc1", "osc2"]);
+    next.modules.push(ModuleSpec {
+        id: "lfo1".into(),
+        module_type: "lfo".into(),
+        config: serde_json::json!({ "rate": 2.0 }),
+    });
+    let place = |x: f64| Position { x, y: 9.0 };
+    next.layout.modules.insert("lfo1".into(), place(1.0));
+    next.layout.modules.insert("osc2".into(), place(2.0));
+    let when = crate::rpc::EditWhen::AfterSamples { samples: 2048 };
+    running.reload_at(next, &when, None).expect("queued");
+
+    // Dragged while it waits: osc1, which the reload leaves, and osc2.
+    let drag = |id: &str, x: f64| (id.to_string(), Some(Position { x, y: 5.0 }));
+    let positions = [drag("osc1", 7.0), drag("osc2", 8.0)].into_iter().collect();
+    let moves = [crate::rpc::StructuralEdit::MoveModules { positions }];
+    running.apply_edits(&moves).expect("the drag commits");
+
+    running.pump.render(64);
+    running.live.adopt_landed();
+    let document = running.document().unwrap();
+    assert!(
+        document.modules.iter().any(|spec| spec.id == "lfo1"),
+        "the reload landed"
+    );
+    let layout = &document.layout.modules;
+    assert_eq!(ids(&document), ["lfo1", "osc1", "osc2"]);
+    assert_eq!(layout["osc1"], Position { x: 7.0, y: 5.0 });
+    assert_eq!(layout["osc2"], place(2.0));
+    assert_eq!(layout["lfo1"], place(1.0));
+}

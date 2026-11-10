@@ -8,6 +8,7 @@ use super::{ReloadError, ReloadPlan, RELOAD_ATTEMPTS};
 use crate::control_request::RequestId;
 use crate::invention::declared::DeclaredSurface;
 use crate::invention::format::ModuleSpec;
+use crate::invention::layout::LayoutChange;
 use crate::invention::publish::EditTime;
 use crate::invention::runtime::timed::edit_time;
 use crate::invention::runtime::{GraphCommandError, RunningInvention};
@@ -34,7 +35,8 @@ impl RunningInvention {
     /// key removed from an undeclared module) is rebuilt as it lands
     /// instead. Its document is retained once it
     /// is adopted, with any authored write made meanwhile to a module it
-    /// keeps and a control it does not change. While it waits, any other
+    /// keeps and a control it does not change, and with the layout as it
+    /// then stands, the reload's own placements made on top. While it waits, any other
     /// structural edit, reload or edit batch cancels it, as does an
     /// authored write to a module it rebuilds or removes.
     pub fn reload_at(
@@ -61,10 +63,15 @@ impl RunningInvention {
             let mut plan = self.plan_document(&validated)?;
             self.rebuild_unchained(&mut plan, &validated.resolved);
             let document = Some(validated.document.clone());
+            // What the reload changes of the layout as it stands now, made
+            // again on the layout as it stands when it lands.
+            let (retained, _) = self.live.document_with_epoch();
+            let base_layout = retained.map(|document| document.layout).unwrap_or_default();
+            let layout_changes = validated.document.layout.changes_from(&base_layout);
             let queued = self
                 .prepare_plan(base, plan, document, None)
                 .map(|prepared| prepared.planned_at(authored))
-                .and_then(|prepared| self.queue_reload(prepared, time, ttl));
+                .and_then(|prepared| self.queue_reload(prepared, layout_changes, time, ttl));
             match queued {
                 Ok(id) => return Ok(self.status_of(id)),
                 Err(GraphCommandError::TopologyMoved) if attempt < RELOAD_ATTEMPTS => attempt += 1,
@@ -122,9 +129,14 @@ impl RunningInvention {
         }
     }
 
+    /// Queues `prepared`, whose document, as it lands, takes the layout the
+    /// retained document then has with `layout_changes` made on top: a
+    /// module moved while it waits, and not moved by the reload, keeps
+    /// where it was moved.
     fn queue_reload(
         &self,
         prepared: PreparedCommit,
+        layout_changes: Vec<LayoutChange>,
         time: EditTime<'_>,
         ttl: Option<u64>,
     ) -> Result<RequestId, GraphCommandError> {
@@ -148,7 +160,10 @@ impl RunningInvention {
                     info.config = config;
                 }
             }
-            if let Some(document) = document {
+            if let Some(mut document) = document {
+                if let Some(current) = &state.document {
+                    document.carry_layout(&current.layout, &layout_changes);
+                }
                 state.document = Some(document);
             }
             // The graph is built under the reload's lock once it lands.

@@ -381,7 +381,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
     }
 }
 
-fn unknown_module(id: &str) -> Refusal {
+pub(super) fn unknown_module(id: &str) -> Refusal {
     Refusal(
         EditFailureReason::UnknownModule,
         format!("no module '{id}' exists at this point in the batch"),

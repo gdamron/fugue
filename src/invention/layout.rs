@@ -36,6 +36,20 @@ impl Layout {
     pub fn is_empty(&self) -> bool {
         self.modules.is_empty()
     }
+
+    /// What turns `base` into this layout: each module this one places
+    /// where `base` does not, and each `base` places that this one does
+    /// not, unplaced. A whole document's layout made into the changes it
+    /// makes, for [`Invention::carry_layout`].
+    pub(crate) fn changes_from(&self, base: &Layout) -> Vec<LayoutChange> {
+        let placed = (self.modules.iter())
+            .filter(|(id, position)| base.modules.get(*id) != Some(position))
+            .map(|(id, position)| (id.clone(), Some(*position)));
+        let unplaced = (base.modules.keys())
+            .filter(|id| !self.modules.contains_key(*id))
+            .map(|id| (id.clone(), None));
+        placed.chain(unplaced).collect()
+    }
 }
 
 /// A point on the canvas, in abstract canvas units the surface scales.

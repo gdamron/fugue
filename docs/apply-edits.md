@@ -77,8 +77,11 @@ A batch of `move_modules` edits alone takes a path of its own: it writes the
 layout straight into the retained document, all or nothing, without the
 throwaway build described in
 [What checking a batch touches](#what-checking-a-batch-touches), and it does
-not cancel a timed edit waiting to land. When that timed edit lands, its
-document keeps the layout as moved meanwhile, with its own moves made on top.
+not cancel a timed edit waiting to land. When a timed edit batch or a timed
+reload lands, its document keeps the layout as moved meanwhile, with its own
+placements made on top: a batch's moves, or each position a reload's
+document places differently from the document it was queued against. A
+module either removes loses its position.
 A `move_modules` cannot be timed on its own: a timed batch must change
 structure.
 

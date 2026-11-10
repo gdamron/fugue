@@ -31,8 +31,9 @@ mod plan;
 mod tests;
 mod timed;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use super::candidate::{unknown_module, Refusal};
 use super::{apply_to_candidate, CandidateWrite, EditedCandidate};
 use crate::invention::builder::InventionBuilder;
 use crate::invention::format::Invention;
@@ -305,19 +306,19 @@ impl RunningInvention {
                      nothing was applied",
                 )
             })?;
+            let ids: HashSet<&str> = (document.modules.iter())
+                .map(|spec| spec.id.as_str())
+                .collect();
             let mut layout = document.layout.clone();
             for (index, edit) in edits.iter().enumerate() {
                 let StructuralEdit::MoveModules { positions } = edit else {
                     unreachable!("only moves take this path");
                 };
                 for (id, position) in positions {
-                    if !document.modules.iter().any(|spec| &spec.id == id) {
-                        return Err(RpcError::invalid_edit(EditFailure::new(
-                            index,
-                            EditOp::MoveModules,
-                            EditFailureReason::UnknownModule,
-                            format!("no module '{id}' exists at this point in the batch"),
-                        )));
+                    if !ids.contains(id.as_str()) {
+                        let Refusal(reason, message) = unknown_module(id);
+                        let failure = EditFailure::new(index, EditOp::MoveModules, reason, message);
+                        return Err(RpcError::invalid_edit(failure));
                     }
                     match position {
                         Some(position) => layout.modules.insert(id.clone(), *position),
