@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{CandidateWrite, EditFacts, EditedCandidate, ModuleFacts};
 use crate::invention::format::{Connection, Invention};
+use crate::invention::layout::{LayoutChange, Position};
 use crate::invention::{audio_assets, authored_document};
 use crate::rpc::{
     non_finite_refusal, truncate_on_char_boundary, ControlWrite, EditFailureReason, StructuralEdit,
@@ -37,6 +38,7 @@ pub(super) struct Candidate<'f, F> {
     original: BTreeSet<String>,
     /// Ids from `original` that an edit removed.
     removed_originals: BTreeSet<String>,
+    layout_changes: Vec<LayoutChange>,
 }
 
 impl<'f, F: EditFacts> Candidate<'f, F> {
@@ -55,6 +57,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             named_modules: BTreeSet::new(),
             original,
             removed_originals: BTreeSet::new(),
+            layout_changes: Vec::new(),
         }
     }
 
@@ -69,6 +72,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             control_writes: self.control_writes,
             named_modules: self.named_modules,
             replaced,
+            layout_changes: self.layout_changes,
         }
     }
 
@@ -98,7 +102,22 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
                 key,
                 value,
             } => self.set_control(index, module_id, key, value),
+            StructuralEdit::MoveModules { positions } => self.move_modules(positions),
         }
+    }
+
+    /// Places each module where `positions` says, in the document only.
+    /// The ids are not named modules: a move touches no running module, so
+    /// the commit's guard keeps refusing any graph change they would make.
+    fn move_modules(&mut self, positions: &BTreeMap<String, Option<Position>>) -> Applied {
+        if let Some(id) = positions.keys().find(|id| !self.exists(id)) {
+            return Err(unknown_module(id));
+        }
+        for (id, position) in positions {
+            authored_document::place_module(&mut self.document, id, *position);
+            self.layout_changes.push((id.clone(), *position));
+        }
+        Ok(())
     }
 
     fn add_module(&mut self, id: &str, module_type: &str, config: &serde_json::Value) -> Applied {
@@ -138,6 +157,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             return Err(unknown_module(id));
         }
         authored_document::remove_module(&mut self.document, id);
+        self.layout_changes.push((id.to_string(), None));
         if self.original.contains(id) {
             self.removed_originals.insert(id.to_string());
         }
@@ -361,7 +381,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
     }
 }
 
-fn unknown_module(id: &str) -> Refusal {
+pub(super) fn unknown_module(id: &str) -> Refusal {
     Refusal(
         EditFailureReason::UnknownModule,
         format!("no module '{id}' exists at this point in the batch"),

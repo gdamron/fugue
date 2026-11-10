@@ -176,6 +176,21 @@ development control `range` needs 2026.11.0. A development referenced by
 `path` or `ref` keeps the minimum its own file declares. Cores released
 before 2026.11.0 don't know the field and ignore it.
 
+A document may also save where its modules sit on the canvas that shows the
+graph, in a `layout` section keyed by module id, in abstract canvas units:
+
+```json
+"layout": { "modules": { "melody": { "x": 120, "y": 40 }, "dac": { "x": 360, "y": 40 } } }
+```
+
+The layout is presentation only. Nothing is built from it, a reload that
+changes only the layout rebuilds nothing, and the `move_modules` edit (see
+[docs/apply-edits.md](docs/apply-edits.md)) changes it without touching the
+audio. A position for a module the document doesn't have is dropped with a
+load warning. A document without a layout saves without the key. The layout
+doesn't raise `minimum_core_version`: an older core plays the piece and drops
+the arrangement when it saves.
+
 Load and run it:
 
 ```rust

@@ -9,6 +9,7 @@ fn voice_development() -> Invention {
     Invention {
         version: "1.0.0".to_string(),
         minimum_core_version: None,
+        layout: Default::default(),
         title: Some("voice".to_string()),
         description: None,
         developments: vec![],
@@ -56,6 +57,7 @@ fn root_invention_with_voice(voice: DevelopmentSpec) -> Invention {
     Invention {
         version: "1.0.0".to_string(),
         minimum_core_version: None,
+        layout: Default::default(),
         title: Some("root".to_string()),
         description: None,
         developments: vec![voice],
@@ -140,6 +142,7 @@ fn development_fans_out_exposed_inputs_and_caches_outputs() {
     let development = Invention {
         version: "1.0.0".to_string(),
         minimum_core_version: None,
+        layout: Default::default(),
         title: Some("fanout".to_string()),
         description: None,
         developments: vec![],
@@ -188,6 +191,7 @@ fn development_fans_out_exposed_inputs_and_caches_outputs() {
     let root = Invention {
         version: "1.0.0".to_string(),
         minimum_core_version: None,
+        layout: Default::default(),
         title: Some("root".to_string()),
         description: None,
         developments: vec![DevelopmentSpec {
@@ -282,6 +286,7 @@ fn resolves_relative_asset_refs_in_module_configs() {
     let root = Invention {
         version: "1.0.0".to_string(),
         minimum_core_version: None,
+        layout: Default::default(),
         title: Some("asset root".to_string()),
         description: None,
         developments: vec![],
@@ -427,6 +432,7 @@ fn text_assets_resolve_as_string_values() {
     let root = Invention {
         version: "1.0.0".to_string(),
         minimum_core_version: None,
+        layout: Default::default(),
         title: Some("text assets".to_string()),
         description: None,
         developments: vec![],
@@ -498,6 +504,7 @@ fn supports_nested_developments() {
     let inner = Invention {
         version: "1.0.0".to_string(),
         minimum_core_version: None,
+        layout: Default::default(),
         title: Some("inner".to_string()),
         description: None,
         developments: vec![],
@@ -520,6 +527,7 @@ fn supports_nested_developments() {
     let outer = Invention {
         version: "1.0.0".to_string(),
         minimum_core_version: None,
+        layout: Default::default(),
         title: Some("outer".to_string()),
         description: None,
         developments: vec![DevelopmentSpec {
@@ -565,6 +573,7 @@ fn duplicate_development_control_keys_fan_out_writes() {
     let development = Invention {
         version: "1.0.0".to_string(),
         minimum_core_version: None,
+        layout: Default::default(),
         title: Some("bank".to_string()),
         description: None,
         developments: vec![],
@@ -654,6 +663,7 @@ fn multiple_instances_of_nested_developments_build() {
     let inner = Invention {
         version: "1.0.0".to_string(),
         minimum_core_version: None,
+        layout: Default::default(),
         title: Some("inner".to_string()),
         description: None,
         developments: vec![],
@@ -676,6 +686,7 @@ fn multiple_instances_of_nested_developments_build() {
     let outer = Invention {
         version: "1.0.0".to_string(),
         minimum_core_version: None,
+        layout: Default::default(),
         title: Some("outer".to_string()),
         description: None,
         developments: vec![DevelopmentSpec {
@@ -704,6 +715,7 @@ fn multiple_instances_of_nested_developments_build() {
     let root = Invention {
         version: "1.0.0".to_string(),
         minimum_core_version: None,
+        layout: Default::default(),
         title: Some("root".to_string()),
         description: None,
         developments: vec![DevelopmentSpec {

@@ -49,7 +49,8 @@ pub struct ReloadReport {
     pub unchanged: usize,
     /// What building the added and rebuilt modules set aside without
     /// refusing the reload: a development's starting value its control
-    /// refuses, say, which starts where its definition starts it.
+    /// refuses, say, which starts where its definition starts it, or a
+    /// layout entry placing a module the document does not have.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
@@ -110,6 +111,9 @@ pub(crate) struct ValidatedDocument {
     /// fresh build of the document starts each control at, for a reload to
     /// restore what the document leaves implicit (see [`Implicit`]).
     pub(crate) fresh: Arc<std::sync::Mutex<IndexMap<String, ControlSurfaceInstance>>>,
+    /// The layout entries the document's settling dropped (see
+    /// [`Invention::settle_layout`]), for the reload's report.
+    pub(crate) unplaced: Vec<String>,
 }
 
 impl RunningInvention {
@@ -193,7 +197,12 @@ impl RunningInvention {
             });
             match result {
                 Err(GraphCommandError::TopologyMoved) if attempt < RELOAD_ATTEMPTS => attempt += 1,
-                result => return result.map_err(ReloadError::Apply),
+                result => {
+                    return result.map_err(ReloadError::Apply).map(|mut report| {
+                        report.warnings.extend(validated.unplaced.iter().cloned());
+                        report
+                    })
+                }
             }
         }
     }
@@ -206,8 +215,11 @@ impl RunningInvention {
     /// nothing.
     pub(crate) fn validate_document(
         &self,
-        invention: Invention,
+        mut invention: Invention,
     ) -> Result<ValidatedDocument, ReloadError> {
+        // The retained document drops a layout entry placing no module of
+        // it, a module this reload removes included.
+        let unplaced = invention.settle_layout();
         let document = invention.clone();
         let invalid = |error: Box<dyn std::error::Error>| ReloadError::Invalid(error.to_string());
         let (resolved, loaded) =
@@ -236,6 +248,7 @@ impl RunningInvention {
             registry: Arc::new(registry),
             definitions,
             fresh,
+            unplaced,
         })
     }
 

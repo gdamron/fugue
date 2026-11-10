@@ -26,6 +26,17 @@ pub(crate) struct Warning {
     pub(crate) message: String,
 }
 
+impl Warning {
+    /// A warning about the document itself rather than a module in it.
+    pub(crate) fn of_document(message: String) -> Self {
+        Self {
+            modules: Vec::new(),
+            refused: None,
+            message,
+        }
+    }
+}
+
 #[cfg(test)]
 impl Warning {
     /// A warning about the module being built.

@@ -68,6 +68,12 @@ pub struct Invention {
     #[serde(default)]
     pub controls: Vec<DevelopmentControl>,
 
+    /// Where the invention's own modules sit on the canvas that shows its
+    /// graph; presentation only (see [`super::layout`]). Omitted when no
+    /// module is placed, so a document without one saves as it always has.
+    #[serde(default, skip_serializing_if = "super::layout::Layout::is_empty")]
+    pub layout: super::layout::Layout,
+
     /// Source file path used for resolving relative development imports.
     #[serde(skip)]
     pub source_path: Option<PathBuf>,

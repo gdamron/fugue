@@ -2,7 +2,8 @@
 
 `RpcCommand::ApplyEdits { edits }` changes the structure of the running
 invention in one step. A batch of edits (add or remove modules, connect or
-disconnect ports, set authored control values) either commits as a whole, in
+disconnect ports, set authored control values, move modules on the canvas)
+either commits as a whole, in
 one revision, or is refused and changes nothing. No audio block ever plays a
 half-applied batch.
 
@@ -46,6 +47,7 @@ described here is made by the daemon, and every refusal is structured.
 | `connect` | `from`, `from_port`, `to`, `to_port` | Connects an output port to an input port. |
 | `disconnect` | `from`, `from_port`, `to`, `to_port` | Removes an existing connection. |
 | `set_control` | `module_id`, `key`, `value` | Sets a control's authored starting value. |
+| `move_modules` | `positions` | Places modules on the canvas: changes only the document's `layout`. |
 
 Edits apply **in order**, each against the result of the ones before it. A
 module added at index 0 can be connected at index 1 and tuned at index 2; a
@@ -56,6 +58,39 @@ remove it and add it again with the same id; there is no swap op.
 starting state and is written into its config, exactly as a standalone
 `SetControl` with the default `author` intent. There is no `intent` field. Live
 performance gestures stay on `SetControl`/`SetControls` with `intent: perform`.
+
+`move_modules` maps module ids to positions, `{ "x": …, "y": … }` in the
+document's canvas units, or to `null` to unplace a module:
+
+```json
+{ "op": "move_modules", "positions": { "osc": { "x": 120, "y": 40 }, "vca": null } }
+```
+
+It writes the document's `layout` (see the invention format's `layout`
+section) and nothing else: no module is rebuilt, no graph change is published,
+and nothing heard changes. The revision still advances, so a client tracking
+revisions sees the move. Positions are absolute, so the same edit made twice
+leaves the same document. A position with a field other than `x` and `y` is
+refused when the request is parsed.
+
+A batch of `move_modules` edits alone takes a path of its own: it writes the
+layout straight into the retained document, all or nothing, without the
+throwaway build described in
+[What checking a batch touches](#what-checking-a-batch-touches), and it does
+not cancel a timed edit waiting to land. When a timed edit batch or a timed
+reload lands, its document keeps the layout as moved meanwhile, with its own
+placements made on top: a batch's moves, or each position a reload's
+document places differently from the document it was queued against. A
+module either removes loses its position.
+A `move_modules` cannot be timed on its own: a timed batch must change
+structure.
+
+Coordinates are numbers: an integer re-saves as a float (`120` becomes
+`120.0`), and every value round-trips exactly.
+
+Removing a module drops its position with it, so removing and adding the same
+id in one batch leaves the new module unplaced. `SwapModule` keeps the
+module's position.
 
 Unknown fields inside an edit, and unknown ops, are refused when the request
 is parsed, so a misspelled edit field fails loudly instead of being ignored.
@@ -72,6 +107,7 @@ assets, title or exposed sections.
 | --- | --- | --- |
 | Edits per batch | 1 to 256 (`MAX_EDITS_PER_BATCH`) | `invalid_request`, no edit detail |
 | Module id, module type, port name, control key | 1 to 256 UTF-8 bytes (`MAX_EDIT_NAME_BYTES`) | `invalid_edit`, reason `invalid_name` |
+| Positions per `move_modules` | 1 to 1024 (`MAX_MOVES_PER_EDIT`), each finite | `invalid_edit`, reason `invalid_position` |
 
 Split a larger change into several batches. Each batch commits on its own.
 
@@ -190,6 +226,7 @@ resend the batch with a **new** ticket (see
 | `connection_not_found` | `disconnect` | No such connection exists. |
 | `unknown_control` | `set_control` | The module exposes no control with that key. |
 | `invalid_control_value` | `set_control` | The value cannot be coerced to the control's kind, is not a finite number, or the module refuses it. |
+| `invalid_position` | `move_modules` | It places no module, more than 1024, or one at a position that is not finite. |
 
 Messages that name a port or control list what is available, so an agent can
 correct the edit without another read.
@@ -281,7 +318,7 @@ schema version 1. Check the daemon's `build` fingerprint from hello
 ## What checking a batch touches
 
 Checking a batch builds each module it adds, and then the whole edited
-invention, as throwaway instances that activate no output: no recorder opens
+invention (unless the batch only moves modules), as throwaway instances that activate no output: no recorder opens
 its file and no stream starts. A recorder that is already running is never
 built again over the file it is writing. A `wasm_module` still runs its
 constructor, as it does on load.

@@ -47,6 +47,7 @@ impl RuntimeFullSnapshot {
         Invention {
             version: "1.0.0".to_string(),
             minimum_core_version: None,
+            layout: Default::default(),
             title: None,
             description: None,
             developments: Vec::new(),

@@ -400,6 +400,17 @@ impl LiveGraph {
         epoch
     }
 
+    /// Runs `edit` on the runtime state under the publisher, once every
+    /// landed timed edit is adopted, publishing nothing and cancelling
+    /// nothing: for a change to the retained document alone, such as where
+    /// modules sit on the canvas.
+    pub(crate) fn edit_document<R>(&self, edit: impl FnOnce(&mut RuntimeState) -> R) -> R {
+        let publisher = self.lock();
+        let result = edit(&mut self.state.lock().unwrap());
+        drop(publisher);
+        result
+    }
+
     /// The retained document and its authored epoch, read together under
     /// the publisher, every authored write applied so far recorded: no
     /// write is recorded between the two.
