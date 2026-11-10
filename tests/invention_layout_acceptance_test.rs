@@ -585,8 +585,8 @@ fn c3_harness_notices_a_rebuilt_stateful_module() {
 fn c3_null_clears_a_position_and_moves_are_absolute() {
     let (mut running, _pump) = start(&document(Some(layout_of(&[("osc", 1.0, 2.0)]))));
     let place = move_edit(json!({ "lfo": { "x": 5.0, "y": 6.0 } }));
-    running.apply_edits(&[place.clone()]).unwrap();
-    running.apply_edits(&[place]).unwrap();
+    running.apply_edits(std::slice::from_ref(&place)).unwrap();
+    running.apply_edits(std::slice::from_ref(&place)).unwrap();
     assert_eq!(position(&running, "lfo"), Some((5.0, 6.0)), "idempotent");
 
     running
