@@ -118,6 +118,29 @@ mod tests {
     }
 
     #[test]
+    fn saving_to_a_file_keeps_positions_and_adds_no_minimum_core() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("placed.json");
+        let document = Invention::from_json(PLACED).unwrap();
+        document.save_to_file(&path).unwrap();
+        let loaded = Invention::from_file(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.layout, document.layout);
+        assert_eq!(loaded.minimum_core_version, None);
+    }
+
+    #[test]
+    fn a_document_without_a_layout_saves_to_a_file_byte_identically() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = r#"{"modules":[{"id":"osc","type":"oscillator"}],"connections":[]}"#;
+        let document = Invention::from_json(json).unwrap();
+        let path = dir.path().join("plain.json");
+        document.save_to_file(&path).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(saved, format!("{}\n", document.to_json().unwrap()));
+        assert!(!saved.contains("layout"), "{saved}");
+    }
+
+    #[test]
     fn positions_save_in_id_order() {
         let saved = Invention::from_json(PLACED).unwrap().to_json().unwrap();
         let dac = saved.find("\"dac\": {\n").unwrap();
