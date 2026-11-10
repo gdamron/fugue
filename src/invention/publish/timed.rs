@@ -62,9 +62,10 @@ pub(crate) enum EditTime<'a> {
 const FOLLOWED_UP: [&str; 2] = ["code", "agent"];
 
 impl LiveGraph {
-    /// Takes the publisher, first catching the document up with the audio
-    /// thread: recording the authored writes it applied and adopting a
-    /// timed edit it landed, in order (see `publish::authored`), so
+    /// Takes the publisher, first catching up with the audio thread: taking
+    /// its timed edits' outcomes into the ledger (forgetting one it
+    /// refused), then recording the authored writes it applied and adopting
+    /// a timed edit it landed, in order (see `publish::authored`), so
     /// whatever is resolved under it sees the graph playing.
     pub(super) fn lock(&self) -> MutexGuard<'_, Publisher> {
         let mut publisher = self.publisher.lock().unwrap();
@@ -94,28 +95,19 @@ impl LiveGraph {
 
     /// Where timed edit `id` stands, if the ledger still remembers it.
     pub(crate) fn timed_status(&self, id: RequestId) -> Option<EditStatus> {
-        let mut publisher = self.lock();
-        self.sync_timed(&mut publisher);
-        publisher.ledger().status(id)
+        self.lock().ledger().status(id)
     }
 
     /// Every timed edit whose status changed since the last call, in the
     /// order they changed.
     pub(crate) fn take_timed_changes(&self) -> Vec<EditStatus> {
-        let mut publisher = self.lock();
-        self.sync_timed(&mut publisher);
-        publisher.ledger().take_changes()
+        self.lock().ledger().take_changes()
     }
 
     /// What adopting timed edit `id` committed (its built modules'
     /// handles), once it is adopted; taken once.
     pub(crate) fn take_timed_committed(&self, id: RequestId) -> Option<Committed> {
         self.lock().ledger().take_committed(id)
-    }
-
-    /// Takes the audio thread's outcomes for timed edits into the ledger.
-    fn sync_timed(&self, publisher: &mut Publisher) {
-        sync_ledger(publisher, &mut self.pending.lock().unwrap());
     }
 
     /// Cancels the timed edit waiting, if any, as the invention stops, or
@@ -354,7 +346,8 @@ pub(super) fn adopt_into(
 }
 
 /// Takes `pending`'s outcomes for timed edits into `publisher`'s ledger.
-fn sync_ledger(publisher: &mut Publisher, pending: &mut PendingLog) {
+/// The publisher stops waiting for an edit refused: it never lands.
+pub(super) fn sync_ledger(publisher: &mut Publisher, pending: &mut PendingLog) {
     let (outcomes, lost) = pending.take_timed();
     let waiting = publisher.timed_id();
     // Once the audio side has sent its last outcome (a render panicked),
@@ -362,15 +355,20 @@ fn sync_ledger(publisher: &mut Publisher, pending: &mut PendingLog) {
     // settles every edit it still knows, since an outcome lost before
     // may have cleared it from the log.
     let stranded = pending.ended() && publisher.timed_landed().is_none();
-    let ledger = publisher.ledger();
     for (id, outcome) in outcomes {
-        ledger.outcome(id, outcome);
+        let refused = matches!(outcome, Outcome::Refused(_));
+        publisher.ledger().outcome(id, outcome);
+        if refused {
+            publisher.timed_refused(id);
+        }
     }
     if lost {
-        ledger.lost(waiting);
+        publisher.ledger().lost(waiting);
     }
     if let Some(id) = waiting.filter(|_| stranded) {
-        ledger.outcome(id, Outcome::Refused(Refusal::Stopped));
+        let stopped = Outcome::Refused(Refusal::Stopped);
+        publisher.ledger().outcome(id, stopped);
+        publisher.timed_refused(id);
     }
 }
 

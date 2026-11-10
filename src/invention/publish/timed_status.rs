@@ -3,7 +3,7 @@
 //!
 //! The publisher keeps the ledger, under its lock: it queues, cancels and
 //! adopts edits itself, and takes the audio thread's outcomes from the
-//! request log when asked (see `LiveGraph::timed_status`). Bounded: the
+//! request log whenever it is taken (see `LiveGraph::lock`). Bounded: the
 //! oldest entry goes once [`LEDGER_CAPACITY`] are kept.
 
 use std::collections::VecDeque;
@@ -165,9 +165,11 @@ impl Ledger {
         self.touch(id);
     }
 
-    /// Records edit `id` cancelled by `cause`.
+    /// Records edit `id` cancelled by `cause`, unless it is known refused
+    /// or expired already: its publication not yet freed, the publisher may
+    /// still take it for waiting where it has not caught up.
     pub(crate) fn cancelled(&mut self, id: RequestId, cause: CancelCause) {
-        if let Some(status) = self.status_mut(id) {
+        if let Some(status) = self.status_mut(id).filter(|status| status.state.open()) {
             status.state = EditState::Cancelled(cause);
             self.touch(id);
         }
