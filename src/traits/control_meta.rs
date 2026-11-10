@@ -63,6 +63,13 @@ impl ControlMeta {
         self
     }
 
+    /// Marks a control as written only by its module (a status, a playhead):
+    /// it is listed read-only, and every write to it is refused.
+    pub fn read_only(mut self) -> Self {
+        self.read_only = true;
+        self
+    }
+
     /// Sets the default value for this control.
     pub fn with_default(mut self, default: impl Into<ControlValue>) -> Self {
         self.default = default.into();

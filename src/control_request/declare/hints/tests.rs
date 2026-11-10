@@ -198,3 +198,18 @@ fn a_value_only_its_module_writes_is_listed_read_only() {
     .unwrap();
     assert!(!older.read_only, "a listing from before reads as writable");
 }
+
+#[test]
+fn a_hand_built_reading_is_listed_read_only_and_refuses_writes() {
+    let step = ControlMeta::number("step", "Current step")
+        .with_range(-1.0, 64.0)
+        .read_only();
+    assert_eq!(
+        serde_json::to_value(&step).unwrap()["read_only"],
+        json!(true)
+    );
+    let listing = [step, ControlMeta::number("level", "Level")];
+    let refused = crate::traits::check_listed_control(&listing, "step", &3.0.into());
+    assert!(refused.unwrap_err().contains("read-only"));
+    assert!(crate::traits::check_listed_control(&listing, "level", &0.5.into()).is_ok());
+}

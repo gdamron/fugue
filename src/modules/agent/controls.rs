@@ -284,23 +284,29 @@ impl ControlSurface for AgentControls {
         vec![
             enabled,
             ControlMeta::string("status", "Current agent runtime status (read-only)")
-                .with_default(state.status),
+                .with_default(state.status)
+                .read_only(),
             ControlMeta::string("last_error", "Last agent runtime error (read-only)")
-                .with_default(state.last_error),
+                .with_default(state.last_error)
+                .read_only(),
             ControlMeta::string("prompt", "User prompt template").with_default(state.prompt),
             ControlMeta::string("system_prompt", "System prompt").with_default(state.system_prompt),
             ControlMeta::string("backend", "Agent backend").with_default(state.backend),
             ControlMeta::string("last_response", "Last raw agent response (read-only)")
-                .with_default(state.last_response),
+                .with_default(state.last_response)
+                .read_only(),
             ControlMeta::string(
                 "last_parsed_response",
                 "Last parsed JSON response (read-only)",
             )
-            .with_default(state.last_parsed_response),
+            .with_default(state.last_parsed_response)
+            .read_only(),
             ControlMeta::string("history", "Bounded request/response history (read-only)")
-                .with_default(state.history),
+                .with_default(state.history)
+                .read_only(),
             ControlMeta::string("last_apply_error", "Last graph apply error (read-only)")
-                .with_default(state.last_apply_error),
+                .with_default(state.last_apply_error)
+                .read_only(),
             request_count,
             cooldown,
             trigger,
@@ -443,6 +449,14 @@ mod tests {
             // The worker's writer still lands it.
             controls.set_telemetry(key, value.clone()).unwrap();
             assert_eq!(controls.get_control(key).unwrap(), value, "{key}");
+        }
+    }
+
+    #[test]
+    fn telemetry_is_listed_read_only() {
+        for meta in controls().controls() {
+            let telemetry = TELEMETRY.contains(&meta.key.as_str());
+            assert_eq!(meta.read_only, telemetry, "{}", meta.key);
         }
     }
 
