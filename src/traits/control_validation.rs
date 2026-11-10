@@ -12,8 +12,8 @@ pub type ControlSurfaceMap = IndexMap<String, Arc<dyn ControlSurface + Send + Sy
 
 /// Checks `value` against the kind `key` declares in `controls`: an unlisted
 /// key is unknown, a read-only one is refused, and the value must be of the
-/// declared kind, with numbers finite. String options are left to the surface, whose setter may accept
-/// aliases.
+/// declared kind, with numbers finite. String options are left to the
+/// surface, whose setter may accept aliases.
 pub(crate) fn check_listed_control(
     controls: &[ControlMeta],
     key: &str,
