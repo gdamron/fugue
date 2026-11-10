@@ -213,3 +213,24 @@ fn a_hand_built_reading_is_listed_read_only_and_refuses_writes() {
     assert!(refused.unwrap_err().contains("read-only"));
     assert!(crate::traits::check_listed_control(&listing, "level", &0.5.into()).is_ok());
 }
+
+#[test]
+fn a_one_shot_is_listed_as_an_event() {
+    let reset = ControlDecl::new("reset", DeclKind::Bool, RtValue::Bool(false), "Reset").event();
+    let flag = ControlDecl::new("on", DeclKind::Bool, RtValue::Bool(true), "On");
+    let table = ControlTable::built(vec![reset, flag]).unwrap();
+    let metas = table.metas(|_| None);
+    let wire = |meta: &ControlMeta| serde_json::to_value(meta).unwrap();
+    assert!(metas[0].event);
+    assert_eq!(wire(&metas[0])["event"], json!(true));
+    assert!(!metas[1].event);
+    assert!(
+        wire(&metas[1]).get("event").is_none(),
+        "a state keeps its wire form"
+    );
+    let older: ControlMeta = serde_json::from_value(json!({
+        "key": "on", "description": "On", "default": true, "kind": "Bool",
+    }))
+    .unwrap();
+    assert!(!older.event, "a listing from before reads as a state");
+}

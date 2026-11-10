@@ -165,6 +165,7 @@ pub enum ControlKind {
 ///     default: ControlValue::Number(0.01),
 ///     kind: ControlKind::Number { min: 0.0, max: 10.0, hints: NumberHints::default() },
 ///     read_only: false,
+///     event: false,
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -183,6 +184,11 @@ pub struct ControlMeta {
     /// write is refused.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub read_only: bool,
+    /// Whether it is a one-shot (a reset, a trigger): a write fires it
+    /// rather than setting a state, so editors never show it as a switch
+    /// that holds a value.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub event: bool,
 }
 
 /// Shared runtime control surface for a module.

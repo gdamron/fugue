@@ -461,6 +461,14 @@ mod tests {
     }
 
     #[test]
+    fn trigger_and_reset_are_listed_as_events() {
+        for meta in controls().controls() {
+            let one_shot = matches!(meta.key.as_str(), "trigger" | "reset");
+            assert_eq!(meta.event, one_shot, "{}", meta.key);
+        }
+    }
+
+    #[test]
     fn telemetry_writer_refuses_parameters() {
         let controls = controls();
         for (key, value) in [
