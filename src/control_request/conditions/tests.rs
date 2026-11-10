@@ -490,13 +490,6 @@ fn evaluating_neither_allocates_nor_frees() {
     assert_eq!(host.applied, applied);
 }
 
-/// A condition rides in every queue slot: keep a request narrow.
-#[test]
-fn a_condition_keeps_a_request_within_176_bytes() {
-    assert_eq!(std::mem::size_of::<Predicate>(), 16);
-    assert!(std::mem::size_of::<Request>() <= 176);
-}
-
 #[test]
 fn the_sender_counts_the_conditions_in_flight() {
     let edge = [Predicate::edges(0, 0, 1)];

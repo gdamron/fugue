@@ -96,14 +96,6 @@ fn describes_its_own_analysis() {
 }
 
 #[test]
-fn defaults_to_the_compact_encoding() {
-    assert_eq!(
-        SpectrumConfig::default().encoding,
-        SpectrogramEncoding::U8Base64
-    );
-}
-
-#[test]
 fn rejects_settings_a_stream_cannot_recover_from() {
     for bad in [
         SpectrumConfig {

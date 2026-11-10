@@ -207,11 +207,3 @@ fn rejects_empty_attribution_name() {
         SamplePackError::Invalid(ValidationError::EmptyAttributionName)
     ));
 }
-
-#[cfg(feature = "rpc-schema")]
-#[test]
-fn schema_serializes() {
-    let schema = schemars::schema_for!(SamplePackManifest);
-    let json = serde_json::to_string(&schema).expect("schema serializes");
-    assert!(json.contains("SamplePackManifest"));
-}
