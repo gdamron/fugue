@@ -27,7 +27,10 @@ fn placed(running: &RunningInvention) -> BTreeMap<String, Position> {
 fn moving_modules_changes_the_document_alone() {
     let (mut moved, moved_pump) = start(BASE);
     let (_control, control_pump) = start(BASE);
-    assert_eq!(moved_pump.render(200), control_pump.render(200));
+    assert_eq!(
+        moved_pump.render_stereo(200),
+        control_pump.render_stereo(200)
+    );
     let before = observe(&moved);
     let published = publications(&moved);
     let events = Events::listen(&moved);
@@ -48,9 +51,12 @@ fn moving_modules_changes_the_document_alone() {
     // Nothing published, nothing announced, nothing heard.
     assert_eq!(publications(&moved), published);
     assert_eq!(events.count(), 0);
-    let heard = control_pump.render(300);
-    assert!(heard.iter().any(|sample| sample.abs() > 0.01), "silent");
-    assert_eq!(moved_pump.render(300), heard);
+    let heard = control_pump.render_stereo(300);
+    let (left, right) = (&heard.0, &heard.1);
+    for channel in [left, right] {
+        assert!(channel.iter().any(|sample| sample.abs() > 0.01), "silent");
+    }
+    assert_eq!(moved_pump.render_stereo(300), heard);
     let after = observe(&moved);
     assert_eq!(after.modules, before.modules);
     assert_eq!(after.connections, before.connections);
@@ -117,6 +123,10 @@ fn a_module_removed_earlier_in_the_batch_cannot_be_moved() {
 #[test]
 fn a_move_with_no_position_or_a_non_finite_one_is_refused() {
     let (mut running, _pump) = start(BASE);
+    running
+        .apply_edits(&[moves(&[("osc1", at(1.0, 2.0))])])
+        .unwrap();
+    let before = observe(&running);
     let non_finite = [
         (f64::NAN, 0.0),
         (0.0, f64::NAN),
@@ -129,8 +139,9 @@ fn a_move_with_no_position_or_a_non_finite_one_is_refused() {
         assert_eq!(error.code, RpcErrorCode::InvalidEdit);
         let edit = error.edit.expect("an edit detail");
         assert_eq!(edit.reason, EditFailureReason::InvalidPosition);
+        assert_eq!(observe(&running), before, "the refusal changed nothing");
+        assert_eq!(placed(&running)["osc1"], Position { x: 1.0, y: 2.0 });
     }
-    assert!(placed(&running).is_empty());
 }
 
 #[test]
@@ -142,17 +153,14 @@ fn a_move_places_at_most_the_limit_and_refuses_one_more_with_nothing_changed() {
         .collect();
     let document = json!({ "version": "1.0.0", "modules": modules, "connections": [] });
     let (mut running, _pump) = start(&document.to_string());
-    let first = |count: usize| {
-        let positions: Vec<(String, Option<Position>)> = (0..count)
+    let moving_first = |count: usize| StructuralEdit::MoveModules {
+        positions: (0..count)
             .map(|i| (format!("m{i}"), at(i as f64, -(i as f64))))
-            .collect();
-        StructuralEdit::MoveModules {
-            positions: positions.into_iter().collect(),
-        }
+            .collect(),
     };
 
     // Every id exists, so the only fault is the count.
-    let error = running.apply_edits(&[first(count)]).unwrap_err();
+    let error = running.apply_edits(&[moving_first(count)]).unwrap_err();
     assert_eq!(error.code, RpcErrorCode::InvalidEdit);
     let edit = error.edit.expect("an edit detail");
     assert_eq!(
@@ -161,7 +169,9 @@ fn a_move_places_at_most_the_limit_and_refuses_one_more_with_nothing_changed() {
     );
     assert!(placed(&running).is_empty(), "the refusal changed nothing");
 
-    running.apply_edits(&[first(MAX_MOVES_PER_EDIT)]).unwrap();
+    running
+        .apply_edits(&[moving_first(MAX_MOVES_PER_EDIT)])
+        .unwrap();
     let layout = placed(&running);
     assert_eq!(layout.len(), MAX_MOVES_PER_EDIT);
     assert_eq!(
