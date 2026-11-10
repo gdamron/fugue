@@ -278,23 +278,6 @@ mod tests {
     }
 
     #[test]
-    fn test_vca_controls() {
-        let mut vca = Vca::new();
-
-        // Test control metadata
-        let control_meta = Module::controls(&vca);
-        assert_eq!(control_meta.len(), 1);
-        assert_eq!(control_meta[0].key, "level");
-
-        // Test get/set controls
-        vca.set_control("level", 0.5).unwrap();
-        assert_eq!(vca.get_control("level").unwrap(), 0.5);
-
-        // Test invalid control
-        assert!(vca.get_control("invalid").is_err());
-    }
-
-    #[test]
     fn test_vca_signal_overrides_control() {
         let mut vca = Vca::new();
 

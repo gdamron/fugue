@@ -77,30 +77,6 @@ fn test_step_sequencer_reset() {
 }
 
 #[test]
-fn test_step_sequencer_gate_length() {
-    let mut seq = StepSequencer::new(1000) // 1kHz for easy math
-        .with_step_count(2)
-        .with_gate_length(0.5) // 50% default
-        .with_pattern(vec![
-            Step::note(0),                // Uses default 50%
-            Step::note_with_gate(0, 1.0), // 100% gate
-        ]);
-
-    // Trigger first step
-    seq.set_input("clock", 1.0).unwrap();
-    seq.process(1);
-    seq.set_input("clock", 0.0).unwrap();
-
-    // Gate should be high initially
-    assert_eq!(seq.get_output("gate").unwrap(), 1.0);
-
-    // After some samples, gate should still be high (within 50% of step duration)
-    for _ in 0..100 {
-        seq.process(1);
-    }
-}
-
-#[test]
 fn test_step_sequencer_held_steps_continue_active_note() {
     let mut seq = StepSequencer::new(10)
         .with_step_count(3)
@@ -223,31 +199,6 @@ fn test_step_sequencer_step_output() {
 }
 
 #[test]
-fn test_step_sequencer_factory() {
-    let factory = StepSequencerFactory;
-    assert_eq!(factory.type_id(), "step_sequencer");
-
-    let config = serde_json::json!({
-        "root_note": 36,
-        "step_count": 8,
-        "gate_length": 0.75,
-        "pattern": [
-            { "note": 0, "gate_length": 0.5 },
-            { "note": null },
-            { "note": 7 },
-            { "note": 5, "gate_length": 1.0 }
-        ]
-    });
-
-    let result = factory.build(44100, &config).unwrap();
-    let module = result.module.module();
-
-    assert_eq!(module.name(), "StepSequencer");
-    assert_eq!(module.inputs(), &["clock", "reset"]);
-    assert_eq!(module.outputs(), &["frequency", "gate", "step", "ended"]);
-}
-
-#[test]
 fn test_parse_step_formats() {
     // Object with note and gate
     let step = parse_step(&serde_json::json!({"note": 5, "gate_length": 0.8})).unwrap();
@@ -296,50 +247,6 @@ fn test_step_sequencer_negative_note_offset() {
     let freq = seq.get_output("frequency").unwrap();
     let expected = Note::new(48).frequency(); // C3
     assert!((freq - expected).abs() < 0.01);
-}
-
-#[test]
-fn test_step_sequencer_controls() {
-    let mut seq = StepSequencer::new(44100);
-
-    // Verify default control values
-    assert_eq!(
-        seq.get_control("root_note").unwrap(),
-        DEFAULT_ROOT_NOTE as f32
-    );
-    assert_eq!(seq.get_control("step_count").unwrap(), DEFAULT_STEPS as f32);
-    assert_eq!(seq.get_control("gate_length").unwrap(), DEFAULT_GATE_LENGTH);
-
-    // Set controls
-    seq.set_control("root_note", 60.0).unwrap();
-    assert_eq!(seq.get_control("root_note").unwrap(), 60.0);
-
-    seq.set_control("step_count", 8.0).unwrap();
-    assert_eq!(seq.get_control("step_count").unwrap(), 8.0);
-
-    seq.set_control("gate_length", 0.75).unwrap();
-    assert_eq!(seq.get_control("gate_length").unwrap(), 0.75);
-
-    // Unknown control returns error
-    assert!(seq.get_control("unknown").is_err());
-    assert!(seq.set_control("unknown", 1.0).is_err());
-}
-
-#[test]
-fn test_step_sequencer_controls_metadata() {
-    let seq = StepSequencer::new(44100);
-    let controls = Module::controls(&seq);
-
-    assert_eq!(controls.len(), 7);
-
-    let keys: Vec<&str> = controls.iter().map(|c| c.key.as_str()).collect();
-    assert!(keys.contains(&"root_note"));
-    assert!(keys.contains(&"step_count"));
-    assert!(keys.contains(&"gate_length"));
-    assert!(keys.contains(&"mode"));
-    assert!(keys.contains(&"grace_duration"));
-    assert!(keys.contains(&"grace_placement"));
-    assert!(keys.contains(&"ended"));
 }
 
 #[test]

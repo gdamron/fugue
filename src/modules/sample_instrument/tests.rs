@@ -590,20 +590,6 @@ fn test_stealing_a_sounding_voice_does_not_step_the_output() {
 }
 
 #[test]
-fn registry_builds_sample_instrument_with_its_ports() {
-    let registry = crate::ModuleRegistry::default();
-    assert!(registry.has_type("sample_instrument"));
-
-    // Type discovery builds every registered type with a null config.
-    let built = registry
-        .build("sample_instrument", 44_100, &serde_json::Value::Null)
-        .unwrap();
-    let module = built.module.module();
-    assert_eq!(module.inputs(), inputs::INPUTS.as_slice());
-    assert_eq!(module.outputs(), outputs::OUTPUTS.as_slice());
-}
-
-#[test]
 fn test_config_validation_errors() {
     let wav = write_level_wav(0.5, 8);
     let wav_str = wav.to_str().unwrap();

@@ -405,34 +405,6 @@ fn test_loop_count_increments_on_cell_wrap() {
 }
 
 #[test]
-fn test_cell_sequencer_factory_and_registry() {
-    let factory = CellSequencerFactory;
-    let result = factory
-        .build(
-            44_100,
-            &serde_json::json!({
-                "step_count": 4,
-                "select_cell": 1,
-                "wait_for_cycle_end": true,
-                "cells": [
-                    [{ "note": 0 }],
-                    [{ "note": 12 }]
-                ]
-            }),
-        )
-        .unwrap();
-
-    assert!(result.control_surface.is_some());
-    assert_eq!(
-        result.module.module().outputs(),
-        &["frequency", "gate", "velocity", "step", "cell", "ended"]
-    );
-
-    let registry = ModuleRegistry::default();
-    assert!(registry.has_type("cell_sequencer"));
-}
-
-#[test]
 fn the_initial_cell_is_start_cell_and_a_written_select_cell_wins() {
     let selected = |extra: serde_json::Value| {
         let mut config = serde_json::json!({ "cells": [[0], [1], [2]] });

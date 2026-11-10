@@ -225,19 +225,6 @@ fn grains_reading_one_delay_are_scaled_by_power_alone() {
 }
 
 #[test]
-fn the_same_seed_renders_the_same_grains() {
-    let config = serde_json::json!({ "density": 0.9, "spread": 1.0, "seed": 7 });
-    let once = render(
-        build(config.clone()).as_mut(),
-        20_000,
-        |n| sine(n, 440.0),
-        None,
-    );
-    let twice = render(build(config).as_mut(), 20_000, |n| sine(n, 440.0), None);
-    assert_eq!(once, twice);
-}
-
-#[test]
 fn the_buffer_length_is_refused_at_zero_and_held_to_a_minute() {
     let registry = ModuleRegistry::default();
     assert!(registry

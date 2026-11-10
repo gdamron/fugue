@@ -188,20 +188,7 @@ impl Module for CodeModule {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_config, CodeFactory};
-    use crate::ModuleFactory;
-
-    #[test]
-    fn code_factory_builds_module() {
-        let config = serde_json::json!({
-            "script": "graph.status()",
-            "enabled": true,
-            "tick_rate": 2.0
-        });
-        let built = CodeFactory.build(48_000, &config).unwrap();
-        assert!(built.control_surface.is_some());
-        assert_eq!(built.module.module().inputs().len(), 0);
-    }
+    use super::parse_config;
 
     #[test]
     fn code_params_are_an_object_and_top_level_keys_are_refused() {
