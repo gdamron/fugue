@@ -346,6 +346,20 @@ fn a_landing_sample_after_adoption_is_not_announced_again() {
     assert_eq!((read.state, read.sample), (EditState::Adopted, Some(4_096)));
 }
 
+/// A cancel reaching an edit already known expired, its publication not
+/// yet freed, leaves it reported expired.
+#[test]
+fn an_expired_edit_is_never_reported_cancelled() {
+    use crate::control_request::{Outcome, Refusal};
+    use crate::invention::publish::timed_status::Ledger;
+    let mut ledger = Ledger::default();
+    let id = RequestId(7);
+    ledger.queued(id, None, None);
+    ledger.outcome(id, Outcome::Refused(Refusal::Expired));
+    ledger.cancelled(id, CancelCause::Commit);
+    assert_eq!(ledger.status(id).unwrap().state, EditState::Expired);
+}
+
 /// An untimed change published between an authored write and its
 /// applying leaves the write to be recorded as it applies.
 #[test]

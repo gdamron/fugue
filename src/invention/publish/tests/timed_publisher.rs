@@ -7,6 +7,8 @@ use super::request_beats::{outcomes_of, render_counted};
 use super::*;
 use crate::control_request::{Outcome, Refusal, RequestId, When};
 use crate::invention::publish::publisher::{EDIT_RESERVE, REQUEST_QUEUE_CAPACITY, RESERVED_ROOM};
+use crate::invention::publish::timed::EditTime;
+use crate::invention::publish::EditState;
 
 /// Queues `prepared` to land `when`, refused once `ttl` samples pass.
 fn time(rig: &Rig, prepared: PreparedChange, when: When, ttl: Option<u64>) -> RequestId {
@@ -170,6 +172,39 @@ fn an_edit_that_expires_is_forgotten() {
     assert!(!waiting(&publisher), "forgotten, the flag too");
     drop(publisher);
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac"]);
+}
+
+/// The audio side may hold a refused edit's publication back after sending
+/// the refusal, so its fate settles only later, as the reclaimer frees it.
+/// Rendering here never reclaims, so the publication stays unfreed: the
+/// next timed edit is queued all the same, the refusal having said the
+/// first never lands.
+#[test]
+fn an_expired_edit_stops_waiting_before_its_publication_is_freed() {
+    let mut rig = Rig::new(BASE);
+    rig.render(1);
+    let at = rig.graph.current_sample + 64 * 4;
+    let time_at = EditTime::AtSample(at);
+    let prepared = removing(&rig, "osc2");
+    let id = rig.live.commit_when(prepared, time_at, Some(0), |_| {});
+    let id = id.expect("queued");
+    rig.render(2);
+
+    // Any call taking the publisher catches up with the refusal.
+    rig.live.adopt_landed();
+    assert!(!rig.live.publisher().lock().unwrap().timed_waiting());
+    assert_eq!(rig.live.timed_status(id).unwrap().state, EditState::Expired);
+    let next = time(&rig, removing(&rig, "osc1"), When::AtSample(at), None);
+
+    // Freeing the first publication now leaves the second waiting.
+    rig.live.reclaim();
+    let mut publisher = rig.live.publisher().lock().unwrap();
+    assert!(publisher.adopt().is_none());
+    assert_eq!(publisher.timed_id(), Some(next));
+    assert!(waiting(&publisher));
+    drop(publisher);
+    render_counted(&mut rig, 6);
+    assert_eq!(rig.module_ids(), ["osc2", "dac"]);
 }
 
 #[test]

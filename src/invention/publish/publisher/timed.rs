@@ -207,6 +207,23 @@ impl Publisher {
         })
     }
 
+    /// Forgets timed edit `id` if it is the one waiting: the audio thread
+    /// refused it (expired, say), so it never lands. Its fate settles only
+    /// once its publication is freed, which the audio side may hold back
+    /// after sending the refusal, and the next timed edit is not refused
+    /// for one already known gone. Nothing when another waits, or it landed.
+    pub(crate) fn timed_refused(&mut self, id: RequestId) {
+        let gone = self.timed.as_ref().is_some_and(|waiting| {
+            // The audio thread refuses only what it did not land, but a
+            // render that panicked settles every edit stopped, one that
+            // landed included: that one is still to adopt.
+            waiting.id == id && waiting.fate.settled() != Some(true)
+        });
+        if gone {
+            self.set_timed(None);
+        }
+    }
+
     /// Whether the timed edit waiting, if any, races a payload write to
     /// `module_id` resolved against the graph that is playing to write
     /// `targets` (a schedule): it re-resolved the schedule the write

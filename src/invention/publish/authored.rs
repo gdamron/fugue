@@ -24,7 +24,7 @@ use std::sync::{Mutex, PoisonError};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
-use super::timed::adopt_into;
+use super::timed::{adopt_into, sync_ledger};
 use super::timed_status::{CancelCause, Touched};
 use super::{Authoring, DocumentStep, LiveGraph, Mirrors, PendingLog, PreparedChange, Publisher};
 use crate::control_request::RequestId;
@@ -122,19 +122,22 @@ impl LiveGraph {
     }
 }
 
-/// Takes every step the pending log lists, in order, then adopts a timed
-/// edit that has landed since (its outcome not yet received, so every
-/// write listed applied before it).
+/// Takes the timed edits' outcomes into the ledger, then every step the
+/// pending log lists, in order, then adopts a timed edit that has landed
+/// since (its outcome not yet received, so every write listed applied
+/// before it).
 pub(super) fn catch_up(
     publisher: &mut Publisher,
     pending: &Mutex<PendingLog>,
     mirrors: Mirrors<'_>,
 ) {
-    let steps = pending
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .take_steps();
-    let mut steps = steps;
+    let mut steps = {
+        let mut pending = pending.lock().unwrap_or_else(PoisonError::into_inner);
+        // The audio thread's outcomes for timed edits first, so an edit it
+        // refused waits no longer, whenever its publication is freed.
+        sync_ledger(publisher, &mut pending);
+        pending.take_steps()
+    };
     while let Some(step) = steps.pop_front() {
         match step {
             DocumentStep::Authored {
