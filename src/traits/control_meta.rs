@@ -19,6 +19,7 @@ impl ControlMeta {
                 max: 1.0,
                 hints: NumberHints::default(),
             },
+            read_only: false,
         }
     }
 
@@ -62,6 +63,13 @@ impl ControlMeta {
         self
     }
 
+    /// Marks a control as written only by its module (a status, a playhead):
+    /// it is listed read-only, and every write to it is refused.
+    pub fn read_only(mut self) -> Self {
+        self.read_only = true;
+        self
+    }
+
     /// Sets the default value for this control.
     pub fn with_default(mut self, default: impl Into<ControlValue>) -> Self {
         self.default = default.into();
@@ -75,6 +83,7 @@ impl ControlMeta {
             description: description.into(),
             default: ControlValue::Bool(default),
             kind: ControlKind::Bool,
+            read_only: false,
         }
     }
 
@@ -85,6 +94,7 @@ impl ControlMeta {
             description: description.into(),
             default: ControlValue::String(String::new()),
             kind: ControlKind::String { options: None },
+            read_only: false,
         }
     }
 

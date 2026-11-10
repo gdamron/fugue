@@ -160,6 +160,17 @@ fn reset_rearms_the_schedule() {
 }
 
 #[test]
+fn the_step_is_listed_read_only() {
+    let (module, _mixer, _dir) = setup("[]");
+    let listed = crate::traits::ControlSurface::controls(module.controls());
+    let read_only: Vec<(&str, bool)> = listed
+        .iter()
+        .map(|meta| (meta.key.as_str(), meta.read_only))
+        .collect();
+    assert_eq!(read_only, [("schedule", false), ("step", true)]);
+}
+
+#[test]
 fn schedule_replaced_during_playback_skips_past_entries() {
     let (mut module, mixer, _dir) = setup("[]");
     let ctrl = module.controls().clone();

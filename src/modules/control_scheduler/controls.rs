@@ -404,7 +404,8 @@ impl ControlSurface for ControlSchedulerControls {
                 "Read-only: current step index (-1 before the first clock edge)",
             )
             .with_range(-1.0, f32::MAX)
-            .with_default(self.step() as f32),
+            .with_default(self.step() as f32)
+            .read_only(),
         ]
     }
 

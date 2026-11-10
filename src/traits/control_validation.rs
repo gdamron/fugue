@@ -11,9 +11,9 @@ use super::{ControlKind, ControlMeta, ControlSurface, ControlValue};
 pub type ControlSurfaceMap = IndexMap<String, Arc<dyn ControlSurface + Send + Sync>>;
 
 /// Checks `value` against the kind `key` declares in `controls`: an unlisted
-/// key is unknown, and the value must be of the declared kind, with numbers
-/// finite. String options are left to the surface, whose setter may accept
-/// aliases.
+/// key is unknown, a read-only one is refused, and the value must be of the
+/// declared kind, with numbers finite. String options are left to the
+/// surface, whose setter may accept aliases.
 pub(crate) fn check_listed_control(
     controls: &[ControlMeta],
     key: &str,
@@ -23,6 +23,9 @@ pub(crate) fn check_listed_control(
         .iter()
         .find(|meta| meta.key == key)
         .ok_or_else(|| format!("Unknown control: {}", key))?;
+    if meta.read_only {
+        return read_only(key);
+    }
     match (&meta.kind, value) {
         (ControlKind::Number { .. }, ControlValue::Number(number)) => check_finite(key, *number),
         (ControlKind::Number { .. }, _) => value.as_number().map(drop),

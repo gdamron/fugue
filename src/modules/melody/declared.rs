@@ -43,7 +43,8 @@ const DECLS: &[ControlDecl] = &[
         "Root MIDI note number",
     )
     .clamped(0.0, 127.0)
-    .whole(),
+    .whole()
+    .note(),
     ControlDecl::new(
         "degree_count",
         DeclKind::Number {

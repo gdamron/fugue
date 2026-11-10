@@ -20,7 +20,7 @@ use super::request::{ControlIndex, RtValue};
 use crate::module_config::{whole_number_in, ConfigKind};
 use crate::payload::Payload;
 use crate::traits::check_finite;
-use crate::{ControlKind, ControlMeta, ControlScale, ControlValue};
+use crate::{ControlKind, ControlMeta, ControlScale, ControlValue, NumberFormat};
 
 mod bounds;
 mod hints;
@@ -201,6 +201,8 @@ pub(crate) struct ControlDecl {
     pub(crate) step: Option<f32>,
     /// Decimal places a number shows, when not the editor's own.
     pub(crate) precision: Option<u8>,
+    /// What a number stands for, when an editor can name it (a note).
+    pub(crate) format: Option<NumberFormat>,
     /// The value a module starts from when its config leaves it out.
     pub(crate) default: RtValue,
     pub(crate) writer: Writer,
@@ -246,6 +248,7 @@ impl ControlDecl {
             scale: None,
             step: None,
             precision: None,
+            format: None,
             default,
             writer: Writer::Parameter,
             description: Cow::Borrowed(description),
@@ -558,6 +561,7 @@ impl ControlTable {
                     description: decl.description.to_string(),
                     default,
                     kind,
+                    read_only: decl.writer == Writer::Telemetry,
                 })
             })
             .collect()

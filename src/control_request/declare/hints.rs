@@ -5,7 +5,7 @@
 //! control steps by 1 and shows no decimals unless it declares otherwise.
 
 use super::{ControlDecl, DeclKind};
-use crate::{ControlScale, NumberHints};
+use crate::{ControlScale, NumberFormat, NumberHints};
 
 impl ControlDecl {
     /// The unit a number is in (`"Hz"`, `"s"`, `"BPM"`).
@@ -33,14 +33,22 @@ impl ControlDecl {
         self
     }
 
-    /// The hints clients list for it.
+    /// Marks a number as a MIDI note, which editors may show by its name.
+    pub(crate) const fn note(mut self) -> Self {
+        self.format = Some(NumberFormat::Note);
+        self
+    }
+
+    /// The hints clients list for it. A whole number, an integer or a
+    /// number its module truncates, steps by 1 and shows no decimals.
     pub(super) fn hints(&self) -> NumberHints {
-        let whole = matches!(self.kind, DeclKind::Integer { .. });
+        let whole = self.whole || matches!(self.kind, DeclKind::Integer { .. });
         NumberHints {
             unit: (!self.unit.is_empty()).then(|| self.unit.to_string()),
             scale: self.scale,
             step: self.step.or(whole.then_some(1.0)),
             precision: self.precision.or(whole.then_some(0)),
+            format: self.format,
         }
     }
 }
@@ -52,7 +60,8 @@ pub(super) const fn invalid(decl: &ControlDecl) -> Option<&'static str> {
     let hinted = !decl.unit.is_empty()
         || decl.scale.is_some()
         || decl.step.is_some()
-        || decl.precision.is_some();
+        || decl.precision.is_some()
+        || decl.format.is_some();
     let lowest = match decl.kind {
         DeclKind::Number { min, .. } => min,
         DeclKind::Integer { min, .. } => min as f32,

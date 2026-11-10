@@ -207,6 +207,7 @@ fn table(zones: usize) -> ControlTable {
             RtValue::I32(0),
             "Zone root note (fixed at build time)",
         )
+        .note()
         .telemetry()
         .indexed(count),
         ControlDecl::payload(

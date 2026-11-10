@@ -19,7 +19,7 @@ mod control_validation;
 pub(crate) mod exact_number;
 mod feedback_cut;
 
-pub use control_hints::{ControlScale, NumberHints};
+pub use control_hints::{ControlScale, NumberFormat, NumberHints};
 pub use control_validation::ControlSurfaceMap;
 pub(crate) use control_validation::{check_finite, check_listed_control, read_only};
 pub use feedback_cut::FeedbackCut;
@@ -164,6 +164,7 @@ pub enum ControlKind {
 ///     description: "Attack time in seconds".to_string(),
 ///     default: ControlValue::Number(0.01),
 ///     kind: ControlKind::Number { min: 0.0, max: 10.0, hints: NumberHints::default() },
+///     read_only: false,
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -177,6 +178,11 @@ pub struct ControlMeta {
     pub default: ControlValue,
     /// Value constraints and editor hints
     pub kind: ControlKind,
+    /// Whether only the module writes it, as it plays (a clock's position):
+    /// editors show its value rather than offer to change it, and every
+    /// write is refused.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
 }
 
 /// Shared runtime control surface for a module.

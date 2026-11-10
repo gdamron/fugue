@@ -31,7 +31,8 @@ const DECLS: &[ControlDecl] = &[
         RtValue::I32(DEFAULT_ROOT_NOTE as i32),
         "Root MIDI note",
     )
-    .clamped(0.0, 127.0),
+    .clamped(0.0, 127.0)
+    .note(),
     ControlDecl::new(
         "step_count",
         DeclKind::Integer {

@@ -109,7 +109,12 @@ editor hints, and whether a write is an event.
 - **Each control has one writer class** (`Writer`): a *parameter* is
   written by requests; *telemetry* is written only by the module's own
   `process()` (or the one host thread that runs it, as for an agent's
-  worker) and refuses every external write as read-only.
+  worker) and refuses every external write as read-only. A listing marks
+  it `read_only: true`, so a client shows it as a reading, not a slider.
+- **A number lists how it reads.** Besides its unit, scale, step and
+  precision, a `.whole()` number lists step 1 and no decimals, and a
+  `.note()` lists `format: "note"`, so a client shows a MIDI note as
+  "C4".
 - **Events never coalesce.** Two triggers at one sample are two events.
   Automation, a scheduler's writes from the audio thread, is the
   exception. It keeps one write per control per block, so a schedule

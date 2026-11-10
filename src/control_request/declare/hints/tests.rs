@@ -38,6 +38,7 @@ fn a_declared_number_lists_its_hints() {
             scale: Some(ControlScale::Log),
             step: Some(1.0),
             precision: Some(1),
+            format: None,
         }
     );
 }
@@ -132,4 +133,83 @@ fn hint_builders_leave_other_kinds_alone() {
         panic!("a number");
     };
     assert_eq!(hints.unit.as_deref(), Some("Hz"), "a range keeps its hints");
+}
+
+#[test]
+fn a_number_its_module_truncates_shows_as_a_whole_number() {
+    let count = ControlDecl::new(
+        "degree_count",
+        DeclKind::Number { min: 1.0, max: 8.0 },
+        RtValue::F32(7.0),
+        "Scale degrees",
+    )
+    .whole();
+    let ControlKind::Number { hints, .. } = listed(count) else {
+        panic!("a number");
+    };
+    assert_eq!((hints.step, hints.precision), (Some(1.0), Some(0)));
+}
+
+#[test]
+fn a_note_lists_its_format_on_the_wire() {
+    let root = ControlDecl::new(
+        "root_note",
+        DeclKind::Integer { min: 0, max: 127 },
+        RtValue::I32(60),
+        "Root MIDI note",
+    )
+    .note();
+    let table = ControlTable::built(vec![root]).unwrap();
+    let meta = table.metas(|_| None).remove(0);
+    assert_eq!(
+        serde_json::to_value(&meta).unwrap()["kind"]["Number"]["hints"],
+        json!({"step": 1.0, "precision": 0, "format": "note"})
+    );
+    let flag = ControlDecl::new("on", DeclKind::Bool, RtValue::Bool(true), "On");
+    assert!(
+        ControlTable::built(vec![flag.note()]).is_err(),
+        "only a number is a note"
+    );
+}
+
+#[test]
+fn a_value_only_its_module_writes_is_listed_read_only() {
+    let position = ControlDecl::new(
+        "position",
+        DeclKind::Number { min: 0.0, max: 1e9 },
+        RtValue::F32(0.0),
+        "Beats played",
+    )
+    .telemetry();
+    let table = ControlTable::built(vec![position, frequency()]).unwrap();
+    let metas = table.metas(|_| None);
+    let wire = |meta: &ControlMeta| serde_json::to_value(meta).unwrap();
+    assert!(metas[0].read_only);
+    assert_eq!(wire(&metas[0])["read_only"], json!(true));
+    assert!(!metas[1].read_only);
+    assert!(
+        wire(&metas[1]).get("read_only").is_none(),
+        "a control a person may change keeps its wire form"
+    );
+    let older: ControlMeta = serde_json::from_value(json!({
+        "key": "level", "description": "Level", "default": 0.5,
+        "kind": {"Number": {"min": 0, "max": 1}},
+    }))
+    .unwrap();
+    assert!(!older.read_only, "a listing from before reads as writable");
+}
+
+#[test]
+fn a_hand_built_reading_is_listed_read_only_and_refuses_writes() {
+    let step = ControlMeta::number("step", "Current step")
+        .with_range(-1.0, 64.0)
+        .read_only();
+    assert_eq!(
+        serde_json::to_value(&step).unwrap()["read_only"],
+        json!(true)
+    );
+    let listing = [step, ControlMeta::number("level", "Level")];
+    let refused = crate::traits::check_listed_control(&listing, "step", &3.0.into());
+    assert!(refused.unwrap_err().contains("read-only"));
+    assert!(crate::traits::check_listed_control(&listing, "level", &0.5.into()).is_ok());
 }

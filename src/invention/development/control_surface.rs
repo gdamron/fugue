@@ -84,6 +84,7 @@ impl DevelopmentControlSurface {
                     description: source.description,
                     default: super::ranges::held(source.default, range),
                     kind: super::ranges::listed(source.kind, range),
+                    read_only: source.read_only,
                 },
                 module_id: control.module.clone(),
                 key: control.control.clone(),
