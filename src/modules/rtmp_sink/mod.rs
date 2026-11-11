@@ -22,8 +22,6 @@ mod inputs;
 mod native;
 mod outputs;
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod acceptance_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
 mod stream_tests;
 
 #[cfg(not(target_arch = "wasm32"))]

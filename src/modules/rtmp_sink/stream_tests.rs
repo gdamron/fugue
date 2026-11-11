@@ -130,6 +130,21 @@ fn stopping_sink_adds_no_frames_to_the_stream() {
 }
 
 #[test]
+fn a_stream_told_to_stop_takes_no_more_frames_from_the_sink() {
+    let (mut sink, handle, stream, fake) = sink(false);
+    process_block(&mut sink, &[0.5; 64], &[0.5; 64]);
+    stream.stop();
+    assert!(stream.is_stopping());
+
+    process_block(&mut sink, &[0.5; 64], &[0.5; 64]);
+    process_block(&mut sink, &[0.5; 64], &[0.5; 64]);
+    handle.finish();
+
+    assert_eq!(fake.audio_frames().len(), 64, "only the block before stop");
+    assert_eq!(handle.stats().audio_frames_sent, 64);
+}
+
+#[test]
 fn finish_delivers_every_frame_pushed_before_it() {
     let (mut sink, handle, _, fake) = sink(false);
     let mut pushed = 0;
