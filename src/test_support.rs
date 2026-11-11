@@ -12,12 +12,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 /// Upper bound for a test waiting on a background thread: an audio worker,
-/// a script thread, or a fake ffmpeg child process.
+/// a script thread, or a child process.
 ///
 /// On a heavily loaded machine those can take seconds to get scheduled or
-/// start (a fake ffmpeg starts a `python3` interpreter). Waits poll the real
-/// condition and return as soon as it holds, so this bound only matters when
-/// a test is about to fail anyway.
+/// start. Waits poll the real condition and return as soon as it holds, so
+/// this bound only matters when a test is about to fail anyway.
 pub(crate) const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Polls `condition` until it holds or [`WAIT_TIMEOUT`] elapses, returning

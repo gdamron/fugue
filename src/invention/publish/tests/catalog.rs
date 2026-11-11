@@ -358,22 +358,23 @@ fn scratch() -> &'static std::path::Path {
 
 /// An ffmpeg that answers the probe and exits at once, so a streaming
 /// sink's workers start and wind down without an encoder or a network.
+///
+/// Outside Windows this is `true`, which takes any arguments and exits 0,
+/// rather than a script written here: tests run in parallel, so a child
+/// another test is forking can inherit the script's write handle, and Linux
+/// then refuses to run the script ("Text file busy").
 fn fake_ffmpeg() -> &'static std::path::Path {
-    static PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-    PATH.get_or_init(|| {
-        #[cfg(windows)]
-        let (name, script) = ("ffmpeg.cmd", "@exit /b 0\r\n");
-        #[cfg(not(windows))]
-        let (name, script) = ("ffmpeg", "#!/bin/sh\nexit 0\n");
-        let path = scratch().join(name);
-        std::fs::write(&path, script).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        path
-    })
+    #[cfg(not(windows))]
+    return std::path::Path::new("true");
+    #[cfg(windows)]
+    {
+        static PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+        PATH.get_or_init(|| {
+            let path = scratch().join("ffmpeg.cmd");
+            std::fs::write(&path, "@exit /b 0\r\n").unwrap();
+            path
+        })
+    }
 }
 
 #[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
