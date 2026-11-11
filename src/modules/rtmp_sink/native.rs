@@ -208,6 +208,10 @@ impl RtmpSink {
         config: RtmpSinkConfig,
         fake: &crate::streaming::ffmpeg::fake::FakeEncoder,
     ) -> Result<(Self, RtmpSinkHandle, FfmpegStreamHandle), Box<dyn std::error::Error>> {
+        assert!(
+            config.background_video.is_none(),
+            "background video would decode with real ffmpeg: use with_fakes"
+        );
         Self::with_fakes(config, fake, false, VideoRuntime::system())
     }
 

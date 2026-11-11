@@ -34,6 +34,8 @@ struct SteppedState {
     idle_epoch: u64,
     /// Workers blocked reading a held-open fake decoder, idle until killed.
     blocked_readers: usize,
+    /// The worker ended, normally or by panic, and will never go idle.
+    worker_exited: bool,
     waiters: Vec<Weak<dyn ClockWaiter>>,
 }
 
@@ -46,6 +48,7 @@ impl SteppedClock {
                 epoch: 0,
                 idle_epoch: 0,
                 blocked_readers: 0,
+                worker_exited: false,
                 waiters: Vec::new(),
             }),
             idle: Condvar::new(),
@@ -61,7 +64,8 @@ impl SteppedClock {
     /// idle again: waiting on the clock, or blocked on a held-open fake
     /// decoder (which time does not affect).
     ///
-    /// Blocks forever if no worker will go idle, such as after it stopped.
+    /// Panics if the worker has ended (stopped, or panicked), so a broken
+    /// worker fails its test rather than hanging it.
     pub(crate) fn advance(&self, by: Duration) {
         let (epoch, waiters) = {
             let mut state = self.state.lock().unwrap();
@@ -76,6 +80,10 @@ impl SteppedClock {
         }
         let mut state = self.state.lock().unwrap();
         while state.idle_epoch < epoch && state.blocked_readers == 0 {
+            if state.worker_exited {
+                drop(state);
+                panic!("the video worker exited while the test was advancing its clock");
+            }
             state = self.idle.wait(state).unwrap();
         }
     }
@@ -123,6 +131,16 @@ impl VideoClock for SteppedClock {
 
     fn on_advance(&self, waiter: Weak<dyn ClockWaiter>) {
         self.state.lock().unwrap().waiters.push(waiter);
+    }
+
+    fn worker_exited(&self) {
+        // The worker may be unwinding: never panic again here.
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.worker_exited = true;
+        self.idle.notify_all();
     }
 }
 

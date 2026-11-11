@@ -12,7 +12,7 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use super::clock::{wait_on, ClockWaiter};
+use super::clock::{wait_on, ClockWaiter, WorkerExit};
 use super::decoder::{DecoderProcess, LaunchedDecoder};
 use super::{VideoFrameTarget, VideoRuntime};
 
@@ -243,6 +243,7 @@ enum FrameRead {
 }
 
 fn playback_worker(shared: Arc<VideoPlaybackShared>) {
+    let _exit = WorkerExit(&*shared.runtime.clock);
     let mut preserve_deadline = false;
     let mut next_frame_at = shared.runtime.clock.now();
 

@@ -19,6 +19,20 @@ pub(crate) trait VideoClock: Send + Sync {
     /// Registers a worker to wake when this clock's time moves without it
     /// waiting out a timeout. The system clock never does, so it drops these.
     fn on_advance(&self, waiter: Weak<dyn ClockWaiter>);
+
+    /// Called when a worker paced by this clock ends, by panic included.
+    /// Lets a test clock fail a test whose worker died instead of waiting
+    /// for it forever.
+    fn worker_exited(&self) {}
+}
+
+/// Tells a clock its worker ended when dropped, so unwinding counts too.
+pub(super) struct WorkerExit<'a>(pub(super) &'a dyn VideoClock);
+
+impl Drop for WorkerExit<'_> {
+    fn drop(&mut self) {
+        self.0.worker_exited();
+    }
 }
 
 /// A worker woken when a clock's time moves.

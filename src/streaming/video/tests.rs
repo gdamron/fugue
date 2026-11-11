@@ -180,6 +180,15 @@ fn black_fallback_reports_a_failed_delivery() {
 }
 
 #[test]
+#[should_panic(expected = "the video worker exited")]
+fn a_worker_that_panics_fails_the_advance_instead_of_hanging() {
+    let clock = SteppedClock::new();
+    let target: VideoFrameTarget = Arc::new(|_| panic!("frame target broke"));
+    let _fallback = BlackVideoFallback::start_with_clock(2, 2, 30, target, clock.clone()).unwrap();
+    clock.settle();
+}
+
+#[test]
 fn emits_decoded_frames_in_order_on_the_media_clock() {
     let rig = Rig::start(vec![FakeRun::frames(3, FRAME)], true, false);
     let period = period(FAKE_FPS);

@@ -5,7 +5,7 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use super::clock::{wait_on, ClockWaiter, VideoClock};
+use super::clock::{wait_on, ClockWaiter, VideoClock, WorkerExit};
 use super::VideoFrameTarget;
 
 /// Emits paced black RGBA frames until an external video producer takes over.
@@ -68,6 +68,7 @@ impl BlackVideoFallback {
         let worker_shared = shared.clone();
         let frame_duration = Duration::from_secs_f64(1.0 / fps as f64);
         let join_handle = thread::spawn(move || {
+            let _exit = WorkerExit(&*clock);
             black_frame_worker(&worker_shared, &*clock, frame_bytes, frame_duration, target)
         });
         *shared.join_handle.lock().unwrap() = Some(join_handle);

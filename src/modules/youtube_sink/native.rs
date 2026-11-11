@@ -268,10 +268,13 @@ mod tests {
         assert_eq!(sink.get_output("audio_right").unwrap(), -0.5);
 
         clock.settle();
+        clock.advance(std::time::Duration::from_millis(20) - std::time::Duration::from_nanos(1));
+        clock.advance(std::time::Duration::from_nanos(1));
         let stats = handle.finish();
         let session = &fake.sessions()[0];
         assert_eq!(session.audio_frames(), [(0.25, -0.5)]);
-        assert_eq!(session.video, [vec![0; 16]]);
+        // 50 fps: a frame at once and the next 20 ms later, not before.
+        assert_eq!(session.video, [vec![0; 16], vec![0; 16]]);
         assert_eq!(stats.last_error, None, "{stats:?}");
     }
 
