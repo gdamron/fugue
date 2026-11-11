@@ -193,7 +193,7 @@ fn configured_background_video_feeds_stream_backend() {
             "url": "rtmp://example.test/live/fugue",
             "width": 2,
             "height": 2,
-            "fps": 20,
+            "fps": 25,
             "buffer_frames": 64,
             "video_queue_frames": 2,
             // Any existing file: the fake decoder never opens it.
@@ -209,8 +209,8 @@ fn configured_background_video_feeds_stream_backend() {
         RtmpSink::with_fakes(config, &fake, false, clock.runtime(&decoders)).unwrap();
     assert!(handle.has_background_video());
 
-    // 20 fps: frame 2 exactly one period in, frame 3 not before the next.
-    let period = std::time::Duration::from_millis(50);
+    // 25 fps: frame 2 exactly one period in, frame 3 not before the next.
+    let period = std::time::Duration::from_millis(40);
     let nano = std::time::Duration::from_nanos(1);
     clock.settle();
     clock.advance(period - nano);
