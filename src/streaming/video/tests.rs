@@ -367,14 +367,24 @@ fn a_looping_video_that_stops_producing_frames_pauses_after_its_last_frame() {
         true,
         true,
     );
-    rig.step();
-    rig.step();
+    // The loop pass starts at once, so settling the start runs both passes.
     assert_eq!(rig.frames(), [1]);
     assert_eq!(rig.decoders.start_attempts(), 2);
     let stats = rig.playback.stats();
     assert_eq!(stats.loops, 1);
     assert_eq!(
         stats.last_error.as_deref(),
+        Some("background video decoder produced no frames")
+    );
+}
+
+#[test]
+fn a_video_with_no_frames_reports_why_it_stopped() {
+    let rig = Rig::start(vec![FakeRun::bytes(Vec::new())], true, false);
+    rig.step();
+    assert_eq!(rig.decoders.start_attempts(), 1);
+    assert_eq!(
+        rig.playback.stats().last_error.as_deref(),
         Some("background video decoder produced no frames")
     );
 }
