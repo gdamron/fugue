@@ -1,13 +1,13 @@
 //! Reusable native ffmpeg audio/video streaming backend.
 //!
-//! The backend owns process lifecycle, raw audio/video queues, command
-//! construction, restart behavior, and diagnostics. Module adapters are
+//! The backend owns the raw audio/video queues, the worker that feeds encoder
+//! sessions and restarts them, and diagnostics. Module adapters are
 //! responsible for graph ports, module-specific config parsing, and any
 //! user-facing controls.
-
+//!
 //! Files: `queues` holds the audio ring and video queue, `worker` the session
-//! loop, `process` the ffmpeg process session, and `command` its command
-//! line.
+//! loop and the encoder session seam, `process` the ffmpeg process adapter,
+//! and `command` its command line.
 
 use std::collections::VecDeque;
 use std::process::{Command, Stdio};
@@ -16,6 +16,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 mod command;
+#[cfg(test)]
+pub(crate) mod fake;
 mod process;
 mod queues;
 #[cfg(test)]
@@ -23,6 +25,8 @@ mod tests;
 mod worker;
 
 use queues::{AudioFrameRing, VideoFrameQueue};
+#[cfg(test)]
+pub(crate) use worker::{Pause, SessionStarter};
 
 pub(crate) const DEFAULT_AUDIO_BUFFER_FRAMES: usize = 65_536;
 pub(crate) const DEFAULT_VIDEO_QUEUE_FRAMES: usize = 8;
@@ -75,14 +79,55 @@ pub(crate) struct FfmpegStreamBackend {
     restarts: AtomicUsize,
     last_error: Mutex<Option<String>>,
     stderr_tail: Mutex<VecDeque<u8>>,
-    join_handle: Mutex<Option<JoinHandle<()>>>,
+    worker: Mutex<Option<WorkerSlot>>,
+}
+
+/// Where the worker runs.
+enum WorkerSlot {
+    /// On its own thread, joined by `finish()`.
+    Thread(JoinHandle<()>),
+    /// On the thread that calls `finish()`, for tests.
+    #[cfg(test)]
+    OnFinish(Box<dyn FnOnce() + Send>),
 }
 
 impl FfmpegStreamBackend {
     pub(crate) fn start(
         config: FfmpegStreamConfig,
     ) -> Result<FfmpegStreamHandle, Box<dyn std::error::Error>> {
-        let shared = Arc::new(Self {
+        let shared = Self::new(config);
+        let worker_shared = shared.clone();
+        let join_handle = thread::spawn(move || {
+            worker::worker(&worker_shared, &process::ProcessStarter, &mut |_, pause| {
+                thread::sleep(pause.duration())
+            })
+        });
+        *shared.worker.lock().unwrap() = Some(WorkerSlot::Thread(join_handle));
+
+        Ok(shared)
+    }
+
+    /// A stream whose worker runs on the thread that calls `finish()`, over
+    /// sessions from `starter`, waiting through `pause`.
+    #[cfg(test)]
+    pub(crate) fn start_on_finish(
+        config: FfmpegStreamConfig,
+        starter: Arc<dyn SessionStarter>,
+        mut pause: impl FnMut(&FfmpegStreamBackend, Pause) + Send + 'static,
+    ) -> FfmpegStreamHandle {
+        let shared = Self::new(config);
+        let weak = Arc::downgrade(&shared);
+        let run = move || {
+            if let Some(shared) = weak.upgrade() {
+                worker::worker(&shared, starter.as_ref(), &mut pause);
+            }
+        };
+        *shared.worker.lock().unwrap() = Some(WorkerSlot::OnFinish(Box::new(run)));
+        shared
+    }
+
+    fn new(config: FfmpegStreamConfig) -> FfmpegStreamHandle {
+        Arc::new(Self {
             audio_ring: AudioFrameRing::new(config.audio_buffer_frames),
             video_queue: Mutex::new(VideoFrameQueue::new(
                 config.video_queue_frames,
@@ -95,14 +140,8 @@ impl FfmpegStreamBackend {
             restarts: AtomicUsize::new(0),
             last_error: Mutex::new(None),
             stderr_tail: Mutex::new(VecDeque::with_capacity(STDERR_TAIL_BYTES)),
-            join_handle: Mutex::new(None),
-        });
-
-        let worker_shared = shared.clone();
-        let join_handle = thread::spawn(move || worker::worker(worker_shared));
-        *shared.join_handle.lock().unwrap() = Some(join_handle);
-
-        Ok(shared)
+            worker: Mutex::new(None),
+        })
     }
 
     pub(crate) fn validate_ffmpeg(path: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -140,9 +179,30 @@ impl FfmpegStreamBackend {
 
     pub(crate) fn finish(&self) {
         self.stop();
-        if let Some(join_handle) = self.join_handle.lock().unwrap().take() {
-            let _ = join_handle.join();
+        let worker = self.worker.lock().unwrap().take();
+        match worker {
+            Some(WorkerSlot::Thread(join_handle)) => {
+                let _ = join_handle.join();
+            }
+            #[cfg(test)]
+            Some(WorkerSlot::OnFinish(run)) => run(),
+            None => {}
         }
+    }
+
+    /// Runs a `start_on_finish` worker now, without stopping first.
+    #[cfg(test)]
+    pub(crate) fn run_worker(&self) {
+        let worker = self.worker.lock().unwrap().take();
+        if let Some(WorkerSlot::OnFinish(run)) = worker {
+            run();
+        }
+    }
+
+    /// Whether no audio frame is waiting to be sent.
+    #[cfg(test)]
+    pub(crate) fn audio_ring_is_empty(&self) -> bool {
+        self.audio_ring.is_empty()
     }
 
     pub(crate) fn stats(&self) -> FfmpegStreamStats {

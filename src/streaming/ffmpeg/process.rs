@@ -1,7 +1,7 @@
-//! The ffmpeg process session: an ffmpeg process that reads raw audio and
+//! The production encoder session: an ffmpeg process that reads raw audio and
 //! video from two local TCP inputs, with its stderr kept for diagnostics.
 
-use std::io::{BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
@@ -9,16 +9,54 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use super::command::FfmpegCommandSpec;
+use super::worker::{EncoderSession, SessionOutcome, SessionStarter};
 use super::{redact_stream_url, FfmpegStreamBackend};
 
-pub(super) struct FfmpegSession {
-    pub(super) child: Child,
-    pub(super) audio: TcpStream,
-    pub(super) video: TcpStream,
+/// Starts each session as an ffmpeg process.
+pub(super) struct ProcessStarter;
+
+impl SessionStarter for ProcessStarter {
+    fn start(&self, shared: &Arc<FfmpegStreamBackend>) -> Result<Box<dyn EncoderSession>, String> {
+        Ok(Box::new(start_session(shared.clone())?))
+    }
+}
+
+struct FfmpegSession {
+    shared: Arc<FfmpegStreamBackend>,
+    child: Child,
+    audio: TcpStream,
+    video: TcpStream,
     stderr_reader: Option<JoinHandle<()>>,
 }
 
-pub(super) fn start_session(shared: Arc<FfmpegStreamBackend>) -> Result<FfmpegSession, String> {
+impl EncoderSession for FfmpegSession {
+    fn check_exit(&mut self) -> Option<SessionOutcome> {
+        match self.child.try_wait() {
+            Ok(Some(status)) => Some(SessionOutcome::UnexpectedExit(exit_message(
+                status,
+                self.shared.stderr_tail_string(),
+            ))),
+            Ok(None) => None,
+            Err(err) => Some(SessionOutcome::IoError(format!(
+                "ffmpeg status check failed: {err}"
+            ))),
+        }
+    }
+
+    fn write_audio(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.audio.write_all(bytes)
+    }
+
+    fn write_video(&mut self, frame: &[u8]) -> io::Result<()> {
+        self.video.write_all(frame)
+    }
+
+    fn close(self: Box<Self>) {
+        finish_session(*self);
+    }
+}
+
+fn start_session(shared: Arc<FfmpegStreamBackend>) -> Result<FfmpegSession, String> {
     let audio_listener =
         TcpListener::bind(("127.0.0.1", 0)).map_err(|err| format!("audio bind failed: {err}"))?;
     let video_listener =
@@ -91,6 +129,7 @@ pub(super) fn start_session(shared: Arc<FfmpegStreamBackend>) -> Result<FfmpegSe
         .map_err(|err| format!("video stream nodelay failed: {err}"))?;
 
     Ok(FfmpegSession {
+        shared,
         child,
         audio,
         video,
@@ -142,7 +181,7 @@ fn accept_input_streams(
     Ok((audio.unwrap(), video.unwrap()))
 }
 
-pub(super) fn finish_session(mut session: FfmpegSession) {
+fn finish_session(mut session: FfmpegSession) {
     drop(session.audio);
     drop(session.video);
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -160,5 +199,37 @@ pub(super) fn finish_session(mut session: FfmpegSession) {
     }
     if let Some(reader) = session.stderr_reader.take() {
         let _ = reader.join();
+    }
+}
+
+/// The error for an encoder that exited on its own, with the tail of what it
+/// wrote to stderr.
+fn exit_message(status: impl std::fmt::Display, stderr: Option<String>) -> String {
+    let mut message = format!("ffmpeg exited unexpectedly: {status}");
+    if let Some(stderr) = stderr {
+        message.push_str("; stderr: ");
+        message.push_str(stderr.trim());
+    }
+    message
+}
+
+#[cfg(test)]
+mod tests {
+    use super::exit_message;
+
+    #[test]
+    fn exit_message_carries_the_trimmed_stderr_tail() {
+        assert_eq!(
+            exit_message("exit status: 1", Some("  Connection refused\n".to_string())),
+            "ffmpeg exited unexpectedly: exit status: 1; stderr: Connection refused"
+        );
+    }
+
+    #[test]
+    fn exit_message_without_stderr_names_only_the_status() {
+        assert_eq!(
+            exit_message("exit status: 1", None),
+            "ffmpeg exited unexpectedly: exit status: 1"
+        );
     }
 }

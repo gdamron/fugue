@@ -21,6 +21,8 @@ mod inputs;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 mod outputs;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod stream_tests;
 
 #[cfg(not(target_arch = "wasm32"))]
 use native::SharedHandle;
