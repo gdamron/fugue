@@ -335,6 +335,61 @@ fn a_failed_decoder_exit_stops_playback_with_its_status() {
 }
 
 #[test]
+fn a_looping_video_with_no_frames_pauses_with_an_error_instead_of_relaunching() {
+    // A relaunch would reach the second run, which fails to start and
+    // pauses, so the old relaunch loop fails this test instead of hanging.
+    let rig = Rig::start(
+        vec![
+            FakeRun::bytes(Vec::new()),
+            FakeRun::fail_to_start("the decoder was relaunched"),
+        ],
+        true,
+        true,
+    );
+    rig.clock.advance(Duration::from_secs(1));
+    assert_eq!(rig.decoders.start_attempts(), 1, "no relaunch until played");
+    let stats = rig.playback.stats();
+    assert_eq!(stats.loops, 0);
+    assert_eq!(
+        stats.last_error.as_deref(),
+        Some("background video decoder produced no frames")
+    );
+}
+
+#[test]
+fn a_looping_video_that_stops_producing_frames_pauses_after_its_last_frame() {
+    let rig = Rig::start(
+        vec![
+            FakeRun::frames(1, FRAME),
+            FakeRun::bytes(Vec::new()),
+            FakeRun::fail_to_start("the decoder was relaunched"),
+        ],
+        true,
+        true,
+    );
+    // The loop pass starts at once, so settling the start runs both passes.
+    assert_eq!(rig.frames(), [1]);
+    assert_eq!(rig.decoders.start_attempts(), 2);
+    let stats = rig.playback.stats();
+    assert_eq!(stats.loops, 1);
+    assert_eq!(
+        stats.last_error.as_deref(),
+        Some("background video decoder produced no frames")
+    );
+}
+
+#[test]
+fn a_video_with_no_frames_reports_why_it_stopped() {
+    let rig = Rig::start(vec![FakeRun::bytes(Vec::new())], true, false);
+    rig.step();
+    assert_eq!(rig.decoders.start_attempts(), 1);
+    assert_eq!(
+        rig.playback.stats().last_error.as_deref(),
+        Some("background video decoder produced no frames")
+    );
+}
+
+#[test]
 fn an_incomplete_frame_stops_playback_with_an_error() {
     let mut output = vec![7; FRAME];
     output.extend([8; 4]);

@@ -271,6 +271,7 @@ fn playback_worker(shared: Arc<VideoPlaybackShared>) {
             }
             continue;
         }
+        let emitted_before = shared.frames_emitted.load(Ordering::Relaxed);
         let outcome = decode_frames(
             &shared,
             &mut *decoder,
@@ -301,6 +302,14 @@ fn playback_worker(shared: Arc<VideoPlaybackShared>) {
                     shared.set_error(format!(
                         "background video decoder exited with status: {status}"
                     ));
+                    shared.set_playing(false);
+                    preserve_deadline = false;
+                    continue;
+                }
+                if shared.frames_emitted.load(Ordering::Relaxed) == emitted_before {
+                    // Looping a video with no frames would relaunch the
+                    // decoder as fast as it can exit.
+                    shared.set_error("background video decoder produced no frames");
                     shared.set_playing(false);
                     preserve_deadline = false;
                     continue;
