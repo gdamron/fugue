@@ -1,11 +1,12 @@
 //! What the sink sends to its stream, checked against the recording fake
-//! encoder: no process, socket or sleep.
+//! encoder and fake video: no process, socket or sleep.
 
 use serde_json::json;
 
 use super::*;
 use crate::streaming::ffmpeg::fake::FakeEncoder;
 use crate::streaming::ffmpeg::FfmpegStreamHandle;
+use crate::streaming::video::fake::{FakeDecoders, FakeRun, SteppedClock};
 
 const LEFT: usize = 1;
 const RIGHT: usize = 2;
@@ -183,4 +184,40 @@ fn wrong_size_video_frame_names_the_expected_size() {
     let stats = handle.finish();
     assert_eq!(fake.sessions()[0].video, vec![vec![7; 16]]);
     assert_eq!(stats.video_frames_sent, 1);
+}
+
+#[test]
+fn configured_background_video_feeds_stream_backend() {
+    let config = RtmpSinkConfig::from_json(
+        &json!({
+            "url": "rtmp://example.test/live/fugue",
+            "width": 2,
+            "height": 2,
+            "fps": 25,
+            "buffer_frames": 64,
+            "video_queue_frames": 2,
+            // Any existing file: the fake decoder never opens it.
+            "background_video": concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")
+        }),
+        48_000,
+    )
+    .unwrap();
+    let fake = FakeEncoder::default();
+    let clock = SteppedClock::new();
+    let decoders = FakeDecoders::new(&clock, vec![FakeRun::frames(3, 16)]);
+    let (_sink, handle, _) =
+        RtmpSink::with_fakes(config, &fake, false, clock.runtime(&decoders)).unwrap();
+    assert!(handle.has_background_video());
+
+    // 25 fps: frame 2 exactly one period in, frame 3 not before the next.
+    let period = std::time::Duration::from_millis(40);
+    let nano = std::time::Duration::from_nanos(1);
+    clock.settle();
+    clock.advance(period - nano);
+    clock.advance(nano);
+    clock.advance(period - nano);
+    let stats = handle.finish();
+    assert_eq!(fake.sessions()[0].video, vec![vec![1; 16], vec![2; 16]]);
+    assert_eq!(stats.video_frames_sent, 2, "{stats:?}");
+    assert_eq!(stats.video_frames_dropped, 0, "{stats:?}");
 }
