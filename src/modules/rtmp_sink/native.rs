@@ -9,7 +9,7 @@ use crate::streaming::ffmpeg::{
 };
 use crate::streaming::video::{
     BlackVideoFallback, BlackVideoFallbackHandle, VideoFrameTarget, VideoPlayback,
-    VideoPlaybackConfig, VideoPlaybackHandle,
+    VideoPlaybackConfig, VideoPlaybackHandle, VideoRuntime,
 };
 
 use super::{RtmpSink, RtmpSinkHandle, RtmpSinkStats};
@@ -198,7 +198,7 @@ impl RtmpSink {
         black_video_fallback: bool,
     ) -> Result<(Self, RtmpSinkHandle), Box<dyn std::error::Error>> {
         let stream = FfmpegStreamBackend::start(config.stream_config(constant_video_bitrate))?;
-        Self::over_stream(config, stream, black_video_fallback)
+        Self::over_stream(config, stream, black_video_fallback, VideoRuntime::system())
     }
 
     /// A sink whose stream runs over the recording fake encoder. Its worker
@@ -213,7 +213,8 @@ impl RtmpSink {
             Arc::new(fake.clone()),
             crate::streaming::ffmpeg::fake::stop_when_idle,
         );
-        let (sink, handle) = Self::over_stream(config, stream.clone(), false)?;
+        let (sink, handle) =
+            Self::over_stream(config, stream.clone(), false, VideoRuntime::system())?;
         Ok((sink, handle, stream))
     }
 
@@ -221,6 +222,7 @@ impl RtmpSink {
         config: RtmpSinkConfig,
         stream: FfmpegStreamHandle,
         black_video_fallback: bool,
+        video: VideoRuntime,
     ) -> Result<(Self, RtmpSinkHandle), Box<dyn std::error::Error>> {
         let soft_clip = config.soft_clip;
         let monitor = config.monitor;
@@ -228,7 +230,7 @@ impl RtmpSink {
             let target_stream = stream.clone();
             let target: VideoFrameTarget =
                 Arc::new(move |frame| target_stream.push_video_rgba(frame));
-            match VideoPlayback::start(playback_config, target) {
+            match VideoPlayback::start_with(playback_config, target, video.clone()) {
                 Ok(playback) => Some(playback),
                 Err(err) => {
                     stream.finish();
@@ -242,7 +244,13 @@ impl RtmpSink {
             let target_stream = stream.clone();
             let target: VideoFrameTarget =
                 Arc::new(move |frame| target_stream.push_video_rgba(frame));
-            match BlackVideoFallback::start(config.width, config.height, config.fps, target) {
+            match BlackVideoFallback::start_with_clock(
+                config.width,
+                config.height,
+                config.fps,
+                target,
+                video.clock,
+            ) {
                 Ok(fallback) => Some(fallback),
                 Err(err) => {
                     stream.finish();

@@ -7,14 +7,14 @@
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use super::decoder::FfmpegVideoCommandSpec;
-use super::VideoFrameTarget;
+use super::clock::{wait_on, ClockWaiter, WorkerExit};
+use super::decoder::{DecoderProcess, LaunchedDecoder};
+use super::{VideoFrameTarget, VideoRuntime};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VideoPlaybackConfig {
@@ -57,9 +57,11 @@ pub(crate) struct VideoPlaybackHandle {
 pub(crate) struct VideoPlayback;
 
 impl VideoPlayback {
-    pub(crate) fn start(
+    /// Starts playback that decodes and paces with `runtime`.
+    pub(crate) fn start_with(
         config: VideoPlaybackConfig,
         target: VideoFrameTarget,
+        runtime: VideoRuntime,
     ) -> Result<VideoPlaybackHandle, Box<dyn std::error::Error>> {
         if config.width == 0 || config.height == 0 {
             return Err("background video width and height must be greater than zero".into());
@@ -97,7 +99,10 @@ impl VideoPlayback {
             last_error: Mutex::new(None),
             config,
             target,
+            runtime: runtime.clone(),
         });
+        let waiter: Weak<VideoPlaybackShared> = Arc::downgrade(&shared);
+        runtime.clock.on_advance(waiter);
 
         let worker_shared = shared.clone();
         let join_handle = thread::spawn(move || playback_worker(worker_shared));
@@ -165,20 +170,28 @@ impl VideoPlaybackHandle {
 pub(super) struct VideoPlaybackShared {
     config: VideoPlaybackConfig,
     target: VideoFrameTarget,
+    runtime: VideoRuntime,
     control: Mutex<PlaybackControl>,
     wake: Condvar,
     /// The running decoder and the restart generation it was started for.
-    pub(super) child: Mutex<Option<(u64, Child)>>,
+    pub(super) child: Mutex<Option<(u64, Box<dyn DecoderProcess>)>>,
     join_handle: Mutex<Option<JoinHandle<()>>>,
     frames_emitted: AtomicUsize,
     loops: AtomicUsize,
     last_error: Mutex<Option<String>>,
 }
 
+impl ClockWaiter for VideoPlaybackShared {
+    fn clock_advanced(&self) {
+        let _control = self.control.lock().unwrap();
+        self.wake.notify_all();
+    }
+}
+
 impl VideoPlaybackShared {
     pub(super) fn kill_decoder(&self) {
         if let Some((_, child)) = self.child.lock().unwrap().as_mut() {
-            let _ = child.kill();
+            child.kill();
         }
     }
 
@@ -186,7 +199,7 @@ impl VideoPlaybackShared {
     pub(super) fn kill_stale_decoder(&self, generation: u64) {
         if let Some((started_for, child)) = self.child.lock().unwrap().as_mut() {
             if *started_for != generation {
-                let _ = child.kill();
+                child.kill();
             }
         }
     }
@@ -217,10 +230,6 @@ struct ControlSnapshot {
     stopping: bool,
 }
 
-struct Decoder {
-    stdout: ChildStdout,
-}
-
 enum DecodeOutcome {
     End,
     Restart,
@@ -234,8 +243,9 @@ enum FrameRead {
 }
 
 fn playback_worker(shared: Arc<VideoPlaybackShared>) {
+    let _exit = WorkerExit(&*shared.runtime.clock);
     let mut preserve_deadline = false;
-    let mut next_frame_at = Instant::now();
+    let mut next_frame_at = shared.runtime.clock.now();
 
     loop {
         let snapshot = wait_until_playing(&shared);
@@ -263,7 +273,7 @@ fn playback_worker(shared: Arc<VideoPlaybackShared>) {
         }
         let outcome = decode_frames(
             &shared,
-            &mut decoder,
+            &mut *decoder,
             snapshot.restart_generation,
             &mut next_frame_at,
             !preserve_deadline,
@@ -287,15 +297,13 @@ fn playback_worker(shared: Arc<VideoPlaybackShared>) {
                     preserve_deadline = false;
                     continue;
                 }
-                if let Some(status) = status {
-                    if !status.success() {
-                        shared.set_error(format!(
-                            "background video decoder exited with status: {status}"
-                        ));
-                        shared.set_playing(false);
-                        preserve_deadline = false;
-                        continue;
-                    }
+                if let Some(Err(status)) = status {
+                    shared.set_error(format!(
+                        "background video decoder exited with status: {status}"
+                    ));
+                    shared.set_playing(false);
+                    preserve_deadline = false;
+                    continue;
                 }
                 if current.loop_enabled {
                     shared.loops.fetch_add(1, Ordering::Relaxed);
@@ -315,7 +323,7 @@ fn playback_worker(shared: Arc<VideoPlaybackShared>) {
 fn wait_until_playing(shared: &VideoPlaybackShared) -> ControlSnapshot {
     let mut control = shared.control.lock().unwrap();
     while !control.playing && !control.stopping {
-        control = shared.wake.wait(control).unwrap();
+        control = wait_on(&*shared.runtime.clock, &shared.wake, control, None);
     }
     ControlSnapshot {
         loop_enabled: control.loop_enabled,
@@ -333,26 +341,18 @@ fn control_snapshot(shared: &VideoPlaybackShared) -> ControlSnapshot {
     }
 }
 
-fn spawn_decoder(shared: &VideoPlaybackShared, generation: u64) -> Result<Decoder, String> {
-    let spec = FfmpegVideoCommandSpec::new(&shared.config);
-    let mut child = Command::new(&spec.program)
-        .args(&spec.args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|err| format!("could not start background video decoder: {err}"))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "background video decoder stdout was unavailable".to_string())?;
-    *shared.child.lock().unwrap() = Some((generation, child));
-    Ok(Decoder { stdout })
+fn spawn_decoder(
+    shared: &VideoPlaybackShared,
+    generation: u64,
+) -> Result<Box<dyn Read + Send>, String> {
+    let LaunchedDecoder { frames, process } = shared.runtime.decoders.launch(&shared.config)?;
+    *shared.child.lock().unwrap() = Some((generation, process));
+    Ok(frames)
 }
 
 fn decode_frames(
     shared: &VideoPlaybackShared,
-    decoder: &mut Decoder,
+    decoder: &mut dyn Read,
     restart_generation: u64,
     next_frame_at: &mut Instant,
     mut reset_deadline_on_first_frame: bool,
@@ -365,7 +365,7 @@ fn decode_frames(
     let mut frame = vec![0; frame_bytes];
 
     loop {
-        match read_frame(&mut decoder.stdout, &mut frame) {
+        match read_frame(decoder, &mut frame) {
             Ok(FrameRead::Frame) => {}
             Ok(FrameRead::End) => {
                 return changed_outcome(shared, restart_generation, DecodeOutcome::End)
@@ -383,7 +383,7 @@ fn decode_frames(
         if reset_deadline_on_first_frame {
             // Decoder startup is outside the media timeline. Anchor initial
             // playback to the first decoded frame, not process spawn time.
-            *next_frame_at = Instant::now();
+            *next_frame_at = shared.runtime.clock.now();
             reset_deadline_on_first_frame = false;
         }
 
@@ -402,7 +402,7 @@ fn decode_frames(
     }
 }
 
-fn read_frame(reader: &mut impl Read, frame: &mut [u8]) -> io::Result<FrameRead> {
+fn read_frame(reader: &mut dyn Read, frame: &mut [u8]) -> io::Result<FrameRead> {
     let mut filled = 0;
     while filled < frame.len() {
         match reader.read(&mut frame[filled..])? {
@@ -432,18 +432,17 @@ fn wait_for_delivery(
         if control.restart_generation != restart_generation {
             return DecodeOutcome::Restart;
         }
+        let clock = &*shared.runtime.clock;
         if !control.playing {
-            control = shared.wake.wait(control).unwrap();
-            *deadline = Instant::now();
+            control = wait_on(clock, &shared.wake, control, None);
+            *deadline = clock.now();
             continue;
         }
 
-        let now = Instant::now();
-        if now >= *deadline {
+        if clock.now() >= *deadline {
             return DecodeOutcome::End;
         }
-        let (next_control, _) = shared.wake.wait_timeout(control, *deadline - now).unwrap();
-        control = next_control;
+        control = wait_on(clock, &shared.wake, control, Some(*deadline));
     }
 }
 
@@ -462,7 +461,7 @@ fn changed_outcome(
     }
 }
 
-fn reap_decoder(shared: &VideoPlaybackShared) -> Option<ExitStatus> {
+fn reap_decoder(shared: &VideoPlaybackShared) -> Option<Result<(), String>> {
     let child = shared.child.lock().unwrap().take();
-    child.and_then(|(_, mut child)| child.wait().ok())
+    child.and_then(|(_, mut child)| child.wait())
 }
