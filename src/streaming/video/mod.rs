@@ -12,6 +12,8 @@ pub(crate) mod fake;
 mod fallback;
 mod playback;
 #[cfg(test)]
+mod acceptance_tests;
+#[cfg(test)]
 mod tests;
 
 use std::sync::Arc;
