@@ -275,6 +275,7 @@ mod tests {
         assert_eq!(session.audio_frames(), [(0.25, -0.5)]);
         // 50 fps: a frame at once and the next 20 ms later, not before.
         assert_eq!(session.video, [vec![0; 16], vec![0; 16]]);
+        assert_eq!(stats.video_frames_dropped, 0, "{stats:?}");
         assert_eq!(stats.last_error, None, "{stats:?}");
     }
 
