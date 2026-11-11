@@ -43,10 +43,17 @@ fn non_finite_samples_reach_the_stream_as_silence() {
     process_block(&mut sink, &left, &right);
     handle.finish();
 
-    assert_eq!(
-        fake.audio_frames(),
-        [(0.5, 0.0), (0.0, -0.5), (0.25, 0.75), (0.0, 0.125)]
-    );
+    // Bit patterns, so a negative zero would fail.
+    let bits: Vec<_> = fake
+        .audio_frames()
+        .iter()
+        .map(|(l, r)| (l.to_bits(), r.to_bits()))
+        .collect();
+    let expected: Vec<_> = [(0.5f32, 0.0f32), (0.0, -0.5), (0.25, 0.75), (0.0, 0.125)]
+        .iter()
+        .map(|(l, r)| (l.to_bits(), r.to_bits()))
+        .collect();
+    assert_eq!(bits, expected);
     assert_eq!(sink.non_finite_samples(), 3);
 }
 

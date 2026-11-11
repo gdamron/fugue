@@ -32,14 +32,10 @@ struct FfmpegSession {
 impl EncoderSession for FfmpegSession {
     fn check_exit(&mut self) -> Option<SessionOutcome> {
         match self.child.try_wait() {
-            Ok(Some(status)) => {
-                let mut message = format!("ffmpeg exited unexpectedly: {status}");
-                if let Some(stderr) = self.shared.stderr_tail_string() {
-                    message.push_str("; stderr: ");
-                    message.push_str(stderr.trim());
-                }
-                Some(SessionOutcome::UnexpectedExit(message))
-            }
+            Ok(Some(status)) => Some(SessionOutcome::UnexpectedExit(exit_message(
+                status,
+                self.shared.stderr_tail_string(),
+            ))),
             Ok(None) => None,
             Err(err) => Some(SessionOutcome::IoError(format!(
                 "ffmpeg status check failed: {err}"
@@ -203,5 +199,37 @@ fn finish_session(mut session: FfmpegSession) {
     }
     if let Some(reader) = session.stderr_reader.take() {
         let _ = reader.join();
+    }
+}
+
+/// The error for an encoder that exited on its own, with the tail of what it
+/// wrote to stderr.
+fn exit_message(status: impl std::fmt::Display, stderr: Option<String>) -> String {
+    let mut message = format!("ffmpeg exited unexpectedly: {status}");
+    if let Some(stderr) = stderr {
+        message.push_str("; stderr: ");
+        message.push_str(stderr.trim());
+    }
+    message
+}
+
+#[cfg(test)]
+mod tests {
+    use super::exit_message;
+
+    #[test]
+    fn exit_message_carries_the_trimmed_stderr_tail() {
+        assert_eq!(
+            exit_message("exit status: 1", Some("  Connection refused\n".to_string())),
+            "ffmpeg exited unexpectedly: exit status: 1; stderr: Connection refused"
+        );
+    }
+
+    #[test]
+    fn exit_message_without_stderr_names_only_the_status() {
+        assert_eq!(
+            exit_message("exit status: 1", None),
+            "ffmpeg exited unexpectedly: exit status: 1"
+        );
     }
 }
