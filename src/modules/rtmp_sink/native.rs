@@ -208,13 +208,29 @@ impl RtmpSink {
         config: RtmpSinkConfig,
         fake: &crate::streaming::ffmpeg::fake::FakeEncoder,
     ) -> Result<(Self, RtmpSinkHandle, FfmpegStreamHandle), Box<dyn std::error::Error>> {
+        assert!(
+            config.background_video.is_none(),
+            "background video would decode with real ffmpeg: use with_fakes"
+        );
+        Self::with_fakes(config, fake, false, VideoRuntime::system())
+    }
+
+    /// Like [`Self::with_fake_stream`], with its video decoded and paced by
+    /// `video` and, when asked, black frames until other video arrives.
+    #[cfg(test)]
+    pub(crate) fn with_fakes(
+        config: RtmpSinkConfig,
+        fake: &crate::streaming::ffmpeg::fake::FakeEncoder,
+        black_video_fallback: bool,
+        video: VideoRuntime,
+    ) -> Result<(Self, RtmpSinkHandle, FfmpegStreamHandle), Box<dyn std::error::Error>> {
         let stream = FfmpegStreamBackend::start_on_finish(
             config.stream_config(false),
             Arc::new(fake.clone()),
             crate::streaming::ffmpeg::fake::stop_when_idle,
         );
         let (sink, handle) =
-            Self::over_stream(config, stream.clone(), false, VideoRuntime::system())?;
+            Self::over_stream(config, stream.clone(), black_video_fallback, video)?;
         Ok((sink, handle, stream))
     }
 
@@ -644,110 +660,5 @@ mod tests {
         let err =
             FfmpegStreamBackend::validate_ffmpeg("fugue-definitely-missing-ffmpeg").unwrap_err();
         assert!(err.to_string().contains("requires ffmpeg in PATH"));
-    }
-
-    #[cfg(unix)]
-    mod unix_fake_ffmpeg {
-        use super::*;
-        use std::fs;
-        use std::os::unix::fs::PermissionsExt;
-        use std::path::PathBuf;
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        fn temp_dir(name: &str) -> PathBuf {
-            let nanos = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            std::env::temp_dir().join(format!("fugue-rtmp-sink-module-{name}-{nanos}"))
-        }
-
-        fn fake_ffmpeg() -> PathBuf {
-            let dir = temp_dir("passthrough");
-            fs::create_dir_all(&dir).unwrap();
-            let path = dir.join("ffmpeg");
-            let script = r#"#!/bin/sh
-if [ "$1" = "-version" ]; then
-  exit 0
-fi
-python3 - "$@" <<'PY'
-import re
-import select
-import socket
-import sys
-import time
-
-urls = [arg for arg in sys.argv[1:] if arg.startswith("tcp://")]
-if len(urls) < 2:
-    sys.stdout.buffer.write(bytes([64]) * 16)
-    sys.stdout.flush()
-    sys.exit(0)
-
-def port(url):
-    match = re.search(r":(\d+)(?:\?|$)", url)
-    if not match:
-        sys.exit(11)
-    return int(match.group(1))
-
-sockets = []
-for url in urls[:2]:
-    s = socket.create_connection(("127.0.0.1", port(url)), timeout=5)
-    s.setblocking(False)
-    sockets.append(s)
-
-deadline = time.time() + 5
-while sockets and time.time() < deadline:
-    readable, _, _ = select.select(sockets, [], [], 0.05)
-    for s in readable:
-        data = s.recv(65536)
-        if not data:
-            sockets.remove(s)
-            s.close()
-
-sys.exit(0 if not sockets else 12)
-PY
-"#;
-            fs::write(&path, script).unwrap();
-            let mut perms = fs::metadata(&path).unwrap().permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(&path, perms).unwrap();
-            path
-        }
-
-        #[test]
-        fn configured_background_video_feeds_stream_backend() {
-            let fake = fake_ffmpeg();
-            let video = fake.parent().unwrap().join("loop.mp4");
-            fs::write(&video, b"fake video").unwrap();
-            let config = RtmpSinkConfig::from_json(
-                &json!({
-                    "ffmpeg_path": fake.to_string_lossy(),
-                    "url": "rtmp://example.test/live/fugue",
-                    "width": 2,
-                    "height": 2,
-                    "fps": 20,
-                    "buffer_frames": 64,
-                    "video_queue_frames": 2,
-                    "background_video": video.to_string_lossy()
-                }),
-                48_000,
-            )
-            .unwrap();
-            let (_sink, handle) = RtmpSink::new_native(config).unwrap();
-            assert!(handle.has_background_video());
-
-            // Generous headroom: the fake ffmpeg is a python3 subprocess whose
-            // cold-start + socket handshake + first paced frame can exceed a
-            // couple seconds on a loaded CI runner. The loop exits the instant a
-            // frame arrives, so this only affects slow machines, never the happy
-            // path.
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-            while handle.stats().video_frames_sent == 0 && std::time::Instant::now() < deadline {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-
-            let stats = handle.finish();
-            assert!(stats.video_frames_sent > 0, "{stats:?}");
-        }
     }
 }

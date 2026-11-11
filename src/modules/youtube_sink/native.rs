@@ -234,111 +234,56 @@ mod tests {
         assert!(!error.contains("inline-key"));
     }
 
+    #[test]
+    fn streams_black_video_without_changing_audio_pass_through() {
+        use crate::streaming::ffmpeg::fake::FakeEncoder;
+        use crate::streaming::video::fake::{FakeDecoders, FakeRun, SteppedClock};
+        use crate::Module;
+
+        let config = from_json_with_env(
+            &json!({
+                "stream_key": "fake-key",
+                "server_url": "rtmps://example.test:443/live",
+                "width": 2,
+                "height": 2,
+                "fps": 50,
+                "buffer_frames": 64,
+                "video_queue_frames": 2,
+                "monitor": true
+            }),
+            48_000,
+            |_| None,
+        )
+        .unwrap();
+        let fake = FakeEncoder::default();
+        let clock = SteppedClock::new();
+        let no_background = FakeDecoders::new(&clock, vec![FakeRun::fail_to_start("unused")]);
+        let (mut sink, handle, _) =
+            RtmpSink::with_fakes(config, &fake, true, clock.runtime(&no_background)).unwrap();
+
+        sink.set_input("audio_left", 0.25).unwrap();
+        sink.set_input("audio_right", -0.5).unwrap();
+        sink.process(1);
+        assert_eq!(sink.get_output("audio_left").unwrap(), 0.25);
+        assert_eq!(sink.get_output("audio_right").unwrap(), -0.5);
+
+        clock.settle();
+        clock.advance(std::time::Duration::from_millis(20) - std::time::Duration::from_nanos(1));
+        clock.advance(std::time::Duration::from_nanos(1));
+        let stats = handle.finish();
+        let session = &fake.sessions()[0];
+        assert_eq!(session.audio_frames(), [(0.25, -0.5)]);
+        // 50 fps: a frame at once and the next 20 ms later, not before.
+        assert_eq!(session.video, [vec![0; 16], vec![0; 16]]);
+        assert_eq!(stats.video_frames_dropped, 0, "{stats:?}");
+        assert_eq!(stats.last_error, None, "{stats:?}");
+    }
+
     #[cfg(unix)]
     mod unix_streaming {
         use super::*;
         use crate::{Module, MAX_BLOCK};
-        use std::fs;
-        use std::os::unix::fs::PermissionsExt;
-        use std::path::PathBuf;
-        use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-        fn fake_ffmpeg() -> PathBuf {
-            let nanos = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let dir = std::env::temp_dir().join(format!("fugue-youtube-sink-{nanos}"));
-            fs::create_dir_all(&dir).unwrap();
-            let path = dir.join("ffmpeg");
-            let script = r#"#!/bin/sh
-if [ "$1" = "-version" ]; then
-  exit 0
-fi
-python3 - "$@" <<'PY'
-import re
-import select
-import socket
-import sys
-import time
-
-urls = [arg for arg in sys.argv[1:] if arg.startswith("tcp://")]
-if len(urls) < 2:
-    sys.exit(10)
-
-def port(url):
-    match = re.search(r":(\d+)(?:\?|$)", url)
-    if not match:
-        sys.exit(11)
-    return int(match.group(1))
-
-sockets = []
-for url in urls[:2]:
-    stream = socket.create_connection(("127.0.0.1", port(url)), timeout=5)
-    stream.setblocking(False)
-    sockets.append(stream)
-
-deadline = time.time() + 5
-while sockets and time.time() < deadline:
-    readable, _, _ = select.select(sockets, [], [], 0.05)
-    for stream in readable:
-        data = stream.recv(65536)
-        if not data:
-            sockets.remove(stream)
-            stream.close()
-
-sys.exit(0 if not sockets else 12)
-PY
-"#;
-            fs::write(&path, script).unwrap();
-            let mut permissions = fs::metadata(&path).unwrap().permissions();
-            permissions.set_mode(0o755);
-            fs::set_permissions(&path, permissions).unwrap();
-            path
-        }
-
-        #[test]
-        fn streams_black_video_without_changing_audio_pass_through() {
-            let ffmpeg = fake_ffmpeg();
-            let config = from_json_with_env(
-                &json!({
-                    "stream_key": "fake-key",
-                    "server_url": "rtmps://example.test:443/live",
-                    "ffmpeg_path": ffmpeg.to_string_lossy(),
-                    "width": 2,
-                    "height": 2,
-                    "fps": 50,
-                    "buffer_frames": 64,
-                    "video_queue_frames": 2,
-                    "monitor": true
-                }),
-                48_000,
-                |_| None,
-            )
-            .unwrap();
-            FfmpegStreamBackend::validate_ffmpeg(&config.ffmpeg_path).unwrap();
-            let (mut sink, handle) = RtmpSink::new_native_with_options(config, true, true).unwrap();
-
-            sink.set_input("audio_left", 0.25).unwrap();
-            sink.set_input("audio_right", -0.5).unwrap();
-            sink.process(1);
-            assert_eq!(sink.get_output("audio_left").unwrap(), 0.25);
-            assert_eq!(sink.get_output("audio_right").unwrap(), -0.5);
-
-            // Generous headroom: the fake ffmpeg is a python3 subprocess whose
-            // cold-start + socket handshake + first paced frame can exceed a
-            // couple seconds on a loaded CI runner. The loop exits the instant a
-            // frame arrives, so this only affects slow machines, never the happy
-            // path.
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while handle.stats().video_frames_sent == 0 && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            let stats = handle.finish();
-            assert!(stats.audio_frames_sent > 0, "{stats:?}");
-            assert!(stats.video_frames_sent > 0, "{stats:?}");
-            assert_eq!(stats.last_error, None, "{stats:?}");
-        }
+        use std::time::Duration;
 
         #[test]
         #[ignore = "requires an operator-created YouTube broadcast and explicit opt-in"]
