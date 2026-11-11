@@ -1,21 +1,77 @@
-//! The stream worker: runs ffmpeg sessions, feeds them the queued audio and
+//! The stream worker: runs encoder sessions, feeds them the queued audio and
 //! video, and restarts them when they end early.
+//!
+//! An encoder session sits behind [`EncoderSession`], started by a
+//! [`SessionStarter`]. Production starts an ffmpeg process fed over local TCP
+//! (`super::process`); tests use a recording fake, so the whole worker can run
+//! on the test thread with no process, socket or sleep.
 
-use std::io::Write;
+use std::io;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 
-use super::process::{finish_session, start_session, FfmpegSession};
 use super::FfmpegStreamBackend;
 
-pub(super) fn worker(shared: Arc<FfmpegStreamBackend>) {
-    while !shared.stopping.load(Ordering::Acquire) || !queues_drained(&shared) {
-        match start_session(shared.clone()) {
+/// One running encoder session.
+pub(crate) trait EncoderSession: Send {
+    /// How the session ended, if it has, without waiting.
+    fn check_exit(&mut self) -> Option<SessionOutcome>;
+    /// Writes interleaved f32 little-endian stereo frames.
+    fn write_audio(&mut self, bytes: &[u8]) -> io::Result<()>;
+    /// Writes one RGBA video frame.
+    fn write_video(&mut self, frame: &[u8]) -> io::Result<()>;
+    /// Closes the inputs and waits for the encoder to finish.
+    fn close(self: Box<Self>);
+}
+
+/// Starts encoder sessions for a stream.
+pub(crate) trait SessionStarter: Send + Sync {
+    fn start(&self, shared: &Arc<FfmpegStreamBackend>) -> Result<Box<dyn EncoderSession>, String>;
+}
+
+/// Why the worker is about to wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Pause {
+    /// Nothing was queued on this pass.
+    Idle,
+    /// A session ended early; the next one starts after the wait.
+    AfterExit,
+    /// A session failed to start; the next try comes after the wait.
+    AfterStartFailure,
+}
+
+impl Pause {
+    /// How long production sleeps for this pause.
+    pub(crate) fn duration(self) -> Duration {
+        match self {
+            Pause::Idle => Duration::from_millis(1),
+            Pause::AfterExit => Duration::from_millis(100),
+            Pause::AfterStartFailure => Duration::from_millis(250),
+        }
+    }
+}
+
+/// Waits for a [`Pause`]: production sleeps, tests return at once.
+pub(crate) type PauseHook<'a> = &'a mut dyn FnMut(&FfmpegStreamBackend, Pause);
+
+#[derive(Debug)]
+pub(crate) enum SessionOutcome {
+    GracefulStop,
+    UnexpectedExit(String),
+    IoError(String),
+}
+
+pub(super) fn worker(
+    shared: &Arc<FfmpegStreamBackend>,
+    starter: &dyn SessionStarter,
+    pause: PauseHook<'_>,
+) {
+    while !shared.stopping.load(Ordering::Acquire) || !queues_drained(shared) {
+        match starter.start(shared) {
             Ok(mut session) => {
-                let outcome = run_session(&shared, &mut session);
-                finish_session(session);
+                let outcome = run_session(shared, session.as_mut(), pause);
+                session.close();
 
                 match outcome {
                     SessionOutcome::GracefulStop => break,
@@ -26,7 +82,7 @@ pub(super) fn worker(shared: Arc<FfmpegStreamBackend>) {
                         }
                         shared.restarts.fetch_add(1, Ordering::Relaxed);
                         shared.set_error(message);
-                        thread::sleep(Duration::from_millis(100));
+                        pause(shared, Pause::AfterExit);
                     }
                 }
             }
@@ -36,20 +92,17 @@ pub(super) fn worker(shared: Arc<FfmpegStreamBackend>) {
                     break;
                 }
                 shared.restarts.fetch_add(1, Ordering::Relaxed);
-                thread::sleep(Duration::from_millis(250));
+                pause(shared, Pause::AfterStartFailure);
             }
         }
     }
 }
 
-#[derive(Debug)]
-enum SessionOutcome {
-    GracefulStop,
-    UnexpectedExit(String),
-    IoError(String),
-}
-
-fn run_session(shared: &FfmpegStreamBackend, session: &mut FfmpegSession) -> SessionOutcome {
+fn run_session(
+    shared: &FfmpegStreamBackend,
+    session: &mut dyn EncoderSession,
+    pause: PauseHook<'_>,
+) -> SessionOutcome {
     let mut audio_bytes = Vec::with_capacity(4096 * 8);
     let mut video_frame = vec![0; shared.config.video_frame_bytes()];
     loop {
@@ -57,19 +110,8 @@ fn run_session(shared: &FfmpegStreamBackend, session: &mut FfmpegSession) -> Ses
             return SessionOutcome::GracefulStop;
         }
 
-        match session.child.try_wait() {
-            Ok(Some(status)) => {
-                let mut message = format!("ffmpeg exited unexpectedly: {status}");
-                if let Some(stderr) = shared.stderr_tail_string() {
-                    message.push_str("; stderr: ");
-                    message.push_str(stderr.trim());
-                }
-                return SessionOutcome::UnexpectedExit(message);
-            }
-            Ok(None) => {}
-            Err(err) => {
-                return SessionOutcome::IoError(format!("ffmpeg status check failed: {err}"));
-            }
+        if let Some(outcome) = session.check_exit() {
+            return outcome;
         }
 
         let mut did_work = false;
@@ -82,7 +124,7 @@ fn run_session(shared: &FfmpegStreamBackend, session: &mut FfmpegSession) -> Ses
             audio_bytes.extend_from_slice(&right.to_le_bytes());
         }
         if !audio_bytes.is_empty() {
-            if let Err(err) = session.audio.write_all(&audio_bytes) {
+            if let Err(err) = session.write_audio(&audio_bytes) {
                 return SessionOutcome::IoError(format!("ffmpeg audio write failed: {err}"));
             }
             shared
@@ -97,7 +139,7 @@ fn run_session(shared: &FfmpegStreamBackend, session: &mut FfmpegSession) -> Ses
             .unwrap()
             .pop_into(&mut video_frame);
         if has_video_frame {
-            if let Err(err) = session.video.write_all(&video_frame) {
+            if let Err(err) = session.write_video(&video_frame) {
                 return SessionOutcome::IoError(format!("ffmpeg video write failed: {err}"));
             }
             shared.video_frames_sent.fetch_add(1, Ordering::Relaxed);
@@ -105,7 +147,7 @@ fn run_session(shared: &FfmpegStreamBackend, session: &mut FfmpegSession) -> Ses
         }
 
         if !did_work {
-            thread::sleep(Duration::from_millis(1));
+            pause(shared, Pause::Idle);
         }
     }
 }

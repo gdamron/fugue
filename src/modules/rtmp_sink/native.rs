@@ -197,9 +197,33 @@ impl RtmpSink {
         constant_video_bitrate: bool,
         black_video_fallback: bool,
     ) -> Result<(Self, RtmpSinkHandle), Box<dyn std::error::Error>> {
+        let stream = FfmpegStreamBackend::start(config.stream_config(constant_video_bitrate))?;
+        Self::over_stream(config, stream, black_video_fallback)
+    }
+
+    /// A sink whose stream runs over the recording fake encoder. Its worker
+    /// runs on the thread that calls `finish()`.
+    #[cfg(test)]
+    pub(crate) fn with_fake_stream(
+        config: RtmpSinkConfig,
+        fake: &crate::streaming::ffmpeg::fake::FakeEncoder,
+    ) -> Result<(Self, RtmpSinkHandle, FfmpegStreamHandle), Box<dyn std::error::Error>> {
+        let stream = FfmpegStreamBackend::start_on_finish(
+            config.stream_config(false),
+            Arc::new(fake.clone()),
+            crate::streaming::ffmpeg::fake::stop_when_idle,
+        );
+        let (sink, handle) = Self::over_stream(config, stream.clone(), false)?;
+        Ok((sink, handle, stream))
+    }
+
+    fn over_stream(
+        config: RtmpSinkConfig,
+        stream: FfmpegStreamHandle,
+        black_video_fallback: bool,
+    ) -> Result<(Self, RtmpSinkHandle), Box<dyn std::error::Error>> {
         let soft_clip = config.soft_clip;
         let monitor = config.monitor;
-        let stream = FfmpegStreamBackend::start(config.stream_config(constant_video_bitrate))?;
         let background_video = if let Some(playback_config) = config.video_playback_config() {
             let target_stream = stream.clone();
             let target: VideoFrameTarget =
@@ -617,7 +641,6 @@ mod tests {
     #[cfg(unix)]
     mod unix_fake_ffmpeg {
         use super::*;
-        use crate::{Module, SinkModule};
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
         use std::path::PathBuf;
@@ -681,38 +704,6 @@ PY
             perms.set_mode(0o755);
             fs::set_permissions(&path, perms).unwrap();
             path
-        }
-
-        #[test]
-        fn soft_clip_does_not_change_downstream_pass_through() {
-            let fake = fake_ffmpeg();
-            let config = RtmpSinkConfig::from_json(
-                &json!({
-                    "ffmpeg_path": fake.to_string_lossy(),
-                    "url": "rtmp://example.test/live/fugue",
-                    "width": 2,
-                    "height": 2,
-                    "buffer_frames": 64,
-                    "video_queue_frames": 2,
-                    "monitor": true,
-                    "soft_clip": true
-                }),
-                48_000,
-            )
-            .unwrap();
-            let (mut sink, handle) = RtmpSink::new_native(config).unwrap();
-
-            sink.set_input("audio_left", 2.0).unwrap();
-            sink.set_input("audio_right", -2.0).unwrap();
-            sink.process(1);
-
-            assert_eq!(sink.get_output("audio_left").unwrap(), 2.0);
-            assert_eq!(sink.get_output("audio_right").unwrap(), -2.0);
-            let (left, right) = sink.sink_block();
-            assert_eq!(left[0], 2.0);
-            assert_eq!(right[0], -2.0);
-
-            handle.finish();
         }
 
         #[test]

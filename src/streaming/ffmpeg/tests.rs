@@ -1,6 +1,212 @@
-//! Backend tests, with a fake ffmpeg script and opt-in real-ffmpeg smoke tests.
+//! Backend tests over the recording fake encoder, plus opt-in real-ffmpeg
+//! smoke tests.
 
+use super::fake::{stop_when_idle, FakeEncoder, FakeSession};
 use super::*;
+
+fn fake_config(audio_buffer_frames: usize) -> FfmpegStreamConfig {
+    FfmpegStreamConfig {
+        ffmpeg_path: "ffmpeg".to_string(),
+        url: "rtmp://example.test/live/secret-key".to_string(),
+        tee_to_disk: None,
+        width: 2,
+        height: 2,
+        fps: 2,
+        sample_rate: 48_000,
+        video_encoder: "libx264".to_string(),
+        audio_encoder: "aac".to_string(),
+        video_bitrate: "2500k".to_string(),
+        audio_bitrate: "128k".to_string(),
+        gop_duration: 2,
+        constant_video_bitrate: false,
+        audio_buffer_frames,
+        video_queue_frames: 2,
+    }
+}
+
+fn fake_stream(fake: &FakeEncoder, audio_buffer_frames: usize) -> FfmpegStreamHandle {
+    FfmpegStreamBackend::start_on_finish(
+        fake_config(audio_buffer_frames),
+        Arc::new(fake.clone()),
+        stop_when_idle,
+    )
+}
+
+#[test]
+fn production_waits_are_unchanged() {
+    use std::time::Duration;
+    assert_eq!(Pause::Idle.duration(), Duration::from_millis(1));
+    assert_eq!(Pause::AfterExit.duration(), Duration::from_millis(100));
+    assert_eq!(
+        Pause::AfterStartFailure.duration(),
+        Duration::from_millis(250)
+    );
+}
+
+#[test]
+fn streams_audio_and_video_to_the_encoder() {
+    let fake = FakeEncoder::default();
+    let backend = fake_stream(&fake, 64);
+
+    let frame: Vec<u8> = (0..16).collect();
+    backend.push_video_rgba(&frame).unwrap();
+    for i in 0..8 {
+        backend.push_audio(i as f32, -(i as f32));
+    }
+    backend.finish();
+
+    let sessions = fake.sessions();
+    assert_eq!(sessions.len(), 1);
+    assert!(sessions[0].closed);
+    assert_eq!(sessions[0].video, vec![frame]);
+    let expected: Vec<_> = (0..8).map(|i| (i as f32, -(i as f32))).collect();
+    assert_eq!(sessions[0].audio_frames(), expected);
+    let stats = backend.stats();
+    assert_eq!(stats.audio_frames_sent, 8, "{stats:?}");
+    assert_eq!(stats.video_frames_sent, 1, "{stats:?}");
+    assert_eq!(stats.audio_frames_dropped, 0, "{stats:?}");
+    assert_eq!(stats.video_frames_dropped, 0, "{stats:?}");
+    assert_eq!(stats.restarts, 0, "{stats:?}");
+    assert_eq!(stats.last_error, None, "{stats:?}");
+}
+
+#[test]
+fn finish_delivers_every_queued_frame_across_writes() {
+    let fake = FakeEncoder::default();
+    let backend = fake_stream(&fake, 8_192);
+    // More than one 4096-frame write.
+    let pushed: Vec<_> = (0..5_000).map(|i| (i as f32, i as f32 + 0.5)).collect();
+    for &(left, right) in &pushed {
+        backend.push_audio(left, right);
+    }
+    backend.finish();
+
+    assert_eq!(fake.audio_frames(), pushed);
+    let stats = backend.stats();
+    assert_eq!(stats.audio_frames_sent, pushed.len(), "{stats:?}");
+    assert_eq!(stats.audio_frames_dropped, 0, "{stats:?}");
+}
+
+#[test]
+fn full_audio_ring_drops_newest_frames() {
+    let fake = FakeEncoder::default();
+    // A ring of four slots holds three frames.
+    let backend = fake_stream(&fake, 4);
+    for i in 0..5 {
+        backend.push_audio(i as f32, 0.0);
+    }
+    backend.finish();
+
+    let left: Vec<_> = fake.audio_frames().iter().map(|frame| frame.0).collect();
+    assert_eq!(left, [0.0, 1.0, 2.0]);
+    let stats = backend.stats();
+    assert_eq!(stats.audio_frames_sent, 3, "{stats:?}");
+    assert_eq!(stats.audio_frames_dropped, 2, "{stats:?}");
+}
+
+#[test]
+fn rejects_bad_video_frame_size() {
+    let fake = FakeEncoder::default();
+    let backend = fake_stream(&fake, 64);
+
+    let err = backend.push_video_rgba(&[0; 15]).unwrap_err();
+    assert!(err.contains("expected RGBA frame with 16 bytes"), "{err}");
+    backend.finish();
+    assert!(fake
+        .sessions()
+        .iter()
+        .all(|session| session.video.is_empty()));
+}
+
+#[test]
+fn restarts_after_unexpected_encoder_exit() {
+    let fake = FakeEncoder::scripted([FakeSession::ExitAfterWrites(
+        1,
+        "ffmpeg exited unexpectedly: exit status: 2".to_string(),
+    )]);
+    let backend = FfmpegStreamBackend::start_on_finish(
+        fake_config(64),
+        Arc::new(fake.clone()),
+        |backend, pause| match pause {
+            Pause::AfterExit => {
+                for i in 4..8 {
+                    backend.push_audio(i as f32, 0.5);
+                }
+            }
+            Pause::Idle => backend.stop(),
+            Pause::AfterStartFailure => panic!("no start should fail"),
+        },
+    );
+    for i in 0..4 {
+        backend.push_audio(i as f32, 0.5);
+    }
+    backend.run_worker();
+
+    let sessions = fake.sessions();
+    assert_eq!(sessions.len(), 2);
+    let frames =
+        |range: std::ops::Range<i32>| -> Vec<_> { range.map(|i| (i as f32, 0.5)).collect() };
+    assert_eq!(sessions[0].audio_frames(), frames(0..4));
+    assert_eq!(sessions[1].audio_frames(), frames(4..8));
+    let stats = backend.stats();
+    assert_eq!(stats.audio_frames_sent, 8, "{stats:?}");
+    assert_eq!(stats.restarts, 1, "{stats:?}");
+    assert_eq!(
+        stats.last_error.as_deref(),
+        Some("ffmpeg exited unexpectedly: exit status: 2")
+    );
+}
+
+#[test]
+fn restarts_after_failed_start() {
+    let fake = FakeEncoder::scripted([FakeSession::FailToStart(
+        "failed to spawn ffmpeg 'ffmpeg': not found".to_string(),
+    )]);
+    let backend = fake_stream(&fake, 64);
+    backend.run_worker();
+
+    assert_eq!(fake.starts(), 2);
+    let stats = backend.stats();
+    assert_eq!(stats.restarts, 1, "{stats:?}");
+    let error = stats.last_error.unwrap();
+    assert!(error.contains("failed to spawn ffmpeg"), "{error}");
+}
+
+#[test]
+fn restarts_after_failed_write() {
+    let fake = FakeEncoder::scripted([FakeSession::FailWriteAfter(0)]);
+    let backend = fake_stream(&fake, 64);
+    backend.push_audio(0.25, -0.25);
+    backend.run_worker();
+
+    let sessions = fake.sessions();
+    assert_eq!(sessions.len(), 2);
+    assert!(sessions.iter().all(|session| session.closed));
+    // The failed write's frame is lost with the session.
+    assert!(sessions[1].audio.is_empty());
+    let stats = backend.stats();
+    assert_eq!(stats.restarts, 1, "{stats:?}");
+    let error = stats.last_error.unwrap();
+    assert!(error.starts_with("ffmpeg audio write failed"), "{error}");
+}
+
+#[test]
+fn exit_while_stopping_ends_without_restart() {
+    let fake = FakeEncoder::scripted([FakeSession::ExitOnFirstCheck(
+        "ffmpeg exited unexpectedly: rtmp://example.test/live/secret-key".to_string(),
+    )]);
+    let backend = fake_stream(&fake, 64);
+    backend.push_audio(0.1, 0.1);
+    backend.finish();
+
+    assert_eq!(fake.starts(), 1);
+    let stats = backend.stats();
+    assert_eq!(stats.restarts, 0, "{stats:?}");
+    assert_eq!(
+        stats.last_error.as_deref(),
+        Some("ffmpeg exited unexpectedly: <redacted-stream-url>")
+    );
+}
 
 #[test]
 fn redacts_stream_urls_from_diagnostics() {
@@ -17,13 +223,12 @@ fn missing_ffmpeg_error_is_clear() {
     assert!(err.to_string().contains("requires ffmpeg in PATH"));
 }
 
+/// Opt-in: set `FUGUE_RTMP_SINK_REAL_FFMPEG=1` to stream through real ffmpeg.
 #[cfg(unix)]
-mod unix_fake_ffmpeg {
+mod real_ffmpeg {
     use super::*;
-    use crate::test_support::wait_until;
     use std::fs;
-    use std::os::unix::fs::PermissionsExt;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -32,85 +237,6 @@ mod unix_fake_ffmpeg {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("fugue-rtmp-sink-{name}-{nanos}"))
-    }
-
-    fn fake_ffmpeg(mode: &str) -> PathBuf {
-        let dir = temp_dir(mode);
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("ffmpeg");
-        let script = format!(
-            r#"#!/bin/sh
-if [ "$1" = "-version" ]; then
-  exit 0
-fi
-FUGUE_FAKE_FFMPEG_MODE="{mode}" python3 - "$@" <<'PY'
-import os
-import re
-import select
-import socket
-import sys
-import time
-
-urls = [arg for arg in sys.argv[1:] if arg.startswith("tcp://")]
-if len(urls) < 2:
-    sys.exit(10)
-
-def port(url):
-    match = re.search(r":(\d+)(?:\?|$)", url)
-    if not match:
-        sys.exit(11)
-    return int(match.group(1))
-
-sockets = []
-for url in urls[:2]:
-    s = socket.create_connection(("127.0.0.1", port(url)), timeout=5)
-    s.setblocking(False)
-    sockets.append(s)
-
-if os.environ.get("FUGUE_FAKE_FFMPEG_MODE") == "exit":
-    sys.exit(2)
-
-deadline = time.time() + 5
-while sockets and time.time() < deadline:
-    readable, _, _ = select.select(sockets, [], [], 0.05)
-    for s in readable:
-        try:
-            data = s.recv(65536)
-        except BlockingIOError:
-            continue
-        if not data:
-            sockets.remove(s)
-            s.close()
-
-sys.exit(0 if not sockets else 12)
-PY
-"#
-        );
-        fs::write(&path, script).unwrap();
-        let mut perms = fs::metadata(&path).unwrap().permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&path, perms).unwrap();
-        path
-    }
-
-    fn config_with_fake(path: &Path, url: &str) -> FfmpegStreamConfig {
-        FfmpegStreamConfig {
-            ffmpeg_path: path.to_string_lossy().into_owned(),
-            url: url.to_string(),
-            tee_to_disk: None,
-            width: 2,
-            height: 2,
-            fps: 2,
-            sample_rate: 48_000,
-            video_encoder: "libx264".to_string(),
-            audio_encoder: "aac".to_string(),
-            video_bitrate: "2500k".to_string(),
-            audio_bitrate: "128k".to_string(),
-            gop_duration: 2,
-            constant_video_bitrate: false,
-            audio_buffer_frames: 64,
-            video_queue_frames: 2,
-        }
     }
 
     fn push_smoke_media(backend: &FfmpegStreamBackend) {
@@ -130,61 +256,6 @@ PY
                 backend.push_audio(sample, sample);
             }
         }
-    }
-
-    #[test]
-    fn streams_audio_and_video_to_fake_ffmpeg() {
-        let fake = fake_ffmpeg("stream");
-        FfmpegStreamBackend::validate_ffmpeg(fake.to_str().unwrap()).unwrap();
-        let backend =
-            FfmpegStreamBackend::start(config_with_fake(&fake, "rtmp://example.test/live"))
-                .unwrap();
-
-        backend.push_video_rgba(&[255; 16]).unwrap();
-        for _ in 0..8 {
-            backend.push_audio(0.25, -0.25);
-        }
-
-        backend.finish();
-        let stats = backend.stats();
-        assert!(stats.audio_frames_sent > 0, "{stats:?}");
-        assert_eq!(stats.video_frames_sent, 1, "{stats:?}");
-        assert_eq!(stats.audio_frames_dropped, 0, "{stats:?}");
-        assert_eq!(stats.video_frames_dropped, 0, "{stats:?}");
-    }
-
-    #[test]
-    fn rejects_bad_video_frame_size() {
-        let fake = fake_ffmpeg("bad-frame");
-        let backend =
-            FfmpegStreamBackend::start(config_with_fake(&fake, "rtmp://example.test/live"))
-                .unwrap();
-
-        let err = backend.push_video_rgba(&[0; 15]).unwrap_err();
-        assert!(err.contains("expected RGBA frame"));
-        backend.finish();
-    }
-
-    #[test]
-    fn restarts_after_unexpected_ffmpeg_exit() {
-        let fake = fake_ffmpeg("exit");
-        let backend =
-            FfmpegStreamBackend::start(config_with_fake(&fake, "rtmp://example.test/exit"))
-                .unwrap();
-
-        backend.push_video_rgba(&[128; 16]).unwrap();
-        for _ in 0..8 {
-            backend.push_audio(0.1, 0.1);
-        }
-
-        // finish() before the first session ends would stop the worker
-        // without counting a restart, so wait for the restart itself.
-        wait_until(|| backend.stats().restarts > 0);
-
-        backend.finish();
-        let stats = backend.stats();
-        assert!(stats.restarts > 0, "{stats:?}");
-        assert!(stats.last_error.is_some(), "{stats:?}");
     }
 
     #[test]

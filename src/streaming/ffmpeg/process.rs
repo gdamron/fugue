@@ -1,7 +1,7 @@
-//! The ffmpeg process session: an ffmpeg process that reads raw audio and
+//! The production encoder session: an ffmpeg process that reads raw audio and
 //! video from two local TCP inputs, with its stderr kept for diagnostics.
 
-use std::io::{BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
@@ -9,16 +9,58 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use super::command::FfmpegCommandSpec;
+use super::worker::{EncoderSession, SessionOutcome, SessionStarter};
 use super::{redact_stream_url, FfmpegStreamBackend};
 
-pub(super) struct FfmpegSession {
-    pub(super) child: Child,
-    pub(super) audio: TcpStream,
-    pub(super) video: TcpStream,
+/// Starts each session as an ffmpeg process.
+pub(super) struct ProcessStarter;
+
+impl SessionStarter for ProcessStarter {
+    fn start(&self, shared: &Arc<FfmpegStreamBackend>) -> Result<Box<dyn EncoderSession>, String> {
+        Ok(Box::new(start_session(shared.clone())?))
+    }
+}
+
+struct FfmpegSession {
+    shared: Arc<FfmpegStreamBackend>,
+    child: Child,
+    audio: TcpStream,
+    video: TcpStream,
     stderr_reader: Option<JoinHandle<()>>,
 }
 
-pub(super) fn start_session(shared: Arc<FfmpegStreamBackend>) -> Result<FfmpegSession, String> {
+impl EncoderSession for FfmpegSession {
+    fn check_exit(&mut self) -> Option<SessionOutcome> {
+        match self.child.try_wait() {
+            Ok(Some(status)) => {
+                let mut message = format!("ffmpeg exited unexpectedly: {status}");
+                if let Some(stderr) = self.shared.stderr_tail_string() {
+                    message.push_str("; stderr: ");
+                    message.push_str(stderr.trim());
+                }
+                Some(SessionOutcome::UnexpectedExit(message))
+            }
+            Ok(None) => None,
+            Err(err) => Some(SessionOutcome::IoError(format!(
+                "ffmpeg status check failed: {err}"
+            ))),
+        }
+    }
+
+    fn write_audio(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.audio.write_all(bytes)
+    }
+
+    fn write_video(&mut self, frame: &[u8]) -> io::Result<()> {
+        self.video.write_all(frame)
+    }
+
+    fn close(self: Box<Self>) {
+        finish_session(*self);
+    }
+}
+
+fn start_session(shared: Arc<FfmpegStreamBackend>) -> Result<FfmpegSession, String> {
     let audio_listener =
         TcpListener::bind(("127.0.0.1", 0)).map_err(|err| format!("audio bind failed: {err}"))?;
     let video_listener =
@@ -91,6 +133,7 @@ pub(super) fn start_session(shared: Arc<FfmpegStreamBackend>) -> Result<FfmpegSe
         .map_err(|err| format!("video stream nodelay failed: {err}"))?;
 
     Ok(FfmpegSession {
+        shared,
         child,
         audio,
         video,
@@ -142,7 +185,7 @@ fn accept_input_streams(
     Ok((audio.unwrap(), video.unwrap()))
 }
 
-pub(super) fn finish_session(mut session: FfmpegSession) {
+fn finish_session(mut session: FfmpegSession) {
     drop(session.audio);
     drop(session.video);
     let deadline = Instant::now() + Duration::from_secs(2);
