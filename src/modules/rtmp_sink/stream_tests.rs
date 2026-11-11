@@ -158,7 +158,15 @@ fn finish_delivers_every_frame_pushed_before_it() {
     let sessions = fake.sessions();
     assert_eq!(sessions.len(), 1);
     assert!(sessions[0].closed);
-    assert_eq!(sessions[0].audio_frames().len(), pushed);
+    let expected: Vec<_> = (0..6)
+        .flat_map(|block| [(block as f32, block as f32); 512])
+        .collect();
+    assert_eq!(
+        sessions[0].audio_frames(),
+        expected,
+        "every block, in order"
+    );
+    assert_eq!(expected.len(), pushed);
     assert_eq!(stats.audio_frames_sent, pushed, "{stats:?}");
     assert_eq!(stats.audio_frames_dropped, 0, "{stats:?}");
 }
@@ -166,8 +174,10 @@ fn finish_delivers_every_frame_pushed_before_it() {
 #[test]
 fn wrong_size_video_frame_names_the_expected_size() {
     let (_sink, handle, _, fake) = sink(false);
-    let err = handle.push_video_rgba(&[0; 15]).unwrap_err();
-    assert!(err.contains("RGBA frame with 16 bytes"), "{err}");
+    for wrong in [&[0; 15][..], &[0; 17][..]] {
+        let err = handle.push_video_rgba(wrong).unwrap_err();
+        assert!(err.contains("RGBA frame with 16 bytes"), "{err}");
+    }
 
     handle.push_video_rgba(&[7; 16]).unwrap();
     let stats = handle.finish();
