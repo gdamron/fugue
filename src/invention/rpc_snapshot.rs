@@ -29,6 +29,7 @@ impl RuntimeFullSnapshot {
             .map(|module| ModuleSpec {
                 id: module.info.id.clone(),
                 module_type: module.info.module_type.clone(),
+                name: None,
                 config: module.info.config.clone(),
             })
             .collect();

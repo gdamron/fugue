@@ -57,8 +57,9 @@ pub(crate) struct LoadedDevelopment {
 }
 
 /// Two declarations build the same development when they differ at most in
-/// the minimum core they declare or their layout: saving writes that minimum
-/// into the file, a layout builds nothing, and reloading must not rebuild
+/// the minimum core they declare, their layout or their module names: saving
+/// writes that minimum into the file, presentation builds nothing, and
+/// reloading must not rebuild
 /// instances nobody touched.
 impl PartialEq for LoadedDevelopment {
     fn eq(&self, other: &Self) -> bool {

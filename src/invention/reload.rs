@@ -111,8 +111,9 @@ pub(crate) struct ValidatedDocument {
     /// fresh build of the document starts each control at, for a reload to
     /// restore what the document leaves implicit (see [`Implicit`]).
     pub(crate) fresh: Arc<std::sync::Mutex<IndexMap<String, ControlSurfaceInstance>>>,
-    /// The layout entries and main clock the document's settling dropped
-    /// (see [`Invention::settle_layout`]), for the reload's report.
+    /// The layout entries, main clock and names the document's settling
+    /// dropped (see [`Invention::settle_presentation`]), for the reload's
+    /// report.
     pub(crate) unplaced: Vec<String>,
 }
 
@@ -218,10 +219,9 @@ impl RunningInvention {
         mut invention: Invention,
     ) -> Result<ValidatedDocument, ReloadError> {
         // The retained document drops a layout entry placing no module of
-        // it, a module this reload removes included, and a main clock
-        // naming none of its clocks.
-        let mut unplaced = invention.settle_layout();
-        unplaced.extend(invention.settle_main_clock());
+        // it, a module this reload removes included, a main clock naming
+        // none of its clocks, and a name that cannot name a module.
+        let unplaced = invention.settle_presentation();
         let document = invention.clone();
         let invalid = |error: Box<dyn std::error::Error>| ReloadError::Invalid(error.to_string());
         let (resolved, loaded) =

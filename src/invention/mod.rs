@@ -30,6 +30,7 @@ pub(crate) mod load_warnings;
 mod main_clock;
 #[cfg(test)]
 pub(crate) mod manual_backend;
+pub mod names;
 pub mod notes;
 pub mod orchestration;
 pub(crate) mod publish;
@@ -54,6 +55,7 @@ pub use format::{
 pub use graph::{feedback_chunks, set_feedback_chunks, MasterLevels, FEEDBACK_CHUNKS_ENV};
 pub use handles::InventionHandles;
 pub use layout::{Layout, Position};
+pub use names::MAX_MODULE_NAME_BYTES;
 pub use notes::{NoteChange, NoteChanges, NoteTime, Playhead};
 pub use orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
 pub use reload::{DevelopmentDefinitions, ReloadError, ReloadReport};

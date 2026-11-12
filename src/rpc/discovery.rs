@@ -306,6 +306,10 @@ pub struct ModuleDescription {
     /// Present only for a running instance.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub module_id: Option<String>,
+    /// What the piece calls a running instance, when it names it; commands
+    /// still address it by `module_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// Ports and declared control metadata.
     #[serde(flatten)]
     pub info: ModuleTypeInfo,
@@ -379,6 +383,7 @@ impl ModuleDescription {
             },
             sample_rate,
             module_id: None,
+            name: None,
             info: ModuleTypeInfo {
                 type_name: name.clone(),
                 inputs: module.inputs().iter().map(|p| p.to_string()).collect(),
@@ -412,6 +417,7 @@ impl ModuleDescription {
             metadata_source: MetadataSource::RunningInstance,
             sample_rate,
             module_id: Some(snapshot.info.id),
+            name: None,
             info: ModuleTypeInfo {
                 type_name: snapshot.info.module_type,
                 inputs: snapshot.ports.inputs,
