@@ -83,4 +83,21 @@ mod tests {
             assert_eq!(bad.main_clock, None);
         }
     }
+
+    #[test]
+    fn removing_or_retyping_the_main_clock_forgets_it() {
+        use crate::invention::authored_document::{remove_module, upsert_module};
+        let config = serde_json::json!({});
+        let mut retyped = piece(Some("b"));
+        upsert_module(&mut retyped, "b", "clock", &config);
+        assert_eq!(retyped.main_clock.as_deref(), Some("b"), "still a clock");
+        upsert_module(&mut retyped, "b", "oscillator", &config);
+        assert_eq!(retyped.main_clock, None);
+
+        let mut removed = piece(Some("b"));
+        remove_module(&mut removed, "a");
+        assert_eq!(removed.main_clock.as_deref(), Some("b"));
+        remove_module(&mut removed, "b");
+        assert_eq!(removed.main_clock, None);
+    }
 }
