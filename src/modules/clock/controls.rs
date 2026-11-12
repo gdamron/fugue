@@ -7,6 +7,16 @@ pub(super) const GATE_LENGTH: ControlIndex = ControlIndex(1);
 pub(super) const RESET: ControlIndex = ControlIndex(2);
 pub(super) const POSITION: ControlIndex = ControlIndex(3);
 pub(super) const ELAPSED: ControlIndex = ControlIndex(4);
+pub(super) const BEATS_PER_BAR: ControlIndex = ControlIndex(5);
+pub(super) const BAR: ControlIndex = ControlIndex(6);
+pub(super) const BEAT_IN_BAR: ControlIndex = ControlIndex(7);
+pub(super) const METER: ControlIndex = ControlIndex(8);
+
+/// The most beats a bar may have.
+pub(super) const MAX_BEATS_PER_BAR: i32 = 32;
+/// The highest bar the clock reports (an integer control holds whole
+/// numbers within 2^24): past it, it stays on this bar.
+pub(super) const MAX_BAR: i32 = 1 << 24;
 
 const DECLS: &[ControlDecl] = &[
     // Not clamped: tests and fast pulse clocks run far past the range
@@ -56,6 +66,47 @@ const DECLS: &[ControlDecl] = &[
         RtValue::F32(0.0),
         "Beats counted since the clock started, across resets (a reset moves on \
          to the next whole beat), as of the latest block: where a view's playhead is",
+    )
+    .telemetry(),
+    ControlDecl::new(
+        "beats_per_bar",
+        DeclKind::Integer {
+            min: 0,
+            max: MAX_BEATS_PER_BAR,
+        },
+        RtValue::I32(0),
+        "Beats in a bar, 0 for no meter. A new meter takes over at the next \
+         bar line; on a clock without one, at once",
+    )
+    .clamped(0.0, MAX_BEATS_PER_BAR as f32),
+    ControlDecl::new(
+        "bar",
+        DeclKind::Integer {
+            min: 0,
+            max: MAX_BAR,
+        },
+        RtValue::I32(0),
+        "The bar, from 1 at the latest reset, as of the latest block; 0 with no meter",
+    )
+    .telemetry(),
+    ControlDecl::new(
+        "beat_in_bar",
+        DeclKind::Integer {
+            min: 0,
+            max: MAX_BEATS_PER_BAR,
+        },
+        RtValue::I32(0),
+        "The beat within the bar, from 1, as of the latest block; 0 with no meter",
+    )
+    .telemetry(),
+    ControlDecl::new(
+        "meter",
+        DeclKind::Integer {
+            min: 0,
+            max: MAX_BEATS_PER_BAR,
+        },
+        RtValue::I32(0),
+        "Beats in the bar playing now: the meter in force, 0 for none",
     )
     .telemetry(),
 ];
