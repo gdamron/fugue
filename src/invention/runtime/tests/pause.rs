@@ -162,7 +162,7 @@ fn a_metered_clock_holds_its_bar_and_a_next_bar_write_lands_on_its_line_after_a_
     }
     let landed = number("clock", "elapsed");
     assert!(
-        before < 6.0 && landed >= 6.0 && landed < 6.0 + 1.0 / 200.0,
+        before < 6.0 && (6.0..6.0 + 1.0 / 200.0).contains(&landed),
         "lands on the bar line at beat 6: {before} then {landed}"
     );
     assert_eq!(
