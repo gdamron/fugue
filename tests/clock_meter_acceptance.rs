@@ -2,8 +2,8 @@
 //!
 //! Spec summary: the clock has a whole-number `beats_per_bar` control and
 //! config key (0 to 32, default 0 = no meter) and three read-only integer
-//! telemetry controls updated per block: `bar` (from 1), `beat_in_bar` (from
-//! 1) and `meter` (beats per bar in force for the current bar). All three
+//! telemetry controls updated per block: `bar` (from 1), `beat_in_bar`
+//! (from 1) and `meter` (beats per bar in force for the current bar). All three
 //! read 0 with no meter. A meter set on a clock with none counts bars from
 //! the last reset (beat 0) at once; changing an existing meter is adopted at
 //! the next bar line, and bars already played keep their numbers; a reset
