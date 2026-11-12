@@ -41,7 +41,13 @@ pub struct RuntimeConnectionInfo {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct RuntimeStatus {
+    /// Whether a piece is loaded and its stream started; it stays true
+    /// while the piece is paused (see [`Self::playing`]).
     pub running: bool,
+    /// Whether the loaded piece is paused, held where it stood until it is
+    /// resumed. Left out on the wire while false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub paused: bool,
     pub sample_rate: u32,
     pub module_count: usize,
     pub connection_count: usize,
@@ -53,6 +59,14 @@ pub struct RuntimeStatus {
     pub session: Option<crate::rpc::SessionDurability>,
 }
 
+impl RuntimeStatus {
+    /// Whether the music plays: a piece is running and not paused. What a
+    /// status summary reports as `playing`.
+    pub fn playing(&self) -> bool {
+        self.running && !self.paused
+    }
+}
+
 /// Authoritative runtime-owned snapshot of modules, connections, and status.
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeState {
@@ -60,6 +74,9 @@ pub struct RuntimeState {
     pub connections: Vec<RuntimeConnectionInfo>,
     pub sample_rate: u32,
     pub running: bool,
+    /// Whether the piece is paused, as last requested (see
+    /// [`RuntimeStatus::paused`]).
+    pub paused: bool,
     /// The authored declarative document this graph was built from, kept in
     /// sync with runtime mutations so the live graph can be written back to
     /// disk without losing developments, assets, title, or the
@@ -174,6 +191,7 @@ impl RuntimeState {
     pub fn status(&self) -> RuntimeStatus {
         RuntimeStatus {
             running: self.running,
+            paused: self.paused,
             sample_rate: self.sample_rate,
             module_count: self.modules.len(),
             connection_count: self.connections.len(),

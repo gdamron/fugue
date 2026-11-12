@@ -407,6 +407,7 @@ fn flush_session_is_a_fenced_read_answered_with_durability() {
 fn runtime_status_carries_session_durability_only_when_set() {
     let mut status = crate::RuntimeStatus {
         running: true,
+        paused: false,
         sample_rate: 48_000,
         module_count: 1,
         connection_count: 0,

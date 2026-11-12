@@ -1,8 +1,9 @@
 //! The sample transport: the first layer of musical time.
 //!
-//! The engine counts samples since its graph was created: Fugue always runs
-//! from load, with no transport start or stop, and the count never goes
-//! back. The audio thread owns the count (`SignalGraph::current_sample`)
+//! The engine counts samples since its graph was created: Fugue runs from
+//! load, and the count never goes back. A pause holds it (see
+//! [`Transport::request_pause`]): while the graph is held, no sample is
+//! rendered, so nothing timed on the count moves either. The audio thread owns the count (`SignalGraph::current_sample`)
 //! and publishes it here after every block; control threads read it to
 //! time requests (see [`RequestSender::submit`](super::RequestSender::submit)).
 //! There is no beat or tempo at this layer: clock timelines build on it.
@@ -26,7 +27,7 @@
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use super::sync::{AtomicU64, Ordering};
+use super::sync::{AtomicBool, AtomicU64, Ordering};
 
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
 
@@ -46,6 +47,8 @@ pub(crate) struct Transport {
     rendered: AtomicU64,
     /// Set once, before a live stream starts; read without locking.
     clock: OnceLock<WallClock>,
+    /// Whether the piece is to be paused, as last requested.
+    paused: AtomicBool,
 }
 
 /// The relation between samples and wall-clock time.
@@ -74,6 +77,7 @@ impl Transport {
         Self {
             rendered: AtomicU64::new(0),
             clock: OnceLock::new(),
+            paused: AtomicBool::new(false),
         }
     }
 
@@ -169,6 +173,25 @@ impl Transport {
     #[inline]
     pub(crate) fn rendered(&self) -> u64 {
         self.rendered.load(Ordering::Acquire)
+    }
+
+    /// Requests that the piece pause (`true`) or play (`false`); the audio
+    /// thread takes the request at the start of its next block, fading the
+    /// output out or in (see `SignalGraph::render_block`). Latest wins: the
+    /// state is one word, so a request repeating it changes nothing, and
+    /// none is ever refused for want of room, as one in the request queue
+    /// could be. Returns whether it changed the state requested.
+    pub(crate) fn request_pause(&self, paused: bool) -> bool {
+        self.paused.swap(paused, Ordering::AcqRel) != paused
+    }
+
+    /// Whether the piece is to be paused, as last requested. Wait-free: the
+    /// audio thread reads it once a block. `Acquire`, pairing with
+    /// [`Self::request_pause`], so a block that takes a pause or resume
+    /// also takes every request queued before it.
+    #[inline]
+    pub(crate) fn pause_requested(&self) -> bool {
+        self.paused.load(Ordering::Acquire)
     }
 }
 

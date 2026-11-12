@@ -19,6 +19,7 @@ mod audio_file_sink;
 mod code_modules;
 mod editing;
 mod options;
+mod pause;
 mod replay;
 
 pub use code_modules::CodeModuleRuntimeInfo;

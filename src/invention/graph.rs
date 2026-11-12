@@ -55,6 +55,7 @@ mod edges;
 pub(crate) mod ended;
 mod master;
 pub(crate) mod notes;
+mod pause;
 mod process;
 mod publication;
 mod releases;
@@ -253,6 +254,8 @@ pub(crate) struct SignalGraph {
     pub(crate) output_taps: Option<taps::OutputTaps>,
     /// Unpatched inputs gliding to rest (see [`releases`]).
     pub(crate) releases: releases::Releases,
+    /// Where it stands between playing and paused (see [`pause`]).
+    pub(crate) pause: pause::Pause,
 }
 
 impl SignalGraph {
@@ -305,6 +308,7 @@ impl SignalGraph {
             note_out: None,
             output_taps: None,
             releases: Default::default(),
+            pause: Default::default(),
         }
     }
 

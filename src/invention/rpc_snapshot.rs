@@ -219,6 +219,7 @@ mod tests {
     fn empty_status() -> RuntimeStatus {
         RuntimeStatus {
             running: false,
+            paused: false,
             sample_rate: 48_000,
             module_count: 0,
             connection_count: 0,

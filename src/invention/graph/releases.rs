@@ -211,9 +211,11 @@ impl Previous<'_> {
 }
 
 impl SignalGraph {
-    /// Times the graph's input releases for `sample_rate`.
+    /// Times the graph's input releases and its pause fade for
+    /// `sample_rate`.
     pub(crate) fn set_sample_rate(&mut self, sample_rate: u32) {
         self.releases.set_sample_rate(sample_rate);
+        self.pause.set_sample_rate(sample_rate);
     }
 
     /// Starts releasing input `port` of module `mi`, just unpatched, from

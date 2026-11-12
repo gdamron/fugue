@@ -280,6 +280,7 @@ impl InventionBuilder {
             connections,
             sample_rate: self.sample_rate,
             running: false,
+            paused: false,
             document: Some(document),
             #[cfg(not(target_arch = "wasm32"))]
             built_under: crate::pkg::lock::governing(),
