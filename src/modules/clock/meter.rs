@@ -64,8 +64,10 @@ impl Meter {
             return;
         }
         let line = self.bar_start + f64::from(self.in_force);
-        // Not `<`: a position that is not a number moves nothing.
-        if !(position >= line) {
+        // A position that is not a number moves nothing, so a bad reading
+        // never jumps the bar count; an infinite one runs it out to the
+        // last bar, as any position past every line does.
+        if position.is_nan() || position < line {
             return;
         }
         self.bar_start = line;
@@ -165,6 +167,8 @@ mod tests {
         let mut meter = Meter::new(1);
         assert_eq!(at(&mut meter, 1e300).0, u32::MAX);
         assert_eq!(at(&mut meter, f64::NAN).0, u32::MAX);
+        let mut meter = Meter::new(4);
+        assert_eq!(at(&mut meter, f64::INFINITY).0, u32::MAX);
     }
 
     #[test]
