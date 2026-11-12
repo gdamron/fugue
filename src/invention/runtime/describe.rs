@@ -31,9 +31,11 @@ impl RunningInvention {
             let ports = self.module_ports.lock().unwrap();
             let mut snapshot = self.snapshot().module_snapshot_with_ports(id, &ports)?;
             snapshot.timeline = timeline;
-            let is_sink = self.registry().is_sink(&snapshot.info.module_type);
-            let mut description =
-                crate::ModuleDescription::from_snapshot(snapshot, self.sample_rate, is_sink)?;
+            let mut description = crate::ModuleDescription::from_snapshot(
+                snapshot,
+                self.sample_rate,
+                &self.registry(),
+            )?;
             description.name = name;
             Ok(description)
         } else {

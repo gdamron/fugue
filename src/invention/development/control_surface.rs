@@ -86,6 +86,13 @@ impl DevelopmentControlSurface {
                     kind: super::ranges::listed(source.kind, range),
                     read_only: source.read_only,
                     event: source.event,
+                    // A control exposed under another name says so by
+                    // that name: the inner label names the inner key.
+                    label: (control.name == control.control)
+                        .then_some(source.label)
+                        .flatten(),
+                    option_labels: source.option_labels,
+                    widget: source.widget,
                 },
                 module_id: control.module.clone(),
                 key: control.control.clone(),

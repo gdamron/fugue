@@ -222,6 +222,12 @@ impl ModuleRegistry {
             .unwrap_or(false)
     }
 
+    /// The labels a type declares (see [`ModuleFactory::labels`]); none for
+    /// an unknown type.
+    pub fn labels(&self, type_id: &str) -> crate::TypeLabels {
+        (self.factories.get(type_id)).map_or(crate::TypeLabels::NONE, |f| f.labels())
+    }
+
     /// Returns factory-declared input ports when available.
     pub fn factory_input_ports(&self, type_id: &str) -> Option<&'static [&'static str]> {
         self.factories.get(type_id).and_then(|f| f.input_ports())

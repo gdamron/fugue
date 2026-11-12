@@ -1,6 +1,7 @@
 //! The Oscillator's declared controls.
 
 use crate::control_request::{ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue};
+use crate::ControlWidget;
 
 pub(super) const FREQUENCY: ControlIndex = ControlIndex(0);
 pub(super) const WAVEFORM: ControlIndex = ControlIndex(1);
@@ -27,14 +28,16 @@ const DECLS: &[ControlDecl] = &[
     .unit("Hz")
     .log()
     .precision(1)
-    .clamped(0.0, f32::MAX),
+    .clamped(0.0, f32::MAX)
+    .widget(ControlWidget::Knob),
     ControlDecl::new(
         "waveform",
         DeclKind::Choice(WAVEFORMS),
         RtValue::U32(0),
         "Waveform",
     )
-    .spellings(WAVEFORM_SPELLINGS),
+    .spellings(WAVEFORM_SPELLINGS)
+    .widget(ControlWidget::Segmented),
     ControlDecl::new(
         "frequency_mod_depth",
         DeclKind::Number {
@@ -44,14 +47,18 @@ const DECLS: &[ControlDecl] = &[
         RtValue::F32(0.0),
         "Frequency modulation depth in Hz",
     )
-    .unit("Hz"),
+    .unit("Hz")
+    .label("FM depth")
+    .widget(ControlWidget::Knob),
     ControlDecl::new(
         "amplitude_mod_depth",
         DeclKind::Number { min: 0.0, max: 1.0 },
         RtValue::F32(0.0),
         "Amplitude modulation depth, 0 to 1",
     )
-    .clamped(0.0, 1.0),
+    .clamped(0.0, 1.0)
+    .label("AM depth")
+    .widget(ControlWidget::Knob),
 ];
 
 pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);

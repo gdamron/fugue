@@ -48,6 +48,14 @@ impl ModuleFactory for OscillatorFactory {
         TYPE_ID
     }
 
+    fn labels(&self) -> crate::TypeLabels {
+        crate::TypeLabels {
+            module: None,
+            inputs: &[("frequency_mod", "FM"), ("amplitude_mod", "AM")],
+            outputs: &[],
+        }
+    }
+
     fn config_keys(&self) -> &'static [ConfigKey] {
         &[
             FREQUENCY_KEY,

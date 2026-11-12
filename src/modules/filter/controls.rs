@@ -1,6 +1,7 @@
 //! The Filter's declared controls.
 
 use crate::control_request::{ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue};
+use crate::ControlWidget;
 
 pub(super) const CUTOFF: ControlIndex = ControlIndex(0);
 pub(super) const RESONANCE: ControlIndex = ControlIndex(1);
@@ -30,8 +31,20 @@ const FILTER_TYPES: &[&str] = &[
     "notch",
 ];
 
+/// The filter types as a person reads them, where tidying says them badly.
+const FILTER_TYPE_LABELS: &[(&str, &str)] = &[
+    ("lowpass", "Low-pass"),
+    ("highpass", "High-pass"),
+    ("bandpass", "Band-pass"),
+    ("lowshelf", "Low shelf"),
+    ("highshelf", "High shelf"),
+];
+
 /// The slopes of the lowpass, highpass and bandpass responses.
 const SLOPES: &[&str] = &["12db", "24db"];
+
+/// The slopes as a person reads them.
+const SLOPE_LABELS: &[(&str, &str)] = &[("12db", "12 dB/oct"), ("24db", "24 dB/oct")];
 
 /// Other spellings of the slopes.
 const SLOPE_SPELLINGS: &[(&str, &str)] = &[("12", "12db"), ("24", "24db")];
@@ -69,21 +82,25 @@ const DECLS: &[ControlDecl] = &[
     .unit("Hz")
     .log()
     .precision(0)
-    .clamped(20.0, 20000.0),
+    .clamped(20.0, 20000.0)
+    .widget(ControlWidget::Knob),
     ControlDecl::new(
         "resonance",
         DeclKind::Number { min: 0.0, max: 1.0 },
         RtValue::F32(0.0),
         "Resonance/Q",
     )
-    .clamped(0.0, 1.0),
+    .clamped(0.0, 1.0)
+    .widget(ControlWidget::Knob),
     ControlDecl::new(
         "filter_type",
         DeclKind::Choice(FILTER_TYPES),
         RtValue::U32(0),
         "Filter type",
     )
-    .spellings(FILTER_TYPE_SPELLINGS),
+    .spellings(FILTER_TYPE_SPELLINGS)
+    .option_labels(FILTER_TYPE_LABELS)
+    .widget(ControlWidget::Menu),
     ControlDecl::new(
         "cutoff_mod_depth",
         DeclKind::Number {
@@ -95,7 +112,8 @@ const DECLS: &[ControlDecl] = &[
     )
     .unit("Hz")
     .precision(0)
-    .clamped(0.0, f32::MAX),
+    .clamped(0.0, f32::MAX)
+    .widget(ControlWidget::Knob),
     ControlDecl::new(
         "boost",
         DeclKind::Number {
@@ -107,7 +125,8 @@ const DECLS: &[ControlDecl] = &[
     )
     .unit("dB")
     .precision(1)
-    .clamped(-MAX_BOOST, MAX_BOOST),
+    .clamped(-MAX_BOOST, MAX_BOOST)
+    .widget(ControlWidget::Knob),
     ControlDecl::new(
         "q",
         DeclKind::Number {
@@ -119,7 +138,8 @@ const DECLS: &[ControlDecl] = &[
     )
     .log()
     .precision(2)
-    .clamped(MIN_Q, MAX_Q),
+    .clamped(MIN_Q, MAX_Q)
+    .widget(ControlWidget::Knob),
     ControlDecl::new(
         "bypass",
         DeclKind::Bool,
@@ -132,7 +152,9 @@ const DECLS: &[ControlDecl] = &[
         RtValue::U32(0),
         "Lowpass, highpass and bandpass slope: 12 or 24 dB per octave",
     )
-    .spellings(SLOPE_SPELLINGS),
+    .spellings(SLOPE_SPELLINGS)
+    .option_labels(SLOPE_LABELS)
+    .widget(ControlWidget::Segmented),
 ];
 
 pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);
