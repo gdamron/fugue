@@ -26,6 +26,7 @@ mod editing;
 mod error;
 mod notes;
 mod orchestration;
+mod pause;
 mod pending;
 mod ports;
 mod taps;
@@ -33,6 +34,7 @@ pub(crate) mod timed;
 
 pub use acks::ControlAcks;
 pub use error::GraphCommandError;
+pub(crate) use pause::request_pause;
 pub(crate) use ports::{module_ports, validate_input_port, validate_output_port};
 
 /// A prepared invention ready to run.
@@ -128,6 +130,9 @@ impl InventionRuntime {
         // note offs the request channel holds for want of room are queued.
         reclaimer_started(live.start_reclaimer())?;
 
+        // Pause and resume reach the audio thread through the transport.
+        let transport = graph.transport.clone();
+
         // Requests timed by wall clock are placed on the transport through
         // an anchor at each device callback. wasm32 has no `Instant` clock.
         let mut clock = (!cfg!(target_arch = "wasm32")).then(|| {
@@ -177,6 +182,7 @@ impl InventionRuntime {
             agents: AgentManager::default(),
             event_sink: Arc::new(Mutex::new(None)),
             master,
+            transport,
         };
         running.scripts.start_all(running.controller());
         running.agents.start_all(running.controller());
@@ -260,6 +266,9 @@ pub struct RunningInvention {
     /// meter the daemon drains to emit `MeterLevel`, and the spectrum tap its
     /// analyser reads.
     master: super::graph::MasterObservers,
+    /// The graph's transport, which pause and resume are requested on (see
+    /// [`Self::pause`]).
+    transport: Arc<crate::control_request::Transport>,
 }
 
 impl RunningInvention {
@@ -275,7 +284,11 @@ impl RunningInvention {
     pub fn stop(mut self) {
         self.scripts.stop_all();
         self.agents.stop_all();
-        self.state.lock().unwrap().running = false;
+        {
+            let mut state = self.state.lock().unwrap();
+            state.running = false;
+            state.paused = false;
+        }
         self.backend.stop();
         // Nothing waiting applies now: each timed write is announced refused.
         self.live.abandon_writes();

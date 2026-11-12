@@ -442,6 +442,7 @@ fn receipt(state: ControlRequestState, requested: bool) -> RpcResponsePayload {
     RpcResponsePayload::Receipt(MutationReceipt {
         status: crate::RuntimeStatus {
             running: true,
+            paused: false,
             sample_rate: 48_000,
             module_count: 1,
             connection_count: 0,

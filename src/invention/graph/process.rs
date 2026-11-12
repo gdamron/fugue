@@ -32,6 +32,10 @@ impl SignalGraph {
     /// no clock settles what was submitted (`NullBackend`). Device streams
     /// and offline renders never ask for one.
     ///
+    /// A paused graph plays out its fade and then holds (see
+    /// [`super::pause`]): each block it holds runs as a zero-length block
+    /// does and renders silence.
+    ///
     /// A panic in a module fails the graph on its way out, keeping all it
     /// held for teardown (see [`super::unwind`]): every later block renders
     /// silence and touches nothing.
@@ -54,9 +58,18 @@ impl SignalGraph {
 
     /// [`Self::process_block`] on a graph that has not failed.
     fn render_block(&mut self, left: &mut [f32], right: &mut [f32]) {
+        // Read before the requests are taken, so a write submitted before a
+        // pause or resume is taken in the block that sees it: a write made
+        // while held and then resumed applies before the first frame plays.
+        let paused = self.transport.pause_requested();
         self.ensure_process_order();
 
         let frames = left.len().min(right.len()).min(self.block_capacity);
+        // A paused graph plays only what is left of its fade out, and holds
+        // as a zero-length block once it has faded: silence for the rest.
+        let frames = self.pause.frames_to_play(paused, frames);
+        left[frames..].fill(0.0);
+        right[frames..].fill(0.0);
         if frames == 0 {
             self.apply_due_requests(0);
         }
@@ -158,6 +171,10 @@ impl SignalGraph {
                 right[i] *= gain;
             }
         }
+
+        // Fade it while a pause or resume fades, before the observers read
+        // it, so they read what is heard.
+        self.pause.fade(&mut left[..frames], &mut right[..frames]);
 
         // Hand the mixed block to the master observers. Lock-free and
         // allocation-free.

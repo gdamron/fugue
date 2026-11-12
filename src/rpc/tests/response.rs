@@ -3,6 +3,7 @@ use super::*;
 fn status(module_count: usize, connection_count: usize) -> crate::RuntimeStatus {
     crate::RuntimeStatus {
         running: true,
+        paused: false,
         sample_rate: 48_000,
         module_count,
         connection_count,
