@@ -25,7 +25,8 @@ pub struct RuntimeModuleInfo {
     /// authored control writes to keys it contains and reload control
     /// updates.
     pub config: serde_json::Value,
-    /// What the piece calls the module, when it names it.
+    /// What the piece calls the module, when it names it (filled in full
+    /// snapshots only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }

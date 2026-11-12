@@ -252,7 +252,13 @@ mod tests {
                     "oscillator",
                     serde_json::json!({ "frequency": 440.0 }),
                 ),
-                module("dac", "dac", serde_json::Value::Null),
+                RuntimeModuleSnapshot {
+                    info: RuntimeModuleInfo {
+                        name: Some("Output".into()),
+                        ..module("dac", "dac", serde_json::Value::Null).info
+                    },
+                    ..module("dac", "dac", serde_json::Value::Null)
+                },
             ],
             connections: vec![
                 // Named ports survive.
@@ -278,6 +284,8 @@ mod tests {
         assert_eq!(invention.modules[0].id, "osc");
         assert_eq!(invention.modules[0].module_type, "oscillator");
         assert_eq!(invention.modules[0].config["frequency"], 440.0);
+        assert_eq!(invention.modules[0].name, None);
+        assert_eq!(invention.modules[1].name.as_deref(), Some("Output"));
 
         assert_eq!(invention.connections.len(), 2);
         assert_eq!(invention.connections[0].from_port.as_deref(), Some("audio"));
