@@ -78,3 +78,20 @@ fn a_stopped_piece_is_neither_running_nor_paused() {
     let status = snapshot.status();
     assert!(!status.running && !status.paused && !status.playing());
 }
+
+#[test]
+fn a_pause_leaves_the_request_log_inexact() {
+    let (running, pump) = running_sine();
+    pump.render(2);
+    assert!(running.request_log().is_exact());
+    running.resume();
+    assert!(running.request_log().is_exact(), "resuming a playing piece");
+    running.pause();
+    running.pause();
+    pump.render(10);
+    running.resume();
+    pump.render(10);
+    let log = running.request_log();
+    assert!(!log.is_exact(), "a replay neither fades nor holds");
+    assert_eq!(log.unlogged, 2, "the pause and the resume, once each");
+}

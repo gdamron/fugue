@@ -58,12 +58,15 @@ impl SignalGraph {
 
     /// [`Self::process_block`] on a graph that has not failed.
     fn render_block(&mut self, left: &mut [f32], right: &mut [f32]) {
+        // Read before the requests are taken, so a write submitted before a
+        // pause or resume is taken in the block that sees it: a write made
+        // while held and then resumed applies before the first frame plays.
+        let paused = self.transport.pause_requested();
         self.ensure_process_order();
 
         let frames = left.len().min(right.len()).min(self.block_capacity);
         // A paused graph plays only what is left of its fade out, and holds
         // as a zero-length block once it has faded: silence for the rest.
-        let paused = self.transport.pause_requested();
         let frames = self.pause.frames_to_play(paused, frames);
         left[frames..].fill(0.0);
         right[frames..].fill(0.0);

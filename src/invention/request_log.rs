@@ -55,7 +55,8 @@
 //! - the invention runs code or agent modules, whose wall-clock writes are
 //!   logged and would act again in the render: [`RequestLog::actors`];
 //! - a repeating beat grid applied (it reports its first application
-//!   only), or latched its clock on a beat it lost and never applied
+//!   only), or latched its clock on a beat it lost and never applied, or
+//!   the piece was paused or resumed, which a replay does not hold or fade
 //!   (counted in [`RequestLog::unlogged`]).
 //!
 //! A payload write (a step sequencer's `pattern`) is logged as the text its
@@ -205,7 +206,8 @@ pub struct RequestLog {
     /// requests, which a replay cannot hold as
     /// they held, and repeating beat grids that never applied but latched
     /// their clock on a beat they lost, or are still waiting at export and
-    /// may have, which they do not report beat by beat.
+    /// may have, which they do not report beat by beat, and pauses and
+    /// resumes, which a replay does not hold or fade.
     #[serde(default)]
     pub unlogged: u64,
     /// Commits attempted on the graph at once during the session
