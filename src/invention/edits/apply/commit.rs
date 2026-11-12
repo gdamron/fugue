@@ -121,7 +121,7 @@ impl RunningInvention {
         let committed = self.live.commit_with(change, |state| {
             let mut document = document.clone();
             if let Some(current) = &state.document {
-                document.carry_layout(&current.layout, &batch.candidate.layout_changes);
+                document.carry_presentation(current, &batch.candidate.presentation);
             }
             previous = state.document.replace(document);
             // A survivor's stored config takes the batch's writes to keys it

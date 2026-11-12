@@ -18,6 +18,7 @@ mod commit;
 mod config_refusals;
 mod layout;
 mod melody;
+mod names;
 mod payload_order;
 mod real_modules;
 mod refusals;
@@ -67,6 +68,7 @@ fn start(json: &str) -> (RunningInvention, Pump) {
 
 fn add(id: &str, module_type: &str, config: serde_json::Value) -> StructuralEdit {
     StructuralEdit::AddModule {
+        name: None,
         id: id.into(),
         module_type: module_type.into(),
         config,

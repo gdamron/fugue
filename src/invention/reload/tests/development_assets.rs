@@ -107,6 +107,7 @@ fn an_added_instance_reads_its_exposed_keys_as_declared() {
     let (mut running, _pump) =
         start_pumped(piece(dir.path(), (tone, "audio"), "frequency", json!({})));
     let add = crate::rpc::StructuralEdit::AddModule {
+        name: None,
         id: "n".into(),
         module_type: "voice".into(),
         config: json!({ "asset": 330.0 }),

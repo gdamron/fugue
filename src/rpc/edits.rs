@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{RpcError, RpcErrorCode};
 use crate::invention::layout::Position;
+use crate::invention::names::name_refusal;
 use crate::ControlValue;
 
 /// The most edits one `ApplyEdits` batch may carry. An empty batch is refused
@@ -44,6 +45,10 @@ pub const MAX_EDIT_NAME_BYTES: usize = 256;
 /// The most modules one `move_modules` edit may place. A `move_modules`
 /// places at least one, so it holds `1..=MAX_MOVES_PER_EDIT` positions.
 pub const MAX_MOVES_PER_EDIT: usize = 1024;
+
+/// The most modules one `name_modules` edit may name. A `name_modules`
+/// names at least one, so it holds `1..=MAX_NAMES_PER_EDIT` names.
+pub const MAX_NAMES_PER_EDIT: usize = 1024;
 
 /// One structural change in an `ApplyEdits` batch, tagged by `op`.
 ///
@@ -61,10 +66,14 @@ pub enum StructuralEdit {
     AddModule {
         id: String,
         module_type: String,
-        /// The module's authored configuration, exactly as a document would
-        /// hold it. Omitted means `null`, the type's defaults.
+        /// Its authored config, as a document holds it; omitted is `null`,
+        /// the type's defaults.
         #[serde(default)]
         config: serde_json::Value,
+        // What the piece calls the module, as `name_modules` sets it. A
+        // plain comment: the agents' tool listing has no bytes to spare.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
     },
     /// Removes a module, together with every connection to or from it.
     RemoveModule { id: String },
@@ -92,15 +101,17 @@ pub enum StructuralEdit {
         #[serde(deserialize_with = "crate::traits::exact_number::deserialize")]
         value: ControlValue,
     },
-    /// Places modules on the canvas that shows the graph: each id maps to
-    /// its new position, in the document's canvas units, or to `null` to
-    /// unplace it. Changes only the document's `layout`: no module is
-    /// rebuilt, no graph change is published, and nothing heard changes.
-    /// Positions are absolute, so the edit means the same however often it
-    /// is made. Every id must name a module that exists at this point in the
-    /// batch.
+    /// Places modules on the canvas, in canvas units (`null` unplaces).
+    /// Document-only: nothing is rebuilt or heard.
+    // Positions are absolute, so the edit means the same however often it
+    // is made. Every id must name a module that exists at this point in
+    // the batch (see docs/apply-edits.md).
     MoveModules {
         positions: BTreeMap<String, Option<Position>>,
+    },
+    /// Names modules (`null` clears). Document-only; ids still address.
+    NameModules {
+        names: BTreeMap<String, Option<String>>,
     },
 }
 
@@ -115,6 +126,7 @@ pub enum EditOp {
     Disconnect,
     SetControl,
     MoveModules,
+    NameModules,
 }
 
 impl EditOp {
@@ -127,6 +139,7 @@ impl EditOp {
             Self::Disconnect => "disconnect",
             Self::SetControl => "set_control",
             Self::MoveModules => "move_modules",
+            Self::NameModules => "name_modules",
         }
     }
 }
@@ -147,6 +160,7 @@ impl StructuralEdit {
             Self::Disconnect { .. } => EditOp::Disconnect,
             Self::SetControl { .. } => EditOp::SetControl,
             Self::MoveModules { .. } => EditOp::MoveModules,
+            Self::NameModules { .. } => EditOp::NameModules,
         }
     }
 
@@ -197,6 +211,7 @@ impl StructuralEdit {
             Self::MoveModules { positions } => {
                 positions.keys().try_for_each(|id| check("positions", id))
             }
+            Self::NameModules { names } => names.keys().try_for_each(|id| check("names", id)),
         }
     }
 }
@@ -204,7 +219,10 @@ impl StructuralEdit {
 /// Refuses a batch whose size is outside `1..=MAX_EDITS_PER_BATCH`, then a
 /// `set_control` whose value is a non-finite number, then a `move_modules`
 /// that places no module, more than [`MAX_MOVES_PER_EDIT`], or one at a
-/// non-finite position ([`EditFailureReason::InvalidPosition`]).
+/// non-finite position ([`EditFailureReason::InvalidPosition`]), then a
+/// `name_modules` that names no module, more than [`MAX_NAMES_PER_EDIT`],
+/// or one by a name that cannot name it, or an `add_module` with such a
+/// name ([`EditFailureReason::InvalidName`]).
 ///
 /// A size refusal is batch-level: [`RpcErrorCode::InvalidRequest`] with no
 /// `edit` detail, since no single edit is at fault. A non-finite number (NaN,
@@ -256,10 +274,51 @@ pub fn check_edit_batch(edits: &[StructuralEdit]) -> Result<(), RpcError> {
                     )));
                 }
             }
+            StructuralEdit::NameModules { names } => {
+                if let Some(message) = names_refusal(names) {
+                    return Err(RpcError::invalid_edit(EditFailure::new(
+                        index,
+                        EditOp::NameModules,
+                        EditFailureReason::InvalidName,
+                        message,
+                    )));
+                }
+            }
+            StructuralEdit::AddModule {
+                id,
+                name: Some(name),
+                ..
+            } => {
+                if let Some(reason) = name_refusal(name) {
+                    return Err(RpcError::invalid_edit(EditFailure::new(
+                        index,
+                        EditOp::AddModule,
+                        EditFailureReason::InvalidName,
+                        format!("module '{id}': {reason}"),
+                    )));
+                }
+            }
             _ => {}
         }
     }
     Ok(())
+}
+
+/// Why a `name_modules` edit's names cannot apply, if they cannot.
+fn names_refusal(names: &BTreeMap<String, Option<String>>) -> Option<String> {
+    if names.is_empty() {
+        return Some("name_modules needs at least one name".to_string());
+    }
+    if names.len() > MAX_NAMES_PER_EDIT {
+        return Some(format!(
+            "name_modules names at most {MAX_NAMES_PER_EDIT} modules, got {}",
+            names.len()
+        ));
+    }
+    names.iter().find_map(|(id, name)| {
+        let reason = name_refusal(name.as_deref()?)?;
+        Some(format!("module '{id}': {reason}"))
+    })
 }
 
 /// Why a `move_modules` edit's positions cannot apply, if they cannot.
@@ -302,7 +361,8 @@ pub(crate) fn non_finite_refusal(
 #[serde(rename_all = "snake_case")]
 pub enum EditFailureReason {
     /// A module id, type, port name or control key is empty or longer than
-    /// [`MAX_EDIT_NAME_BYTES`].
+    /// [`MAX_EDIT_NAME_BYTES`]; or a module name is blank, too long, or
+    /// holds a control character, or `name_modules` names none or too many.
     InvalidName,
     /// The edit names a module that does not exist at this point in the
     /// batch (never existed, or an earlier edit removed it).

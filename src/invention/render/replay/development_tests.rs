@@ -61,6 +61,7 @@ fn a_replayed_edit_builds_a_development_the_invention_declares() {
     // On the next bar, a voice joins the line on the right.
     let batch = [
         StructuralEdit::AddModule {
+            name: None,
             id: "voice2".into(),
             module_type: "voice".into(),
             config: serde_json::json!({}),

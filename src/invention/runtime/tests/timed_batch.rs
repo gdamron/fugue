@@ -63,6 +63,7 @@ fn set(module_id: &str, key: &str, value: f32) -> StructuralEdit {
 
 fn add(id: &str, module_type: &str, config: serde_json::Value) -> StructuralEdit {
     StructuralEdit::AddModule {
+        name: None,
         id: id.into(),
         module_type: module_type.into(),
         config,

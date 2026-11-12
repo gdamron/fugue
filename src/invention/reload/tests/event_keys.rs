@@ -95,6 +95,7 @@ fn an_edit_batch_event_fires_once_and_saves_no_key() {
 fn an_event_written_to_a_module_the_batch_adds_fires_as_it_runs() {
     let (mut running, pump) = started(&sequencer(""));
     let add = StructuralEdit::AddModule {
+        name: None,
         id: "seq2".into(),
         module_type: "cell_sequencer".into(),
         config: serde_json::json!({ "cells": [[{ "note": 0 }], [{ "note": 7 }], [{ "note": 9 }]] }),
@@ -140,6 +141,7 @@ fn an_event_on_a_module_replacing_one_written_earlier_is_not_authored() {
         value: ControlValue::Number(330.0),
     };
     let add = StructuralEdit::AddModule {
+        name: None,
         id: "x".into(),
         module_type: "cell_sequencer".into(),
         config: serde_json::json!({ "cells": [[{ "note": 0 }], [{ "note": 7 }]] }),

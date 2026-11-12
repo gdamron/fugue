@@ -193,6 +193,7 @@ fn reloading_the_document_saved_after_an_apply_edits_batch_changes_nothing() {
             set("osc1", "frequency", number(261.63)),
             StructuralEdit::RemoveModule { id: "osc2".into() },
             StructuralEdit::AddModule {
+                name: None,
                 id: "osc2".into(),
                 module_type: "oscillator".into(),
                 config: json!({ "frequency": 2.0 }),
@@ -205,6 +206,7 @@ fn reloading_the_document_saved_after_an_apply_edits_batch_changes_nothing() {
                 to_port: "audio".into(),
             },
             StructuralEdit::AddModule {
+                name: None,
                 id: "osc3".into(),
                 module_type: "oscillator".into(),
                 config: json!({}),

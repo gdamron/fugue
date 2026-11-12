@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{CandidateWrite, EditFacts, EditedCandidate, ModuleFacts};
 use crate::invention::format::{Connection, Invention};
-use crate::invention::layout::{LayoutChange, Position};
+use crate::invention::layout::Position;
+use crate::invention::names::PresentationChanges;
 use crate::invention::{audio_assets, authored_document};
 use crate::rpc::{
     non_finite_refusal, truncate_on_char_boundary, ControlWrite, EditFailureReason, StructuralEdit,
@@ -38,7 +39,7 @@ pub(super) struct Candidate<'f, F> {
     original: BTreeSet<String>,
     /// Ids from `original` that an edit removed.
     removed_originals: BTreeSet<String>,
-    layout_changes: Vec<LayoutChange>,
+    presentation: PresentationChanges,
 }
 
 impl<'f, F: EditFacts> Candidate<'f, F> {
@@ -57,7 +58,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             named_modules: BTreeSet::new(),
             original,
             removed_originals: BTreeSet::new(),
-            layout_changes: Vec::new(),
+            presentation: PresentationChanges::default(),
         }
     }
 
@@ -72,7 +73,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             control_writes: self.control_writes,
             named_modules: self.named_modules,
             replaced,
-            layout_changes: self.layout_changes,
+            presentation: self.presentation,
         }
     }
 
@@ -83,7 +84,8 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
                 id,
                 module_type,
                 config,
-            } => self.add_module(id, module_type, config),
+                name,
+            } => self.add_module(id, module_type, config, name.as_deref()),
             StructuralEdit::RemoveModule { id } => self.remove_module(id),
             StructuralEdit::Connect {
                 from,
@@ -103,7 +105,21 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
                 value,
             } => self.set_control(index, module_id, key, value),
             StructuralEdit::MoveModules { positions } => self.move_modules(positions),
+            StructuralEdit::NameModules { names } => self.name_modules(names),
         }
+    }
+
+    /// Names each module as `names` says, in the document only. Like a
+    /// move, it touches no running module.
+    fn name_modules(&mut self, names: &BTreeMap<String, Option<String>>) -> Applied {
+        if let Some(id) = names.keys().find(|id| !self.exists(id)) {
+            return Err(unknown_module(id));
+        }
+        for (id, name) in names {
+            authored_document::name_module(&mut self.document, id, name.clone());
+            self.presentation.names.push((id.clone(), name.clone()));
+        }
+        Ok(())
     }
 
     /// Places each module where `positions` says, in the document only.
@@ -115,12 +131,18 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         }
         for (id, position) in positions {
             authored_document::place_module(&mut self.document, id, *position);
-            self.layout_changes.push((id.clone(), *position));
+            self.presentation.layout.push((id.clone(), *position));
         }
         Ok(())
     }
 
-    fn add_module(&mut self, id: &str, module_type: &str, config: &serde_json::Value) -> Applied {
+    fn add_module(
+        &mut self,
+        id: &str,
+        module_type: &str,
+        config: &serde_json::Value,
+        name: Option<&str>,
+    ) -> Applied {
         self.named_modules.insert(id.to_string());
         if self.exists(id) {
             return Err(Refusal(
@@ -147,6 +169,9 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
                 )
             })?;
         authored_document::upsert_module(&mut self.document, id, module_type, config);
+        let name = name.map(str::to_string);
+        authored_document::name_module(&mut self.document, id, name.clone());
+        self.presentation.names.push((id.to_string(), name));
         self.added.insert(id.to_string(), facts);
         Ok(())
     }
@@ -157,7 +182,8 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             return Err(unknown_module(id));
         }
         authored_document::remove_module(&mut self.document, id);
-        self.layout_changes.push((id.to_string(), None));
+        self.presentation.layout.push((id.to_string(), None));
+        self.presentation.names.push((id.to_string(), None));
         if self.original.contains(id) {
             self.removed_originals.insert(id.to_string());
         }

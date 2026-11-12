@@ -42,12 +42,13 @@ described here is made by the daemon, and every refusal is structured.
 
 | `op` | Fields | Effect |
 | --- | --- | --- |
-| `add_module` | `id`, `module_type`, `config` (optional, defaults to `null`) | Adds a module. The id must not exist yet. |
+| `add_module` | `id`, `module_type`, `config` (optional, defaults to `null`), `name` (optional) | Adds a module. The id must not exist yet. |
 | `remove_module` | `id` | Removes a module and every connection to or from it. |
 | `connect` | `from`, `from_port`, `to`, `to_port` | Connects an output port to an input port. |
 | `disconnect` | `from`, `from_port`, `to`, `to_port` | Removes an existing connection. |
 | `set_control` | `module_id`, `key`, `value` | Sets a control's authored starting value. |
 | `move_modules` | `positions` | Places modules on the canvas: changes only the document's `layout`. |
+| `name_modules` | `names` | Names modules: changes only each module's `name` in the document. |
 
 Edits apply **in order**, each against the result of the ones before it. A
 module added at index 0 can be connected at index 1 and tuned at index 2; a
@@ -85,6 +86,23 @@ module either removes loses its position.
 A `move_modules` cannot be timed on its own: a timed batch must change
 structure.
 
+`name_modules` maps module ids to what the piece calls them, or to `null` to
+clear a name:
+
+```json
+{ "op": "name_modules", "names": { "tone": "Lead filter", "osc": null } }
+```
+
+It writes each module's `name` in the document and nothing else, exactly as
+`move_modules` writes the layout: nothing is rebuilt, published or heard, the
+revision advances, and the same edit made twice leaves the same document.
+Commands still address a named module by its id. A name is 1 to 256 bytes, not
+blank, with no control characters; `add_module` takes an optional `name` under
+the same rules. Moves and names alone take the document-only path together,
+a timed batch or reload that lands keeps the names given meanwhile with its
+own on top, and neither can be timed on its own. Removing a module drops its
+name; `SwapModule` keeps it.
+
 Coordinates are numbers: an integer re-saves as a float (`120` becomes
 `120.0`), and every value round-trips exactly.
 
@@ -108,6 +126,7 @@ assets, title or exposed sections.
 | Edits per batch | 1 to 256 (`MAX_EDITS_PER_BATCH`) | `invalid_request`, no edit detail |
 | Module id, module type, port name, control key | 1 to 256 UTF-8 bytes (`MAX_EDIT_NAME_BYTES`) | `invalid_edit`, reason `invalid_name` |
 | Positions per `move_modules` | 1 to 1024 (`MAX_MOVES_PER_EDIT`), each finite | `invalid_edit`, reason `invalid_position` |
+| Names per `name_modules` | 1 to 1024 (`MAX_NAMES_PER_EDIT`), each 1 to 256 bytes (`MAX_MODULE_NAME_BYTES`), not blank, no control characters | `invalid_edit`, reason `invalid_name` |
 
 Split a larger change into several batches. Each batch commits on its own.
 
@@ -216,7 +235,7 @@ resend the batch with a **new** ticket (see
 
 | `reason` | Raised by | Meaning |
 | --- | --- | --- |
-| `invalid_name` | any | An id, type, port or key is empty or longer than 256 bytes. |
+| `invalid_name` | any | An id, type, port or key is empty or longer than 256 bytes; or a module name is blank, too long or holds a control character, or a `name_modules` names none or more than 1024. |
 | `unknown_module` | any | The module does not exist at this point in the batch. |
 | `duplicate_module` | `add_module` | The id already exists at this point in the batch. |
 | `unknown_module_type` | `add_module` | The running invention cannot build this type. |

@@ -411,6 +411,18 @@ impl LiveGraph {
         result
     }
 
+    /// What the retained document calls module `id`, if it names it.
+    pub(crate) fn module_name(&self, id: &str) -> Option<String> {
+        let publisher = self.lock();
+        let state = self.state.lock().unwrap();
+        let spec = (state.document.as_ref())
+            .and_then(|document| document.modules.iter().find(|spec| spec.id == id));
+        let name = spec.and_then(|spec| spec.name.clone());
+        drop(state);
+        drop(publisher);
+        name
+    }
+
     /// The retained document and its authored epoch, read together under
     /// the publisher, every authored write applied so far recorded: no
     /// write is recorded between the two.

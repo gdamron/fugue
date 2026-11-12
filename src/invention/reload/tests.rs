@@ -27,6 +27,7 @@ mod live_builds;
 mod melody;
 mod mixer_rebuild;
 mod mixer_removal;
+mod names;
 mod numeric;
 mod relative_assets;
 mod removed_keys;
@@ -200,6 +201,7 @@ fn config_deltas_that_cannot_be_controls_force_a_swap() {
             modules: vec![ModuleSpec {
                 id: "osc".to_string(),
                 module_type: "oscillator".to_string(),
+                name: None,
                 config,
             }],
             ..doc(r#"{ "modules": [], "connections": [] }"#)
@@ -264,6 +266,7 @@ fn null_and_empty_configs_are_equivalent() {
         modules: vec![ModuleSpec {
             id: "dac".to_string(),
             module_type: "dac".to_string(),
+            name: None,
             config: serde_json::json!({}),
         }],
         ..doc(r#"{ "modules": [], "connections": [] }"#)

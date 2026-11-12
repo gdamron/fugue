@@ -4,6 +4,8 @@
 //! - [`Module`] - The unified trait for all audio processing components with named ports
 //! - [`SinkModule`] - Trait for modules that output to external destinations (audio, file, network)
 //! - [`ControlMeta`] - Metadata describing a module control for UI/REPL discovery
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::control_request::{
@@ -18,11 +20,13 @@ mod control_meta;
 mod control_validation;
 pub(crate) mod exact_number;
 mod feedback_cut;
+pub(crate) mod labels;
 
-pub use control_hints::{ControlScale, NumberFormat, NumberHints};
+pub use control_hints::{ControlScale, ControlWidget, NumberFormat, NumberHints};
 pub use control_validation::ControlSurfaceMap;
 pub(crate) use control_validation::{check_finite, check_listed_control, read_only};
 pub use feedback_cut::FeedbackCut;
+pub use labels::{tidy_key, TypeLabels};
 
 /// Maximum number of frames the engine processes in a single block.
 ///
@@ -166,6 +170,9 @@ pub enum ControlKind {
 ///     kind: ControlKind::Number { min: 0.0, max: 10.0, hints: NumberHints::default() },
 ///     read_only: false,
 ///     event: false,
+///     label: None,
+///     option_labels: Default::default(),
+///     widget: None,
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -189,6 +196,20 @@ pub struct ControlMeta {
     /// that holds a value.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub event: bool,
+    /// What a person reads for it ("Pulse width"), when its type declares
+    /// a label that says more than [`tidy_key`] of its key; absent
+    /// otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// For a choice, labels of its options by option ("lowpass": "Low-pass"),
+    /// each only where it says more than the tidied option; a write still
+    /// names the option.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub option_labels: BTreeMap<String, String>,
+    /// The editor its type prefers for it; absent when it declares none,
+    /// and editors choose by its kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub widget: Option<ControlWidget>,
 }
 
 /// Shared runtime control surface for a module.

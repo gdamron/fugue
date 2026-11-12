@@ -1,6 +1,7 @@
 //! The Clock's declared controls.
 
 use crate::control_request::{ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue};
+use crate::ControlWidget;
 
 pub(super) const BPM: ControlIndex = ControlIndex(0);
 pub(super) const GATE_LENGTH: ControlIndex = ControlIndex(1);
@@ -32,14 +33,17 @@ const DECLS: &[ControlDecl] = &[
     )
     .unit("BPM")
     .step(1.0)
-    .precision(1),
+    .precision(1)
+    .label("Tempo")
+    .widget(ControlWidget::Knob),
     ControlDecl::new(
         "gate_length",
         DeclKind::Number { min: 0.0, max: 1.0 },
         RtValue::F32(0.25),
         "Gate length as a fraction of the pulse",
     )
-    .clamped(0.0, 1.0),
+    .clamped(0.0, 1.0)
+    .widget(ControlWidget::Slider),
     ControlDecl::new(
         "reset",
         DeclKind::Bool,
@@ -78,7 +82,8 @@ const DECLS: &[ControlDecl] = &[
         "Beats in a bar, 0 for no meter. A new meter takes over at the next \
          bar line; on a clock without one, at once",
     )
-    .clamped(0.0, MAX_BEATS_PER_BAR as f32),
+    .clamped(0.0, MAX_BEATS_PER_BAR as f32)
+    .widget(ControlWidget::Stepper),
     ControlDecl::new(
         "bar",
         DeclKind::Integer {

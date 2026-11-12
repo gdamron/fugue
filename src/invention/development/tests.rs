@@ -141,6 +141,7 @@ fn an_added_development_with_a_schedule_starts_without_allocating() {
     pump.render(2);
     running
         .apply_edits(&[StructuralEdit::AddModule {
+            name: None,
             id: "lead".into(),
             module_type: "pattern".into(),
             config: json!({ "schedule": schedule(0, "o", 220.0) }),
@@ -165,6 +166,7 @@ fn a_live_schedule_write_costs_the_audio_thread_nothing_inside_a_development_or_
     top.modules.push(crate::ModuleSpec {
         id: "dac".into(),
         module_type: "dac".into(),
+        name: None,
         config: json!({}),
     });
     let inner = document(json!([{ "id": "lead", "type": "pattern" }]));

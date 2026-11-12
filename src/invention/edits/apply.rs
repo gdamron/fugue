@@ -35,6 +35,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::candidate::{unknown_module, Refusal};
 use super::{apply_to_candidate, CandidateWrite, EditedCandidate};
+use crate::invention::authored_document;
 use crate::invention::builder::InventionBuilder;
 use crate::invention::format::Invention;
 use crate::invention::reload::RELOAD_ATTEMPTS;
@@ -192,11 +193,16 @@ fn validation_probe(document: &Invention, candidate: &EditedCandidate) -> Invent
     probe
 }
 
-/// Whether every edit in a non-empty batch is a `move_modules`, which
-/// changes the document's layout alone.
-fn only_moves(edits: &[StructuralEdit]) -> bool {
+/// Whether every edit in a non-empty batch is a `move_modules` or a
+/// `name_modules`, which change the document's presentation alone.
+fn only_presentation(edits: &[StructuralEdit]) -> bool {
     !edits.is_empty()
-        && (edits.iter()).all(|edit| matches!(edit, StructuralEdit::MoveModules { .. }))
+        && (edits.iter()).all(|edit| {
+            matches!(
+                edit,
+                StructuralEdit::MoveModules { .. } | StructuralEdit::NameModules { .. }
+            )
+        })
 }
 
 /// The `invalid_edit` refusal for a control write the module refused, at
@@ -233,8 +239,9 @@ impl RunningInvention {
     /// one `ControlChanged` per control the batch wrote is announced to the
     /// event sink. The caller announces the new topology after that.
     ///
-    /// A batch of `move_modules` edits alone changes the retained
-    /// document's layout and nothing else (see [`Self::move_modules`]).
+    /// A batch of `move_modules` and `name_modules` edits alone changes the
+    /// retained document's layout and names and nothing else (see
+    /// [`Self::present_modules`]).
     ///
     /// Refusals change nothing (no module, connection, control, document or
     /// event):
@@ -261,8 +268,8 @@ impl RunningInvention {
     /// batch is planned or prepared, it is planned and prepared again from
     /// the same candidate, up to three times in all.
     pub fn apply_edits(&mut self, edits: &[StructuralEdit]) -> Result<ApplyEditsReport, RpcError> {
-        if only_moves(edits) {
-            return self.move_modules(edits);
+        if only_presentation(edits) {
+            return self.present_modules(edits);
         }
         let mut batch = self.live.graph_policy().run(|| self.batch(edits))?;
         let mut attempt = 1;
@@ -285,14 +292,15 @@ impl RunningInvention {
         }
     }
 
-    /// A batch of `move_modules` edits alone: written straight into the
-    /// retained document's layout under the publisher, all or nothing. It
-    /// publishes nothing, cancels no timed edit waiting (whose adoption
-    /// keeps the layout as moved, see `Invention::carry_layout`), builds
-    /// nothing and announces nothing, so a drag on the canvas is never
+    /// A batch of `move_modules` and `name_modules` edits alone: written
+    /// straight into the retained document's layout and names under the
+    /// publisher, all or nothing. It publishes nothing, cancels no timed
+    /// edit waiting (whose adoption keeps the layout as moved and the names
+    /// as given, see `Invention::carry_presentation`), builds nothing and
+    /// announces nothing, so a drag on the canvas or a rename is never
     /// heard. Refused as any batch is: by size, by a bad name or position,
     /// or by a module that does not exist (`unknown_module` at its edit).
-    fn move_modules(&self, edits: &[StructuralEdit]) -> Result<ApplyEditsReport, RpcError> {
+    fn present_modules(&self, edits: &[StructuralEdit]) -> Result<ApplyEditsReport, RpcError> {
         check_edit_batch(edits)?;
         for (index, edit) in edits.iter().enumerate() {
             edit.check_names(index).map_err(RpcError::invalid_edit)?;
@@ -309,24 +317,33 @@ impl RunningInvention {
             let ids: HashSet<&str> = (document.modules.iter())
                 .map(|spec| spec.id.as_str())
                 .collect();
-            let mut layout = document.layout.clone();
+            let mut edited = document.clone();
             for (index, edit) in edits.iter().enumerate() {
-                let StructuralEdit::MoveModules { positions } = edit else {
-                    unreachable!("only moves take this path");
+                let unknown = |id: &str| {
+                    let Refusal(reason, message) = unknown_module(id);
+                    RpcError::invalid_edit(EditFailure::new(index, edit.op(), reason, message))
                 };
-                for (id, position) in positions {
-                    if !ids.contains(id.as_str()) {
-                        let Refusal(reason, message) = unknown_module(id);
-                        let failure = EditFailure::new(index, EditOp::MoveModules, reason, message);
-                        return Err(RpcError::invalid_edit(failure));
+                match edit {
+                    StructuralEdit::MoveModules { positions } => {
+                        for (id, position) in positions {
+                            if !ids.contains(id.as_str()) {
+                                return Err(unknown(id));
+                            }
+                            authored_document::place_module(&mut edited, id, *position);
+                        }
                     }
-                    match position {
-                        Some(position) => layout.modules.insert(id.clone(), *position),
-                        None => layout.modules.remove(id),
-                    };
+                    StructuralEdit::NameModules { names } => {
+                        for (id, name) in names {
+                            if !ids.contains(id.as_str()) {
+                                return Err(unknown(id));
+                            }
+                            authored_document::name_module(&mut edited, id, name.clone());
+                        }
+                    }
+                    _ => unreachable!("only moves and names take this path"),
                 }
             }
-            document.layout = layout;
+            *document = edited;
             Ok(ApplyEditsReport {
                 edit_count: edits.len(),
                 untouched,

@@ -108,6 +108,13 @@ pub trait ModuleFactory: Send + Sync + 'static {
         false
     }
 
+    /// The labels the type declares for itself and its ports (see
+    /// [`TypeLabels`](crate::TypeLabels)); none by default, so every name
+    /// is tidied.
+    fn labels(&self) -> crate::TypeLabels {
+        crate::TypeLabels::NONE
+    }
+
     /// Returns input ports for type discovery when constructing the module
     /// requires side effects or mandatory config.
     fn input_ports(&self) -> Option<&'static [&'static str]> {
