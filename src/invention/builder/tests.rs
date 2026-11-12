@@ -19,11 +19,13 @@ fn voice_development() -> Invention {
             crate::ModuleSpec {
                 id: "osc".to_string(),
                 module_type: "oscillator".to_string(),
+                name: None,
                 config: serde_json::json!({"frequency": 220.0}),
             },
             crate::ModuleSpec {
                 id: "vca".to_string(),
                 module_type: "vca".to_string(),
+                name: None,
                 config: serde_json::json!({"level": 1.0}),
             },
         ],
@@ -68,11 +70,13 @@ fn root_invention_with_voice(voice: DevelopmentSpec) -> Invention {
             crate::ModuleSpec {
                 id: "lead".to_string(),
                 module_type: "voice".to_string(),
+                name: None,
                 config: serde_json::Value::Null,
             },
             crate::ModuleSpec {
                 id: "dac".to_string(),
                 module_type: "dac".to_string(),
+                name: None,
                 config: serde_json::Value::Null,
             },
         ],
@@ -154,11 +158,13 @@ fn development_fans_out_exposed_inputs_and_caches_outputs() {
             crate::ModuleSpec {
                 id: "full".to_string(),
                 module_type: "vca".to_string(),
+                name: None,
                 config: serde_json::json!({"level": 1.0}),
             },
             crate::ModuleSpec {
                 id: "half".to_string(),
                 module_type: "vca".to_string(),
+                name: None,
                 config: serde_json::json!({"level": 0.5}),
             },
         ],
@@ -208,6 +214,7 @@ fn development_fans_out_exposed_inputs_and_caches_outputs() {
         modules: vec![crate::ModuleSpec {
             id: "voice".to_string(),
             module_type: "fanout".to_string(),
+            name: None,
             config: serde_json::Value::Null,
         }],
         connections: vec![],
@@ -300,6 +307,7 @@ fn resolves_relative_asset_refs_in_module_configs() {
             crate::ModuleSpec {
                 id: "seq".to_string(),
                 module_type: "cell_sequencer".to_string(),
+                name: None,
                 config: serde_json::json!({
                     "root_note": { "$asset": "score", "path": "/root_note" },
                     "cells": { "$asset": "score", "path": "/cells" },
@@ -309,6 +317,7 @@ fn resolves_relative_asset_refs_in_module_configs() {
                 // A script's own parameters: an asset nested in an array.
                 id: "notes".to_string(),
                 module_type: "code".to_string(),
+                name: None,
                 config: serde_json::json!({
                     "params": {
                         "metadata": [{ "source": { "$asset": "score", "path": "/root_note" } }]
@@ -447,6 +456,7 @@ fn text_assets_resolve_as_string_values() {
             crate::ModuleSpec {
                 id: "voice".to_string(),
                 module_type: "code".to_string(),
+                name: None,
                 config: serde_json::json!({
                     "script": { "$asset": "voice_script" },
                     "tick_rate": 0.0,
@@ -456,6 +466,7 @@ fn text_assets_resolve_as_string_values() {
             crate::ModuleSpec {
                 id: "conductor".to_string(),
                 module_type: "agent".to_string(),
+                name: None,
                 config: serde_json::json!({
                     "prompt": { "$asset": "conductor_prompt" },
                     "enabled": false
@@ -519,6 +530,7 @@ fn supports_nested_developments() {
         modules: vec![crate::ModuleSpec {
             id: "osc".to_string(),
             module_type: "oscillator".to_string(),
+            name: None,
             config: serde_json::json!({"frequency": 440.0}),
         }],
         connections: vec![],
@@ -548,6 +560,7 @@ fn supports_nested_developments() {
         modules: vec![crate::ModuleSpec {
             id: "voice".to_string(),
             module_type: "inner_voice".to_string(),
+            name: None,
             config: serde_json::Value::Null,
         }],
         connections: vec![],
@@ -591,11 +604,13 @@ fn duplicate_development_control_keys_fan_out_writes() {
             crate::ModuleSpec {
                 id: "env_a".to_string(),
                 module_type: "adsr".to_string(),
+                name: None,
                 config: serde_json::json!({"decay": 0.1}),
             },
             crate::ModuleSpec {
                 id: "env_b".to_string(),
                 module_type: "adsr".to_string(),
+                name: None,
                 config: serde_json::json!({"decay": 0.1}),
             },
         ],
@@ -681,6 +696,7 @@ fn multiple_instances_of_nested_developments_build() {
         modules: vec![crate::ModuleSpec {
             id: "osc".to_string(),
             module_type: "oscillator".to_string(),
+            name: None,
             config: serde_json::json!({"frequency": 440.0}),
         }],
         connections: vec![],
@@ -710,6 +726,7 @@ fn multiple_instances_of_nested_developments_build() {
         modules: vec![crate::ModuleSpec {
             id: "voice".to_string(),
             module_type: "inner_voice".to_string(),
+            name: None,
             config: serde_json::Value::Null,
         }],
         connections: vec![],
@@ -741,11 +758,13 @@ fn multiple_instances_of_nested_developments_build() {
             crate::ModuleSpec {
                 id: "a".to_string(),
                 module_type: "outer_voice".to_string(),
+                name: None,
                 config: serde_json::Value::Null,
             },
             crate::ModuleSpec {
                 id: "b".to_string(),
                 module_type: "outer_voice".to_string(),
+                name: None,
                 config: serde_json::Value::Null,
             },
         ],

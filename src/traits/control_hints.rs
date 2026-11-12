@@ -62,3 +62,22 @@ impl NumberHints {
         self == &Self::default()
     }
 }
+
+/// The editor a module type prefers for a control. Editors otherwise
+/// choose by the control's kind; a preference never changes what the
+/// control accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ControlWidget {
+    /// A compact rotary control, for a number.
+    Knob,
+    /// A linear fader, for a number set finely.
+    Slider,
+    /// A number field with minus and plus, for a whole number.
+    Stepper,
+    /// Side-by-side buttons, one per option, for a short choice.
+    Segmented,
+    /// A drop-down list, for a choice.
+    Menu,
+}

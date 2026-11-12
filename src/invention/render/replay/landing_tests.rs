@@ -55,6 +55,7 @@ fn replayed(log: &RequestLog, played: &[f32]) -> RenderEngine {
 
 fn add_tone() -> StructuralEdit {
     StructuralEdit::AddModule {
+        name: None,
         id: "tone".into(),
         module_type: "oscillator".into(),
         config: serde_json::json!({}),

@@ -45,11 +45,21 @@ the index even though its defaults cannot be inspected.
 
 Single-module responses include `metadata_source` (`type_defaults`,
 `supplied_config`, or `running_instance`), sample rate, type name, ports, controls,
-`is_sink`, and `control_values`. Live responses also include `module_id`.
+`is_sink`, and `control_values`. Live responses also include `module_id`, and
+`name` when the piece names the module.
 Control metadata's `default` remains the declared default; `control_values` carries
 the inspected initial or current values. Unsupported value reads are omitted.
 An empty controls array is valid only after successful inspection of a module
 that exposes no controls.
+
+Labels are presentation, listed only where they say more than the id tidied
+into words (`root_note` is "Root note", `bpm` "BPM"), so a surface tidies any id
+that has none. An available entry or module may carry `label` (the type's),
+`input_labels` and `output_labels` (by port). A control may carry `label`,
+`option_labels` (by choice option) and `widget`, the editor its module prefers
+(`knob`, `slider`, `stepper`, `segmented` or `menu`). Nothing addresses a
+module, port, control or option by its label; a surface shows the piece's
+module name first, then the type's label, then the tidied id.
 
 Types are unique and sorted lexicographically. Full entries follow the same
 order; controls are sorted by key. Ports retain their declared order because

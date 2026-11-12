@@ -75,3 +75,40 @@ fn the_documented_move_parses_and_round_trips() {
             .is_err()
     );
 }
+
+#[test]
+fn the_documented_naming_parses_and_round_trips() {
+    let json = r#"{ "op": "name_modules", "names": { "tone": "Lead filter", "osc": null } }"#;
+    let edit: StructuralEdit = serde_json::from_str(json).unwrap();
+    assert_eq!(edit.op(), EditOp::NameModules);
+    assert_eq!(EditOp::NameModules.as_str(), "name_modules");
+    let StructuralEdit::NameModules { names } = &edit else {
+        panic!("expected name_modules, got {edit:?}");
+    };
+    assert_eq!(names["tone"].as_deref(), Some("Lead filter"));
+    assert_eq!(names["osc"], None);
+    let again: StructuralEdit = serde_json::to_string(&edit)
+        .and_then(|json| serde_json::from_str(&json))
+        .unwrap();
+    assert_eq!(again, edit);
+    assert!(
+        serde_json::from_str::<StructuralEdit>(r#"{ "op": "name_modules", "name": {} }"#).is_err()
+    );
+    // An add_module without a name serializes as it always has.
+    let add = r#"{"op":"add_module","id":"lfo","module_type":"lfo","config":null}"#;
+    let edit: StructuralEdit = serde_json::from_str(add).unwrap();
+    assert_eq!(serde_json::to_string(&edit).unwrap(), add);
+}
+
+#[cfg(feature = "rpc-schema")]
+#[test]
+fn the_edit_schema_offers_naming() {
+    let schema = serde_json::to_string(&schemars::schema_for!(StructuralEdit)).unwrap();
+    assert!(schema.contains("\"name_modules\"") && schema.contains("\"names\""));
+    let schema: serde_json::Value = serde_json::from_str(&schema).unwrap();
+    let variants = schema["oneOf"].as_array().unwrap();
+    let add = (variants.iter())
+        .find(|variant| variant["properties"]["op"]["const"] == "add_module")
+        .unwrap();
+    assert!(add["properties"].get("name").is_some(), "{add:#}");
+}

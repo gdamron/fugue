@@ -224,6 +224,16 @@ impl DevelopmentControls {
                         // A key lists itself, whatever count its alias's
                         // module lists it below.
                         listed_below: None,
+                        // Its label is the inner control's only under the
+                        // same, unindexed key; a key the development names
+                        // itself is tidied from that name. An indexed inner
+                        // control's label is dropped too: the declaration
+                        // holds only its unindexed form ("Send", not "Send 2"),
+                        // which the exposed surface lists formatted.
+                        label: found
+                            .decl
+                            .label
+                            .filter(|_| control.name == control.control && !found.decl.indexed),
                         ..found.decl.clone()
                     });
                     current.push(found.current);

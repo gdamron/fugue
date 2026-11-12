@@ -21,6 +21,9 @@ impl ControlMeta {
             },
             read_only: false,
             event: false,
+            label: None,
+            option_labels: Default::default(),
+            widget: None,
         }
     }
 
@@ -86,6 +89,9 @@ impl ControlMeta {
             kind: ControlKind::Bool,
             read_only: false,
             event: false,
+            label: None,
+            option_labels: Default::default(),
+            widget: None,
         }
     }
 
@@ -98,6 +104,9 @@ impl ControlMeta {
             kind: ControlKind::String { options: None },
             read_only: false,
             event: false,
+            label: None,
+            option_labels: Default::default(),
+            widget: None,
         }
     }
 

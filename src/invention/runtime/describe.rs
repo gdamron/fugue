@@ -24,12 +24,20 @@ impl RunningInvention {
     ) -> Result<crate::ModuleDescription, crate::RpcError> {
         query.validate()?;
         if let Some(id) = &query.module_id {
+            // Read under the publisher before taking the port mirror, which
+            // the publisher takes as it catches up.
             let timeline = self.live.timeline_of(id);
+            let name = self.live.module_name(id);
             let ports = self.module_ports.lock().unwrap();
             let mut snapshot = self.snapshot().module_snapshot_with_ports(id, &ports)?;
             snapshot.timeline = timeline;
-            let is_sink = self.registry().is_sink(&snapshot.info.module_type);
-            crate::ModuleDescription::from_snapshot(snapshot, self.sample_rate, is_sink)
+            let mut description = crate::ModuleDescription::from_snapshot(
+                snapshot,
+                self.sample_rate,
+                &self.registry(),
+            )?;
+            description.name = name;
+            Ok(description)
         } else {
             crate::ModuleDescription::from_registry(
                 &self.registry(),

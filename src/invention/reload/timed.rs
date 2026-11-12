@@ -8,7 +8,7 @@ use super::{ReloadError, ReloadPlan, RELOAD_ATTEMPTS};
 use crate::control_request::RequestId;
 use crate::invention::declared::DeclaredSurface;
 use crate::invention::format::ModuleSpec;
-use crate::invention::layout::LayoutChange;
+use crate::invention::names::PresentationChanges;
 use crate::invention::publish::EditTime;
 use crate::invention::runtime::timed::edit_time;
 use crate::invention::runtime::{GraphCommandError, RunningInvention};
@@ -63,15 +63,14 @@ impl RunningInvention {
             let mut plan = self.plan_document(&validated)?;
             self.rebuild_unchained(&mut plan, &validated.resolved);
             let document = Some(validated.document.clone());
-            // What the reload changes of the layout as it stands now, made
-            // again on the layout as it stands when it lands.
+            // What the reload changes of the layout and names as they stand
+            // now, made again on them as they stand when it lands.
             let (retained, _) = self.live.document_with_epoch();
-            let base_layout = retained.map(|document| document.layout).unwrap_or_default();
-            let layout_changes = validated.document.layout.changes_from(&base_layout);
+            let presentation = PresentationChanges::between(retained.as_ref(), &validated.document);
             let queued = self
                 .prepare_plan(base, plan, document, None)
                 .map(|prepared| prepared.planned_at(authored))
-                .and_then(|prepared| self.queue_reload(prepared, layout_changes, time, ttl));
+                .and_then(|prepared| self.queue_reload(prepared, presentation, time, ttl));
             match queued {
                 Ok(id) => return Ok(self.status_of(id)),
                 Err(GraphCommandError::TopologyMoved) if attempt < RELOAD_ATTEMPTS => attempt += 1,
@@ -129,14 +128,14 @@ impl RunningInvention {
         }
     }
 
-    /// Queues `prepared`, whose document, as it lands, takes the layout the
-    /// retained document then has with `layout_changes` made on top: a
-    /// module moved while it waits, and not moved by the reload, keeps
-    /// where it was moved.
+    /// Queues `prepared`, whose document, as it lands, takes the layout and
+    /// names the retained document then has with `presentation` made on
+    /// top: a module moved or named while it waits, and not moved or named
+    /// by the reload, keeps where it was moved and what it was called.
     fn queue_reload(
         &self,
         prepared: PreparedCommit,
-        layout_changes: Vec<LayoutChange>,
+        presentation: PresentationChanges,
         time: EditTime<'_>,
         ttl: Option<u64>,
     ) -> Result<RequestId, GraphCommandError> {
@@ -162,7 +161,7 @@ impl RunningInvention {
             }
             if let Some(mut document) = document {
                 if let Some(current) = &state.document {
-                    document.carry_layout(&current.layout, &layout_changes);
+                    document.carry_presentation(current, &presentation);
                 }
                 state.document = Some(document);
             }

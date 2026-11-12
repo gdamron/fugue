@@ -79,6 +79,7 @@ fn live_session() -> (RequestLog, Output) {
     };
     let batch = [
         StructuralEdit::AddModule {
+            name: None,
             id: "osc2".into(),
             module_type: "oscillator".into(),
             config: serde_json::json!({ "waveform": "triangle" }),

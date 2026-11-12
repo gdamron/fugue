@@ -7,6 +7,7 @@ mod non_finite;
 
 fn add(id: &str) -> StructuralEdit {
     StructuralEdit::AddModule {
+        name: None,
         id: id.to_string(),
         module_type: "oscillator".to_string(),
         config: json!({ "frequency": 220.0 }),
@@ -84,6 +85,7 @@ fn add_module_config_defaults_to_null() {
     assert_eq!(
         edit,
         StructuralEdit::AddModule {
+            name: None,
             id: "a".into(),
             module_type: "dac".into(),
             config: serde_json::Value::Null,

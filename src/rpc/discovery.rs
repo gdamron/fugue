@@ -207,6 +207,34 @@ pub struct ModuleTypeInfo {
     pub controls: Vec<ControlMeta>,
     /// Whether the registered factory produces a sink.
     pub is_sink: bool,
+    /// What the type is called, when it declares a label that says more
+    /// than [`tidy_key`](crate::tidy_key) of its name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Labels of input ports, by port, each only where it says more than
+    /// the tidied port name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub input_labels: BTreeMap<String, String>,
+    /// Labels of output ports, by port, as for inputs.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub output_labels: BTreeMap<String, String>,
+}
+
+impl ModuleTypeInfo {
+    /// Takes the labels `labels` declares for the type and for the ports
+    /// it has, each only where it says more than the tidied name.
+    fn labeled(mut self, labels: crate::TypeLabels) -> Self {
+        use crate::traits::labels::{listed_label, listed_labels};
+        let ports = |declared: &[(&str, &str)], names: &[String]| {
+            let mut listed = listed_labels(declared);
+            listed.retain(|port, _| names.contains(port));
+            listed
+        };
+        self.label = listed_label(&self.type_name, labels.module);
+        self.input_labels = ports(labels.inputs, &self.inputs);
+        self.output_labels = ports(labels.outputs, &self.outputs);
+        self
+    }
 }
 
 /// One full catalog entry. Failures carry no fabricated port/control arrays.
@@ -306,6 +334,10 @@ pub struct ModuleDescription {
     /// Present only for a running instance.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub module_id: Option<String>,
+    /// What the piece calls a running instance, when it names it; commands
+    /// still address it by `module_id`. `label` is its type's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// Ports and declared control metadata.
     #[serde(flatten)]
     pub info: ModuleTypeInfo,
@@ -379,13 +411,18 @@ impl ModuleDescription {
             },
             sample_rate,
             module_id: None,
+            name: None,
             info: ModuleTypeInfo {
                 type_name: name.clone(),
                 inputs: module.inputs().iter().map(|p| p.to_string()).collect(),
                 outputs: module.outputs().iter().map(|p| p.to_string()).collect(),
                 controls,
                 is_sink: registry.is_sink(name),
-            },
+                label: None,
+                input_labels: BTreeMap::new(),
+                output_labels: BTreeMap::new(),
+            }
+            .labeled(registry.labels(name)),
             control_values,
             timeline: None,
         };
@@ -397,8 +434,11 @@ impl ModuleDescription {
     pub(crate) fn from_snapshot(
         snapshot: RuntimeModuleSnapshot,
         sample_rate: u32,
-        is_sink: bool,
+        registry: &ModuleRegistry,
     ) -> Result<Self, RpcError> {
+        let type_name = snapshot.info.module_type;
+        let is_sink = registry.is_sink(&type_name);
+        let labels = registry.labels(&type_name);
         let control_values = snapshot
             .controls
             .iter()
@@ -412,13 +452,18 @@ impl ModuleDescription {
             metadata_source: MetadataSource::RunningInstance,
             sample_rate,
             module_id: Some(snapshot.info.id),
+            name: None,
             info: ModuleTypeInfo {
-                type_name: snapshot.info.module_type,
+                type_name,
                 inputs: snapshot.ports.inputs,
                 outputs: snapshot.ports.outputs,
                 controls,
                 is_sink,
-            },
+                label: None,
+                input_labels: BTreeMap::new(),
+                output_labels: BTreeMap::new(),
+            }
+            .labeled(labels),
             control_values,
             timeline: snapshot.timeline,
         };

@@ -33,6 +33,7 @@ pub(crate) fn upsert_module(
         None => document.modules.push(ModuleSpec {
             id: id.to_string(),
             module_type: module_type.to_string(),
+            name: None,
             config: config.clone(),
         }),
     }
@@ -60,6 +61,14 @@ pub(crate) fn place_module(document: &mut Invention, id: &str, position: Option<
         Some(position) => document.layout.modules.insert(id.to_string(), position),
         None => document.layout.modules.remove(id),
     };
+}
+
+/// Names module `id`, or clears its name with `None`. Does nothing when no
+/// module has that id.
+pub(crate) fn name_module(document: &mut Invention, id: &str, name: Option<String>) {
+    if let Some(spec) = document.modules.iter_mut().find(|spec| spec.id == id) {
+        spec.name = name;
+    }
 }
 
 /// Writes a control value into a module's config so the document reproduces
