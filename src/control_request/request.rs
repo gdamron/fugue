@@ -125,7 +125,16 @@ pub(crate) enum BeatSpec {
         offset: f32,
         repeat: bool,
     },
+    /// The clock's next bar line past its position, as its meter places
+    /// it (see [`Timeline::next_bar_line`](super::Timeline::next_bar_line)),
+    /// even across a meter change it has not reached; on a clock without a
+    /// meter, the next multiple of [`UNMETERED_BAR`] beats from beat 0.
+    /// After a reset it follows the new bar 1.
+    Bar,
 }
+
+/// The bar a [`BeatSpec::Bar`] counts on a clock without a meter, in beats.
+pub(crate) const UNMETERED_BAR: f32 = 4.0;
 
 /// Whether a write changes the composition or performs on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

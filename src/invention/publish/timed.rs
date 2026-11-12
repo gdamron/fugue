@@ -396,6 +396,7 @@ pub(super) fn logged_beat(clock: &str, spec: BeatSpec) -> LoggedBeat {
     let clock = clock.to_string();
     match spec {
         BeatSpec::After(beats) => LoggedBeat::After { clock, beats },
+        BeatSpec::Bar => LoggedBeat::Bar { clock },
         BeatSpec::Grid {
             every,
             offset,

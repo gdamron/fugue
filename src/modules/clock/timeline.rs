@@ -90,6 +90,10 @@ impl Timeline for Clock {
         self.beats_before
     }
 
+    fn next_bar_line(&self, from: f64) -> Option<f64> {
+        self.meter.next_line(from)
+    }
+
     fn latch(&mut self) {
         let next = self.sample_count + 1;
         if self.latch.is_none_or(|(at, ..)| at != next) {

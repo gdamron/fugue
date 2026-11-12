@@ -62,11 +62,13 @@ pub enum ControlWhen {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         clock: Option<String>,
     },
-    /// The next bar's downbeat: the next multiple of `beats_per_bar`
-    /// (default 4), counted from the clock's beat 0.
+    /// The next bar's downbeat. With `beats_per_bar`, the next multiple of
+    /// it counted from the clock's beat 0; without, the clock's own next
+    /// bar line as its meter places it (across a meter change too), or the
+    /// next multiple of 4 beats when it has no meter.
     NextBar {
-        #[serde(default = "default_beats_per_bar")]
-        beats_per_bar: f32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        beats_per_bar: Option<f32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         clock: Option<String>,
     },
@@ -80,10 +82,6 @@ pub enum ControlWhen {
         #[serde(default, skip_serializing_if = "is_zero")]
         offset_samples: u64,
     },
-}
-
-fn default_beats_per_bar() -> f32 {
-    4.0
 }
 
 fn is_zero(samples: &u64) -> bool {

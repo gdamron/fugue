@@ -114,6 +114,9 @@ enum Goal {
         repeat: bool,
         next: Option<(f64, u64)>,
     },
+    /// [`BeatSpec::Bar`], and the bar line it waits for as of
+    /// `beats_before`, once looked for.
+    Bar { next: Option<(f64, u64)> },
 }
 
 struct Watch {
@@ -181,6 +184,19 @@ impl Watch {
                     every,
                     offset,
                     repeat,
+                    next: Some((next, begun)),
+                };
+                (next, true)
+            }
+            Goal::Bar {
+                next: Some((next, beats_before)),
+            } if beats_before == begun => (next, false),
+            Goal::Bar { .. } => {
+                let from = timeline.position();
+                let next = timeline.next_bar_line(from).unwrap_or_else(|| {
+                    grid_after(from, f64::from(super::request::UNMETERED_BAR), 0.0)
+                });
+                self.goal = Goal::Bar {
                     next: Some((next, begun)),
                 };
                 (next, true)
@@ -305,7 +321,7 @@ impl Watches {
             BeatSpec::Grid { repeat: true, .. } if request.value.is_payload() => {
                 Err(Refusal::Unsupported)
             }
-            BeatSpec::Grid { .. } => Ok(()),
+            BeatSpec::Grid { .. } | BeatSpec::Bar => Ok(()),
             BeatSpec::After(_) => Err(Refusal::Invalid),
         }
     }
@@ -334,6 +350,7 @@ impl Watches {
                 repeat,
                 next: None,
             },
+            BeatSpec::Bar => Goal::Bar { next: None },
         };
         self.entries.push(Watch {
             request,

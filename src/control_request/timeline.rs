@@ -46,6 +46,13 @@ pub(crate) trait Timeline {
     /// move the beat it applies on. Until the next sample; no effect
     /// without a tempo change.
     fn latch(&mut self);
+
+    /// The first bar line past position `from` (which may be one the
+    /// module has not reached yet, nor passed a meter change before), or
+    /// none when the module keeps no meter.
+    fn next_bar_line(&self, _from: f64) -> Option<f64> {
+        None
+    }
 }
 
 /// The least `k >= 1` with `position_after(k) >= beat`, given `estimate`,
