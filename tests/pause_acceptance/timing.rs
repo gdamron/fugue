@@ -39,7 +39,7 @@ fn clocks_hold_while_paused_and_continue_from_the_beat() {
 #[test]
 fn timed_writes_wait_through_a_pause_and_land_on_their_beat() {
     let bar = ControlWhen::NextBar {
-        beats_per_bar: 4.0,
+        beats_per_bar: Some(4.0),
         clock: None,
     };
     let every_three = ControlWhen::NextBeat {
