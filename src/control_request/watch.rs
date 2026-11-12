@@ -115,8 +115,9 @@ enum Goal {
         next: Option<(f64, u64)>,
     },
     /// [`BeatSpec::Bar`], and the bar line it waits for as of
-    /// `beats_before`, once looked for.
-    Bar { next: Option<(f64, u64)> },
+    /// `beats_before` and the clock's [`Timeline::bar_lines_moved`], once
+    /// looked for.
+    Bar { next: Option<(f64, u64, u64)> },
 }
 
 struct Watch {
@@ -189,15 +190,15 @@ impl Watch {
                 (next, true)
             }
             Goal::Bar {
-                next: Some((next, beats_before)),
-            } if beats_before == begun => (next, false),
+                next: Some((next, beats_before, moved)),
+            } if beats_before == begun && moved == timeline.bar_lines_moved() => (next, false),
             Goal::Bar { .. } => {
                 let from = timeline.position();
                 let next = timeline.next_bar_line(from).unwrap_or_else(|| {
                     grid_after(from, f64::from(super::request::UNMETERED_BAR), 0.0)
                 });
                 self.goal = Goal::Bar {
-                    next: Some((next, begun)),
+                    next: Some((next, begun, timeline.bar_lines_moved())),
                 };
                 (next, true)
             }

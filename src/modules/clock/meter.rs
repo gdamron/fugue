@@ -19,6 +19,9 @@ pub(super) struct Meter {
     bar_start: f64,
     /// The bar playing now, from 1.
     bar: u32,
+    /// Counts the times the bar lines moved other than by playing on to
+    /// them: a meter taking over at once (see [`Self::lines_moved`]).
+    moves: u64,
 }
 
 impl Meter {
@@ -29,7 +32,14 @@ impl Meter {
             written: beats,
             bar_start: 0.0,
             bar: 1,
+            moves: 0,
         }
+    }
+
+    /// Changes each time a meter takes over at once, moving the bar lines
+    /// ahead: a bar line looked for before is stale then.
+    pub(super) fn lines_moved(&self) -> u64 {
+        self.moves
     }
 
     /// Writes a meter of `beats` at `position` (negative before the clock's
@@ -48,12 +58,16 @@ impl Meter {
             self.in_force = beats;
             self.bar_start = bars * f64::from(beats);
             self.bar = (bars as u32).saturating_add(1);
+            self.moves = self.moves.wrapping_add(1);
         }
     }
 
     /// Back to bar 1 at beat 0, with the meter last written in force.
     pub(super) fn reset(&mut self) {
-        *self = Self::new(self.written);
+        *self = Self {
+            moves: self.moves.wrapping_add(1),
+            ..Self::new(self.written)
+        };
     }
 
     /// Moves past every bar line at or before `position`, adopting the
