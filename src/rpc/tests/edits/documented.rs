@@ -99,3 +99,16 @@ fn the_documented_naming_parses_and_round_trips() {
     let edit: StructuralEdit = serde_json::from_str(add).unwrap();
     assert_eq!(serde_json::to_string(&edit).unwrap(), add);
 }
+
+#[cfg(feature = "rpc-schema")]
+#[test]
+fn the_edit_schema_offers_naming() {
+    let schema = serde_json::to_string(&schemars::schema_for!(StructuralEdit)).unwrap();
+    assert!(schema.contains("\"name_modules\"") && schema.contains("\"names\""));
+    let schema: serde_json::Value = serde_json::from_str(&schema).unwrap();
+    let variants = schema["oneOf"].as_array().unwrap();
+    let add = (variants.iter())
+        .find(|variant| variant["properties"]["op"]["const"] == "add_module")
+        .unwrap();
+    assert!(add["properties"].get("name").is_some(), "{add:#}");
+}

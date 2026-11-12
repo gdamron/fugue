@@ -230,13 +230,6 @@ impl ModuleTypeInfo {
             listed.retain(|port, _| names.contains(port));
             listed
         };
-        debug_assert!(
-            (labels.module.into_iter())
-                .chain(labels.inputs.iter().chain(labels.outputs).map(|(_, label)| *label))
-                .all(|label| !label.trim().is_empty()),
-            "{} declares a blank label",
-            self.type_name
-        );
         self.label = listed_label(&self.type_name, labels.module);
         self.input_labels = ports(labels.inputs, &self.inputs);
         self.output_labels = ports(labels.outputs, &self.outputs);

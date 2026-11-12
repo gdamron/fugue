@@ -83,7 +83,14 @@ fn a_running_module_is_described_with_its_name_and_its_id() {
     )
     .unwrap();
     assert_eq!(description.info.label, listed.info.label);
+    assert_eq!(description.info.type_name, "oscillator");
     assert_eq!(description.info.input_labels, listed.info.input_labels);
+    assert_eq!(description.info.output_labels, listed.info.output_labels);
+    let wire = serde_json::to_value(&description).unwrap();
+    assert_eq!(
+        (&wire["name"], &wire["module_id"]),
+        (&serde_json::json!("Lead"), &serde_json::json!("osc1"))
+    );
     assert_eq!(description.info.input_labels["frequency_mod"], "FM");
     assert!(description.info.controls.iter().any(|c| c.label.is_some()));
     // The name addresses nothing: the id still does.
