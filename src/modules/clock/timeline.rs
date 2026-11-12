@@ -20,6 +20,8 @@ impl Clock {
         self.latch = None;
         self.beats = 0.0;
         self.phase = 0.0;
+        self.meter.reset();
+        self.publish_bar();
     }
 
     /// The position at the latest sample output, or [`BEFORE_START`] when

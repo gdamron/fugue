@@ -12,10 +12,15 @@ use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::{ControlValue, Module};
 
-use self::controls::{BPM, ELAPSED, GATE_LENGTH, POSITION, RESET, TABLE};
+use self::controls::{
+    BAR, BEATS_PER_BAR, BEAT_IN_BAR, BPM, ELAPSED, GATE_LENGTH, MAX_BAR, MAX_BEATS_PER_BAR, METER,
+    POSITION, RESET, TABLE,
+};
+use self::meter::Meter;
 
 mod controls;
 mod inputs;
+mod meter;
 mod outputs;
 #[cfg(test)]
 mod tests;
@@ -28,6 +33,8 @@ const TYPE_ID: &str = "clock";
 const BPM_KEY: ConfigKey = ConfigKey::float("bpm");
 const GATE_LENGTH_KEY: ConfigKey = ConfigKey::float("gate_length");
 const RESET_ON_RELOAD_KEY: ConfigKey = ConfigKey::boolean("reset_on_reload");
+const BEATS_PER_BAR_KEY: ConfigKey =
+    ConfigKey::integer("beats_per_bar", 0, MAX_BEATS_PER_BAR as i128);
 
 impl ModuleFactory for ClockFactory {
     fn type_id(&self) -> &'static str {
@@ -35,7 +42,14 @@ impl ModuleFactory for ClockFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        const { &[BPM_KEY, GATE_LENGTH_KEY, RESET_ON_RELOAD_KEY] }
+        const {
+            &[
+                BPM_KEY,
+                GATE_LENGTH_KEY,
+                RESET_ON_RELOAD_KEY,
+                BEATS_PER_BAR_KEY,
+            ]
+        }
     }
 
     fn writes_on_reload(&self, config: &serde_json::Value) -> Vec<(&'static str, ControlValue)> {
@@ -54,9 +68,12 @@ impl ModuleFactory for ClockFactory {
         let reader = ConfigReader::new(TYPE_ID, config);
         let bpm = reader.float(&BPM_KEY)?.map_or(120.0, f64::from);
         let gate_length = reader.float(&GATE_LENGTH_KEY)?.map_or(0.25, f64::from);
+        let beats_per_bar = reader.int::<i32>(&BEATS_PER_BAR_KEY)?.unwrap_or(0);
         timeline::reset_on_reload(config)?;
 
-        let clock = Clock::with_gate_length(sample_rate, bpm, gate_length);
+        let mut clock = Clock::with_gate_length(sample_rate, bpm, gate_length);
+        apply_declared(&mut clock, BEATS_PER_BAR, RtValue::I32(beats_per_bar))
+            .map_err(|refusal| format!("{TYPE_ID} beats_per_bar refused: {refusal:?}"))?;
         let surface = DeclaredSurface::new(TABLE.clone(), clock.cells.clone());
 
         Ok(ModuleBuildResult {
@@ -72,7 +89,14 @@ impl ModuleFactory for ClockFactory {
 ///
 /// Outputs a gate on every beat (`beat`), and at subdivisions and multiples
 /// of it (`beat_x2`, `beat_x4`, `beat_d2`, `beat_d4`), for driving
-/// downstream modules. The engine has no metre: bars are the composer's.
+/// downstream modules.
+///
+/// # Meter
+///
+/// With `beats_per_bar` set, the clock counts bars from its latest reset
+/// and reports the bar and the beat within it (see `meter`). A new meter
+/// takes over at the next bar line, so the bars already played keep their
+/// numbers; 0, the default, is no meter and no bars.
 ///
 /// The `bpm` output carries the tempo itself as a signal, so a module that
 /// times itself by tempo (a delay set in note values) can be patched to
@@ -126,6 +150,8 @@ pub struct Clock {
     // The next sample's (sample, position, bpm) as predicted when latched
     // (see `Timeline::latch`): a tempo change before it re-anchors there.
     latch: Option<(u64, f64, f32)>,
+    // Its bars, counted from the latest reset.
+    meter: Meter,
     // Cached output for modular routing
     outputs: outputs::ClockOutputs,
     // Tells this clock from every other built in the process (see
@@ -159,6 +185,7 @@ impl Clock {
             started: false,
             beats_before: 0,
             latch: None,
+            meter: Meter::default(),
             outputs: outputs::ClockOutputs::new(),
             instance: NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed),
         };
@@ -230,6 +257,19 @@ impl Clock {
         );
     }
 
+    /// Publishes the bar, the beat within it and the meter in force at the
+    /// latest sample output.
+    fn publish_bar(&mut self) {
+        let position = self.beat_position();
+        self.meter.advance(position);
+        let (bar, beat, meter) = self.meter.reading(position);
+        let whole =
+            |count: u32| RtValue::I32(i32::try_from(count).map_or(MAX_BAR, |n| n.min(MAX_BAR)));
+        self.cells.publish(BAR, whole(bar));
+        self.cells.publish(BEAT_IN_BAR, whole(beat));
+        self.cells.publish(METER, whole(meter));
+    }
+
     /// Advances the clock by one sample, storing gate outputs at frame `i`.
     fn advance(&mut self, i: usize) {
         self.sample_count += 1;
@@ -283,6 +323,7 @@ impl Module for Clock {
         self.cells.publish(POSITION, RtValue::F32(position as f32));
         let elapsed = self.beats_before as f64 + position;
         self.cells.publish(ELAPSED, RtValue::F32(elapsed as f32));
+        self.publish_bar();
         true
     }
 
@@ -321,6 +362,12 @@ impl Module for Clock {
         match (control, value) {
             (BPM, RtValue::F32(bpm)) => self.bpm = bpm,
             (GATE_LENGTH, RtValue::F32(length)) => self.gate_length = length.clamp(0.0, 1.0),
+            (BEATS_PER_BAR, RtValue::I32(beats)) => {
+                let beats = beats.clamp(0, MAX_BEATS_PER_BAR) as u32;
+                self.meter.write(beats, self.beat_position());
+                self.publish_bar();
+                return Ok(RtValue::I32(beats as i32));
+            }
             (RESET, RtValue::Bool(fire)) => {
                 if fire {
                     self.reset();
