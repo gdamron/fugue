@@ -20,6 +20,8 @@ impl Clock {
         self.latch = None;
         self.beats = 0.0;
         self.phase = 0.0;
+        self.meter.reset();
+        self.publish_bar();
     }
 
     /// The position at the latest sample output, or [`BEFORE_START`] when
@@ -86,6 +88,14 @@ impl Timeline for Clock {
 
     fn beats_before(&self) -> u64 {
         self.beats_before
+    }
+
+    fn next_bar_line(&self, from: f64) -> Option<f64> {
+        self.meter.next_line(from)
+    }
+
+    fn bar_lines_moved(&self) -> u64 {
+        self.meter.lines_moved()
     }
 
     fn latch(&mut self) {

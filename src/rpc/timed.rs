@@ -79,19 +79,16 @@ pub enum EditWhen {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         clock: Option<String>,
     },
-    /// The next bar's downbeat: the next multiple of `beats_per_bar`
-    /// (default 4), counted from the clock's beat 0. The engine keeps no
-    /// meter, so a bar is only this many beats.
+    /// The next bar's downbeat. With `beats_per_bar`, the next multiple of
+    /// it counted from the clock's beat 0; without, the clock's own next
+    /// bar line as its meter places it (across a meter change too), or the
+    /// next multiple of 4 beats when it has no meter.
     NextBar {
-        #[serde(default = "default_beats_per_bar")]
-        beats_per_bar: f32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        beats_per_bar: Option<f32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         clock: Option<String>,
     },
-}
-
-fn default_beats_per_bar() -> f32 {
-    4.0
 }
 
 /// Where a timed request stands.

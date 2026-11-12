@@ -48,7 +48,7 @@ fn downbeat() -> usize {
 
 fn next_bar() -> EditWhen {
     EditWhen::NextBar {
-        beats_per_bar: 4.0,
+        beats_per_bar: Some(4.0),
         clock: None,
     }
 }

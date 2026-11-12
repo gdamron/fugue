@@ -111,6 +111,43 @@ pub struct ClockSummary {
     /// control, the measure a view's playhead uses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub beats: Option<f64>,
+    /// The bar, from 1 at the clock's latest reset; none without a meter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bar: Option<u32>,
+    /// The beat within the bar, from 1; none without a meter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beat_in_bar: Option<u32>,
+    /// Beats in the bar playing now: the meter in force (a new one takes
+    /// over at the next bar line); none without a meter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beats_per_bar: Option<u32>,
+}
+
+impl ClockSummary {
+    /// Clock `id`'s summary from its controls, as `control` reads them by
+    /// key (a running invention's `get_control`, say): its `bpm`, its
+    /// `elapsed` beats to the thousandth, and with a meter in force its
+    /// `bar`, `beat_in_bar` and `meter`. A control it cannot read is left
+    /// out.
+    pub fn read(id: &str, control: impl Fn(&str) -> Option<ControlValue>) -> Self {
+        let number = |key: &str| match control(key) {
+            Some(ControlValue::Number(value)) if value.is_finite() => Some(value),
+            _ => None,
+        };
+        // 0 is no meter, and a count from 1.
+        let count = |key: &str| number(key).filter(|n| *n >= 1.0).map(|n| n as u32);
+        let beats_per_bar = count("meter");
+        let metered = |key: &str| beats_per_bar.and(count(key));
+        Self {
+            id: id.to_string(),
+            bpm: number("bpm"),
+            // To the thousandth: an f32 widened to f64 prints noise digits.
+            beats: number("elapsed").map(|beats| (f64::from(beats) * 1e3).round() / 1e3),
+            bar: metered("bar"),
+            beat_in_bar: metered("beat_in_bar"),
+            beats_per_bar,
+        }
+    }
 }
 
 /// A pinned control and its current value.

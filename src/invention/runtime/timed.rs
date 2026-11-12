@@ -125,17 +125,30 @@ pub(crate) fn edit_time<'a>(
             beats_per_bar,
             clock,
         } => {
+            let Some(beats_per_bar) = beats_per_bar else {
+                return Ok(on_clock(clock, module, BeatSpec::Bar));
+            };
             if !(beats_per_bar.is_finite() && *beats_per_bar > 0.0) {
                 return refuse("`next_bar` needs a positive `beats_per_bar`");
             }
             (clock, grid(*beats_per_bar, 0.0))
         }
     };
-    Ok(match (clock, module) {
+    Ok(on_clock(clock, module, spec))
+}
+
+/// `spec` counted on `clock`, else on the clock `module` counts on, else on
+/// the invention's first.
+fn on_clock<'a>(
+    clock: &'a Option<String>,
+    module: Option<&'a str>,
+    spec: BeatSpec,
+) -> EditTime<'a> {
+    match (clock, module) {
         (Some(clock), _) => EditTime::Beat { clock, spec },
         (None, Some(module)) => EditTime::BeatOf { module, spec },
         (None, None) => EditTime::FirstClock(spec),
-    })
+    }
 }
 
 /// The next beat `offset` past a multiple of `every`, once.

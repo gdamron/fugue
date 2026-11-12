@@ -150,9 +150,9 @@ impl Invention {
         self.minimum_core_version = self.minimum_core_version.max(self.features_minimum_core());
     }
 
-    /// A copy with no declared minimum and no layout, here or in any inline
-    /// definition: what the document builds, for comparing two versions of
-    /// it.
+    /// A copy with no declared minimum, no layout and no main clock, here
+    /// or in any inline definition: what the document builds, for comparing
+    /// two versions of it.
     pub(crate) fn as_built(&self) -> Invention {
         let mut document = self.clone();
         document.clear_unbuilt();
@@ -162,6 +162,7 @@ impl Invention {
     fn clear_unbuilt(&mut self) {
         self.minimum_core_version = None;
         self.layout = Default::default();
+        self.main_clock = None;
         for spec in &mut self.developments {
             if let Some(definition) = spec.definition.as_deref_mut() {
                 definition.clear_unbuilt();

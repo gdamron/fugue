@@ -74,6 +74,13 @@ pub struct Invention {
     #[serde(default, skip_serializing_if = "super::layout::Layout::is_empty")]
     pub layout: super::layout::Layout,
 
+    /// The id of the clock that leads where a surface shows one (the status
+    /// summary lists it first); presentation only (see
+    /// [`Invention::summary_clocks`]). Omitted when unset: the first clock
+    /// leads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_clock: Option<String>,
+
     /// Source file path used for resolving relative development imports.
     #[serde(skip)]
     pub source_path: Option<PathBuf>,

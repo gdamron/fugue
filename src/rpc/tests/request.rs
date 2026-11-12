@@ -72,7 +72,7 @@ fn rpc_commands_round_trip_json() {
             preserve_connections: true,
             timing: EditTiming {
                 when: Some(EditWhen::NextBar {
-                    beats_per_bar: 3.0,
+                    beats_per_bar: Some(3.0),
                     clock: Some("clock".to_string()),
                 }),
                 ttl_ms: Some(2_000),

@@ -252,7 +252,7 @@ fn a_relative_write_folded_into_a_timed_reload_from_elsewhere_keeps_its_file() {
 
     let (mut running, pump) = start_pumped(first);
     let when = crate::rpc::EditWhen::NextBar {
-        beats_per_bar: 4.0,
+        beats_per_bar: Some(4.0),
         clock: None,
     };
     let incoming = Invention::from_file(&b.to_string_lossy()).unwrap();

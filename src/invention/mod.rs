@@ -27,6 +27,7 @@ pub mod graph;
 pub mod handles;
 pub mod layout;
 pub(crate) mod load_warnings;
+mod main_clock;
 #[cfg(test)]
 pub(crate) mod manual_backend;
 pub mod notes;

@@ -38,7 +38,7 @@ fn a_timed_command_queues_without_advancing_the_revision() {
         panic!("{swap:?}");
     };
     let next_bar = EditWhen::NextBar {
-        beats_per_bar: 4.0,
+        beats_per_bar: None,
         clock: None,
     };
     assert_eq!(timing.when.as_ref(), Some(&next_bar));
