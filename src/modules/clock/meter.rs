@@ -19,6 +19,9 @@ pub(super) struct Meter {
     bar_start: f64,
     /// The bar playing now, from 1.
     bar: u32,
+    /// Counts the times the bar lines moved other than by playing on to
+    /// them: a meter taking over at once (see [`Self::lines_moved`]).
+    moves: u64,
 }
 
 impl Meter {
@@ -29,7 +32,14 @@ impl Meter {
             written: beats,
             bar_start: 0.0,
             bar: 1,
+            moves: 0,
         }
+    }
+
+    /// Changes each time a meter takes over at once, moving the bar lines
+    /// ahead: a bar line looked for before is stale then.
+    pub(super) fn lines_moved(&self) -> u64 {
+        self.moves
     }
 
     /// Writes a meter of `beats` at `position` (negative before the clock's
@@ -48,12 +58,16 @@ impl Meter {
             self.in_force = beats;
             self.bar_start = bars * f64::from(beats);
             self.bar = (bars as u32).saturating_add(1);
+            self.moves = self.moves.wrapping_add(1);
         }
     }
 
     /// Back to bar 1 at beat 0, with the meter last written in force.
     pub(super) fn reset(&mut self) {
-        *self = Self::new(self.written);
+        *self = Self {
+            moves: self.moves.wrapping_add(1),
+            ..Self::new(self.written)
+        };
     }
 
     /// Moves past every bar line at or before `position`, adopting the
@@ -95,6 +109,27 @@ impl Meter {
         let beat = (into as u32).saturating_add(1).min(self.in_force);
         (self.bar, beat, self.in_force)
     }
+
+    /// The first bar line past `from`, or none with no meter (or none after
+    /// the next line, where a meter of 0 takes over). Exact without
+    /// [`Self::advance`] having reached `from`.
+    pub(super) fn next_line(&self, from: f64) -> Option<f64> {
+        if self.in_force == 0 {
+            return None;
+        }
+        if self.bar_start > from {
+            return Some(self.bar_start);
+        }
+        let line = self.bar_start + f64::from(self.in_force);
+        if line > from {
+            return Some(line);
+        }
+        let written = f64::from(self.written);
+        if written == 0.0 {
+            return None;
+        }
+        Some(line + written * (((from - line) / written).floor() + 1.0))
+    }
 }
 
 #[cfg(test)]
@@ -110,6 +145,7 @@ mod tests {
     fn no_meter_counts_no_bars() {
         let mut meter = Meter::new(0);
         assert_eq!(at(&mut meter, 5.5), (0, 0, 0));
+        assert_eq!(meter.next_line(5.5), None);
     }
 
     #[test]
@@ -126,9 +162,21 @@ mod tests {
     fn a_new_meter_waits_for_the_bar_line_and_played_bars_keep_their_numbers() {
         let mut meter = Meter::new(4);
         meter.write(3, 5.5);
+        assert_eq!(meter.next_line(5.5), Some(8.0));
         assert_eq!(at(&mut meter, 7.5), (2, 4, 4));
         assert_eq!(at(&mut meter, 8.0), (3, 1, 3));
+        assert_eq!(meter.next_line(8.0), Some(11.0));
         assert_eq!(at(&mut meter, 11.0), (4, 1, 3));
+    }
+
+    #[test]
+    fn the_next_line_is_exact_before_the_meter_advances() {
+        let mut meter = Meter::new(4);
+        meter.write(3, 1.0);
+        // Not advanced past 4, where the 3 takes over.
+        assert_eq!(meter.next_line(4.5), Some(7.0));
+        assert_eq!(meter.next_line(10.0), Some(13.0));
+        assert_eq!(meter.next_line(-0.5), Some(0.0));
     }
 
     #[test]
@@ -136,12 +184,15 @@ mod tests {
         let mut meter = Meter::new(0);
         meter.write(4, 5.5);
         assert_eq!(meter.reading(5.5), (2, 2, 4));
+        assert_eq!(meter.next_line(5.5), Some(8.0));
     }
 
     #[test]
     fn a_meter_of_zero_ends_the_bars_at_the_next_line() {
         let mut meter = Meter::new(4);
         meter.write(0, 2.0);
+        assert_eq!(meter.next_line(2.0), Some(4.0));
+        assert_eq!(meter.next_line(5.0), None);
         assert_eq!(at(&mut meter, 3.5), (1, 4, 4));
         assert_eq!(at(&mut meter, 4.5), (0, 0, 0));
     }
@@ -166,8 +217,8 @@ mod tests {
         assert_eq!(at(&mut meter, 4.0 + 3.0 * 1_000.0 + 1.5), (1_002, 2, 3));
         let mut meter = Meter::new(1);
         assert_eq!(at(&mut meter, 1e300).0, u32::MAX);
-        assert_eq!(at(&mut meter, f64::NAN).0, u32::MAX);
         let mut meter = Meter::new(4);
+        assert_eq!(at(&mut meter, f64::NAN), (1, 1, 4));
         assert_eq!(at(&mut meter, f64::INFINITY).0, u32::MAX);
     }
 

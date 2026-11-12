@@ -52,7 +52,7 @@ pub(super) fn downbeat(beat: f64) -> usize {
 
 fn next_bar() -> EditWhen {
     EditWhen::NextBar {
-        beats_per_bar: 4.0,
+        beats_per_bar: Some(4.0),
         clock: None,
     }
 }
@@ -189,7 +189,7 @@ fn a_time_that_can_never_come_is_refused_with_nothing_queued() {
         clock: None,
     };
     let no_bar = EditWhen::NextBar {
-        beats_per_bar: 0.0,
+        beats_per_bar: Some(0.0),
         clock: None,
     };
     for when in [not_a_clock, backwards, no_bar] {
