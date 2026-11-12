@@ -217,8 +217,8 @@ mod tests {
         assert_eq!(at(&mut meter, 4.0 + 3.0 * 1_000.0 + 1.5), (1_002, 2, 3));
         let mut meter = Meter::new(1);
         assert_eq!(at(&mut meter, 1e300).0, u32::MAX);
-        assert_eq!(at(&mut meter, f64::NAN).0, u32::MAX);
         let mut meter = Meter::new(4);
+        assert_eq!(at(&mut meter, f64::NAN), (1, 1, 4));
         assert_eq!(at(&mut meter, f64::INFINITY).0, u32::MAX);
     }
 
