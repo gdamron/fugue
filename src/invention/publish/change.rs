@@ -300,6 +300,7 @@ impl GraphChange {
                 id: id.to_string(),
                 module_type: module_type.to_string(),
                 config: config.clone(),
+                name: None,
             },
             surface: result.control_surface,
             handles: result.handles,

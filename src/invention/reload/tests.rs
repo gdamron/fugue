@@ -191,6 +191,7 @@ fn config_deltas_that_cannot_be_controls_force_a_swap() {
             id: "osc".to_string(),
             module_type: "oscillator".to_string(),
             config: serde_json::json!({ "waveform": "sine", "frequency": 440.0 }),
+            name: None,
         },
     )]
     .into_iter()
@@ -257,6 +258,7 @@ fn null_and_empty_configs_are_equivalent() {
             id: "dac".to_string(),
             module_type: "dac".to_string(),
             config: serde_json::Value::Null,
+            name: None,
         },
     )]
     .into_iter()
@@ -297,6 +299,7 @@ fn connection_diff_skips_endpoints_of_removed_modules() {
                 id: "osc".to_string(),
                 module_type: "oscillator".to_string(),
                 config: serde_json::Value::Null,
+                name: None,
             },
         ),
         (
@@ -305,6 +308,7 @@ fn connection_diff_skips_endpoints_of_removed_modules() {
                 id: "dac".to_string(),
                 module_type: "dac".to_string(),
                 config: serde_json::Value::Null,
+                name: None,
             },
         ),
     ]

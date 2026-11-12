@@ -260,6 +260,7 @@ impl InventionBuilder {
                     id: spec.id.clone(),
                     module_type: spec.module_type.clone(),
                     config: spec.config.clone(),
+                    name: None,
                 },
             );
         }

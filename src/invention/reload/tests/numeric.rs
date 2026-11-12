@@ -17,6 +17,7 @@ fn plan(module_type: &str, previous: Value, new: Value) -> ReloadPlan {
             id: "m".to_string(),
             module_type: module_type.to_string(),
             config: previous,
+            name: None,
         },
     )]
     .into_iter()

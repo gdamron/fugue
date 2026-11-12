@@ -288,6 +288,7 @@ fn what_cannot_be_timed_is_refused_with_nothing_queued() {
         id: "dial".into(),
         module_type: "code".into(),
         config: serde_json::json!({}),
+        name: None,
     };
     let mut state = rig.live.state.lock().unwrap();
     state.modules.insert("dial".into(), script);

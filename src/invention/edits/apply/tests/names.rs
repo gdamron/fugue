@@ -250,3 +250,25 @@ fn describing_a_module_after_a_timed_edit_lands_reads_its_name_without_waiting()
     let description = running.describe_module(&query).unwrap();
     assert_eq!(description.name.as_deref(), Some("Lead"));
 }
+
+fn snapshot_name(running: &RunningInvention, id: &str) -> Option<String> {
+    let snapshot = running.full_snapshot();
+    let module = snapshot.modules.iter().find(|m| m.info.id == id);
+    module.unwrap().info.name.clone()
+}
+
+#[test]
+fn the_next_snapshot_shows_a_name_edit_and_its_clearing() {
+    let (mut running, _pump) = start(BASE);
+    assert_eq!(snapshot_name(&running, "osc1"), None);
+
+    running
+        .apply_edits(&[names(&[("osc1", Some("Lead")), ("osc2", Some("Pad"))])])
+        .unwrap();
+    assert_eq!(snapshot_name(&running, "osc1").as_deref(), Some("Lead"));
+    assert_eq!(snapshot_name(&running, "osc2").as_deref(), Some("Pad"));
+
+    running.apply_edits(&[names(&[("osc1", None)])]).unwrap();
+    assert_eq!(snapshot_name(&running, "osc1"), None);
+    assert_eq!(snapshot_name(&running, "osc2").as_deref(), Some("Pad"));
+}

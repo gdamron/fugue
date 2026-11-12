@@ -105,3 +105,32 @@ fn a_running_module_is_described_with_its_name_and_its_id() {
     let wire = serde_json::to_value(&description).unwrap();
     assert!(wire.get("name").is_none(), "{wire}");
 }
+
+/// What the next snapshot reads for `osc1`'s name.
+fn snapshot_name(running: &Settled) -> Option<String> {
+    let snapshot = running.full_snapshot();
+    let module = snapshot.modules.iter().find(|m| m.info.id == "osc1");
+    module.unwrap().info.name.clone()
+}
+
+#[test]
+fn a_snapshot_shows_the_name_a_load_and_a_name_only_reload_set() {
+    let mut running = start(&named(Some("Lead")).to_json().unwrap());
+    assert_eq!(snapshot_name(&running).as_deref(), Some("Lead"));
+
+    running.reload(named(Some("Pad"))).unwrap();
+    assert_eq!(snapshot_name(&running).as_deref(), Some("Pad"));
+
+    running.reload(doc(BASE)).unwrap();
+    assert_eq!(snapshot_name(&running), None);
+}
+
+#[test]
+fn an_unnamed_module_serializes_without_a_name() {
+    let running = start(&named(Some("Lead")).to_json().unwrap());
+    let wire = serde_json::to_value(running.full_snapshot()).unwrap();
+    let modules = wire["modules"].as_array().unwrap();
+    let info = |id: &str| (modules.iter()).find(|m| m["info"]["id"] == id).unwrap()["info"].clone();
+    assert_eq!(info("osc1")["name"], "Lead");
+    assert!(info("osc2").get("name").is_none(), "{}", info("osc2"));
+}
