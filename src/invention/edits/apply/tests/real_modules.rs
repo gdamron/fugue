@@ -39,6 +39,7 @@ fn recording(path: &std::path::Path) -> Invention {
     document.modules.push(crate::ModuleSpec {
         id: "rec".into(),
         module_type: "audio_file_sink".into(),
+        name: None,
         config: json!({ "path": path }),
     });
     document.connections.push(crate::Connection {
@@ -197,6 +198,7 @@ fn a_schedule_written_to_a_running_scheduler_commits() {
     document.modules.push(crate::ModuleSpec {
         id: "auto".into(),
         module_type: "control_scheduler".into(),
+        name: None,
         config: json!({ "schedule": [] }),
     });
     let (mut running, _pump) = start_doc(document);
@@ -334,6 +336,7 @@ fn a_saved_melody_rebuilds_what_shrinking_and_growing_left_playing() {
     document.modules.push(crate::ModuleSpec {
         id: "tune".into(),
         module_type: "melody".into(),
+        name: None,
         config: json!({ "degrees": [0, 2, 4, 5, 7, 9, 11], "note_weights": [4, 1, 2] }),
     });
     let (mut running, pump) = start_doc(document);
@@ -373,6 +376,7 @@ fn a_saved_melody_forgets_what_a_whole_list_replaced() {
     document.modules.push(crate::ModuleSpec {
         id: "tune".into(),
         module_type: "melody".into(),
+        name: None,
         config: json!({ "degrees": [0, 2, 4, 5, 7, 9, 11], "note_weights": [4, 1, 2] }),
     });
     let (mut running, pump) = start_doc(document);
@@ -420,6 +424,7 @@ fn with_melody(scale: serde_json::Value) -> Invention {
     document.modules.push(crate::ModuleSpec {
         id: "tune".into(),
         module_type: "melody".into(),
+        name: None,
         config: json!({ "degrees": scale }),
     });
     document
@@ -602,6 +607,7 @@ fn a_sample_that_does_not_load_is_reported_when_written_and_the_batch_commits() 
     document.modules.push(crate::ModuleSpec {
         id: "kit".into(),
         module_type: "sample_kit".into(),
+        name: None,
         config: json!({ "samples": [{ "key": "kick", "asset": sample }] }),
     });
     let (mut running, pump) = start_doc(document);
@@ -647,6 +653,7 @@ fn a_sample_can_be_replaced_when_the_one_it_loaded_no_longer_builds() {
     document.modules.push(crate::ModuleSpec {
         id: "smp".into(),
         module_type: "sample_player".into(),
+        name: None,
         config: json!({ "asset": old }),
     });
     let (mut running, _pump) = start_doc(document);
@@ -762,6 +769,7 @@ fn a_batch_clamps_a_step_sequencers_whole_numbers_and_refuses_fractions() {
     document.modules.push(crate::ModuleSpec {
         id: "seq".into(),
         module_type: "step_sequencer".into(),
+        name: None,
         config: json!({}),
     });
     let (mut running, pump) = start_doc(document);

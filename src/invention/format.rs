@@ -214,6 +214,13 @@ pub struct ModuleSpec {
     #[serde(rename = "type")]
     pub module_type: String,
 
+    /// What the piece calls this module ("Lead filter"), for surfaces and
+    /// agents to show beside or instead of its id; presentation only (see
+    /// [`super::names`]). Omitted when unnamed, so a document without names
+    /// saves as it always has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
     /// Module-specific configuration as generic JSON.
     ///
     /// Each module factory knows how to parse its own configuration.

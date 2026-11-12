@@ -165,6 +165,7 @@ fn a_live_schedule_write_costs_the_audio_thread_nothing_inside_a_development_or_
     top.modules.push(crate::ModuleSpec {
         id: "dac".into(),
         module_type: "dac".into(),
+        name: None,
         config: json!({}),
     });
     let inner = document(json!([{ "id": "lead", "type": "pattern" }]));

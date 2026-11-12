@@ -33,6 +33,7 @@ pub(crate) fn upsert_module(
         None => document.modules.push(ModuleSpec {
             id: id.to_string(),
             module_type: module_type.to_string(),
+            name: None,
             config: config.clone(),
         }),
     }

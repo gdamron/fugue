@@ -33,6 +33,7 @@ fn test_invention() -> Invention {
         modules: vec![ModuleSpec {
             id: "dac".to_string(),
             module_type: "dac".to_string(),
+            name: None,
             config: serde_json::Value::Null,
         }],
         connections: Vec::new(),

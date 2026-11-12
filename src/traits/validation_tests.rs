@@ -118,6 +118,7 @@ fn development_with_inner_scheduler() -> crate::Invention {
     let module = |id: &str, module_type: &str| ModuleSpec {
         id: id.to_string(),
         module_type: module_type.to_string(),
+        name: None,
         config: serde_json::json!({}),
     };
     let blank = |modules| Invention {

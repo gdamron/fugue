@@ -25,6 +25,7 @@ fn plan(module_type: &str, previous: Value, new: Value) -> ReloadPlan {
         modules: vec![ModuleSpec {
             id: "m".to_string(),
             module_type: module_type.to_string(),
+            name: None,
             config: new,
         }],
         ..doc(r#"{ "modules": [], "connections": [] }"#)

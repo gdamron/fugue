@@ -145,6 +145,7 @@ fn a_timed_reload_keeps_a_drag_made_while_it_waits() {
     next.modules.push(ModuleSpec {
         id: "lfo1".into(),
         module_type: "lfo".into(),
+        name: None,
         config: serde_json::json!({ "rate": 2.0 }),
     });
     let place = |x: f64| Position { x, y: 9.0 };
