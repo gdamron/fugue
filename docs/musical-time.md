@@ -71,10 +71,22 @@ beat position, readable as its `position` control:
   (`ApplyEdits`) always keeps the position, and `reset_on_reload` does not
   reach a clock inside a development.
 
-There is no metre in the engine. A clock knows beats, not bars or time
-signatures; bars are the composer's. The clock's outputs are the beat and
-fixed multiples of it: `beat`, `beat_d4` (every 4 beats), `beat_d2` (every
-2), `beat_x2` (2 per beat) and `beat_x4` (4 per beat).
+The clock's outputs are the beat and fixed multiples of it: `beat`,
+`beat_d4` (every 4 beats), `beat_d2` (every 2), `beat_x2` (2 per beat) and
+`beat_x4` (4 per beat).
+
+A clock may keep a meter: its `beats_per_bar` control and config key, a
+whole number from 0 to 32, where 0, the default, is no meter and no bars
+([`meter.rs`](../src/modules/clock/meter.rs)). With one, the clock counts
+bars from its latest reset and reports them as read-only telemetry: `bar`
+and `beat_in_bar` (both from 1) and `meter`, the beats in the bar playing
+now; all three read 0 without a meter. The clock keeps its own bar lines
+rather than dividing its beat count, so a new meter written while it runs
+takes over at the next bar line and the bars already played keep their
+numbers: after two bars of 4 and a change to 3, bar 3 lasts 3 beats. On a
+clock without a meter a new one takes effect at once, counted from beat 0,
+and a reset returns to bar 1, beat 1 with the meter last written. There is
+no beat unit: the clock's beat is the unit.
 
 ## Timing a request in beats
 
@@ -106,9 +118,11 @@ request then applies late and says so.
 On the wire, timed structural edits (`SwapModule`, `ApplyEdits`,
 `ReloadInvention`) accept `when` as `at_sample`, `after_samples`,
 `after_beats`, `next_beat` (`every`, `offset`) or `next_bar`
-([`rpc/timed.rs`](../src/rpc/timed.rs)). `next_bar` is only a grid of
-`beats_per_bar` beats (default 4): a convenience for the caller, not a metre
-the engine keeps. The beat forms take an optional `clock`, and every form an
+([`rpc/timed.rs`](../src/rpc/timed.rs)). `next_bar` without
+`beats_per_bar` lands on the clock's own next bar line, which stays right
+across a meter change it has not reached yet; on a clock without a meter it
+is the next multiple of 4 beats. With `beats_per_bar` it is the next
+multiple of that many beats from beat 0, whatever the meter. The beat forms take an optional `clock`, and every form an
 optional `ttl_ms`.
 
 Control writes (`SetControl`, each write of `SetControls`) take the same
@@ -286,5 +300,5 @@ must not assume a step is a whole number of samples.
 - Repeating grids, beat ramps and signal or control conditions on the
   wire: they exist in the engine and its in-process API, but a control
   write over RPC takes a single sample, beat or request to follow.
-- Metre awareness. If it comes, it belongs in a module that adds bars to the
-  timeline context, not in the engine's beat count.
+- A beat unit, named sections and a count-in. Sections are the likely next
+  step, as named bar ranges saved with the piece.
