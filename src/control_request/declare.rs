@@ -24,6 +24,7 @@ use crate::{ControlKind, ControlMeta, ControlScale, ControlValue, NumberFormat};
 
 mod bounds;
 mod hints;
+mod labels;
 
 /// What a declared control holds, and so which [`RtValue`] carries it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -225,6 +226,14 @@ pub(crate) struct ControlDecl {
     /// note, a count), so a ramp steps through whole values: held so
     /// before its module runs too.
     pub(crate) whole: bool,
+    /// What a person reads for it, when tidying its key says it badly
+    /// (see [`labels`]). An indexed control's label names each index:
+    /// `"Level"` lists `level.2` as "Level 2".
+    pub(crate) label: Option<&'static str>,
+    /// For a choice, labels of its options (`("lowpass", "Low-pass")`).
+    pub(crate) option_labels: &'static [(&'static str, &'static str)],
+    /// The editor its module prefers for it (see [`crate::ControlWidget`]).
+    pub(crate) widget: Option<crate::ControlWidget>,
 }
 
 impl ControlDecl {
@@ -257,6 +266,9 @@ impl ControlDecl {
             loads_on_write: false,
             listed_below: None,
             whole: false,
+            label: None,
+            option_labels: &[],
+            widget: None,
         }
     }
 
@@ -556,8 +568,12 @@ impl ControlTable {
                 let default = current(index)
                     .or_else(|| self.value(index, decl.default))
                     .unwrap_or_else(|| ControlValue::String(String::new()));
+                let key = self.key(index)?;
                 Some(ControlMeta {
-                    key: self.key(index)?,
+                    label: decl.listed_label(&key, position),
+                    option_labels: decl.listed_option_labels(),
+                    widget: decl.widget,
+                    key,
                     description: decl.description.to_string(),
                     default,
                     kind,
@@ -610,6 +626,9 @@ const fn invalid(decls: &[ControlDecl]) -> Option<&'static str> {
             return Some("a control's default must be a value its kind holds");
         }
         if let Some(why) = hints::invalid(decl) {
+            return Some(why);
+        }
+        if let Some(why) = labels::invalid(decl) {
             return Some(why);
         }
         let mut j = 0;

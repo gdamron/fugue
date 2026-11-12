@@ -44,9 +44,9 @@ pub use flush_to_zero::flush_to_zero_enabled;
 
 // Re-export core traits
 pub use traits::{
-    validate_port, ControlKind, ControlMeta, ControlScale, ControlSurface, ControlValue,
-    FeedbackCut, Module, NumberFormat, NumberHints, SinkModule, SinkOutput, DEFAULT_BLOCK_SIZE,
-    MAX_BLOCK,
+    tidy_key, validate_port, ControlKind, ControlMeta, ControlScale, ControlSurface, ControlValue,
+    ControlWidget, FeedbackCut, Module, NumberFormat, NumberHints, SinkModule, SinkOutput,
+    TypeLabels, DEFAULT_BLOCK_SIZE, MAX_BLOCK,
 };
 
 // Re-export factory system
