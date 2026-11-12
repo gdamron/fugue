@@ -124,6 +124,7 @@ fn development_with_inner_scheduler() -> crate::Invention {
         version: "1.0.0".to_string(),
         minimum_core_version: None,
         layout: Default::default(),
+        main_clock: None,
         title: None,
         description: None,
         developments: vec![],
