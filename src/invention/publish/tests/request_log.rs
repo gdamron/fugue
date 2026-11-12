@@ -451,6 +451,7 @@ fn code_and_agent_modules_make_the_log_inexact() {
         id: "script".into(),
         module_type: "code".into(),
         config: serde_json::json!({}),
+        name: None,
     };
     let mut state = running.state.lock().unwrap();
     state.modules.insert("script".into(), module);

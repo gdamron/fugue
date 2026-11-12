@@ -3,6 +3,7 @@ use crate::rpc::{
 };
 use crate::{Connection, ControlSurface, ControlValue, Invention, ModuleSpec, RuntimeSnapshot};
 use indexmap::IndexMap;
+use std::collections::HashMap;
 
 use super::orchestration::ModulePorts;
 
@@ -29,7 +30,7 @@ impl RuntimeFullSnapshot {
             .map(|module| ModuleSpec {
                 id: module.info.id.clone(),
                 module_type: module.info.module_type.clone(),
-                name: None,
+                name: module.info.name.clone(),
                 config: module.info.config.clone(),
             })
             .collect();
@@ -150,7 +151,17 @@ impl RuntimeSnapshot {
     ) -> RuntimeFullSnapshot {
         let state = self.state.lock().unwrap();
         let status = state.status();
-        let module_infos: Vec<_> = state.modules.values().cloned().collect();
+        let mut module_infos: Vec<_> = state.modules.values().cloned().collect();
+        // Names live in the retained document, which a name-only edit changes
+        // without touching `modules`, so a read fills them in from there.
+        if let Some(document) = &state.document {
+            let names: HashMap<&str, &str> = (document.modules.iter())
+                .filter_map(|spec| Some((spec.id.as_str(), spec.name.as_deref()?)))
+                .collect();
+            for info in &mut module_infos {
+                info.name = names.get(info.id.as_str()).map(|name| name.to_string());
+            }
+        }
         let connections = state.connections.clone();
         drop(state);
 
@@ -211,6 +222,7 @@ mod tests {
                 id: id.to_string(),
                 module_type: module_type.to_string(),
                 config,
+                name: None,
             },
             ports: RuntimePortInfo::default(),
             controls: Vec::new(),
@@ -240,7 +252,13 @@ mod tests {
                     "oscillator",
                     serde_json::json!({ "frequency": 440.0 }),
                 ),
-                module("dac", "dac", serde_json::Value::Null),
+                RuntimeModuleSnapshot {
+                    info: RuntimeModuleInfo {
+                        name: Some("Output".into()),
+                        ..module("dac", "dac", serde_json::Value::Null).info
+                    },
+                    ..module("dac", "dac", serde_json::Value::Null)
+                },
             ],
             connections: vec![
                 // Named ports survive.
@@ -266,6 +284,8 @@ mod tests {
         assert_eq!(invention.modules[0].id, "osc");
         assert_eq!(invention.modules[0].module_type, "oscillator");
         assert_eq!(invention.modules[0].config["frequency"], 440.0);
+        assert_eq!(invention.modules[0].name, None);
+        assert_eq!(invention.modules[1].name.as_deref(), Some("Output"));
 
         assert_eq!(invention.connections.len(), 2);
         assert_eq!(invention.connections[0].from_port.as_deref(), Some("audio"));

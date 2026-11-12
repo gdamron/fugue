@@ -84,6 +84,9 @@ pub struct SummaryModule {
     pub id: String,
     #[serde(rename = "type")]
     pub module_type: String,
+    /// What the piece calls the module, when it names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// Whether the music plays, and where it is.
@@ -208,6 +211,7 @@ impl StatusSummary {
             for module in &mut loaded.modules {
                 cut(&mut module.id);
                 cut(&mut module.module_type);
+                cut_opt(&mut module.name);
             }
         }
         self.transport.clocks.truncate(MAX_SUMMARY_CLOCKS);

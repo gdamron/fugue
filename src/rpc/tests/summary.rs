@@ -25,6 +25,7 @@ fn worst_case() -> StatusSummary {
                 .map(|_| SummaryModule {
                     id: long(1_000),
                     module_type: long(1_000),
+                    name: Some(long(1_000)),
                 })
                 .collect(),
         }),
@@ -98,6 +99,40 @@ fn a_full_summary_is_bounded_without_losing_its_counts() {
         .modules
         .iter()
         .all(|m| m.id.chars().all(|c| c == 'é')));
+    assert!(loaded
+        .modules
+        .iter()
+        .all(|m| m.name.as_ref().unwrap().len() <= MAX_SUMMARY_TEXT_BYTES));
+}
+
+#[test]
+fn a_summary_module_carries_its_name_only_when_it_has_one() {
+    let named = SummaryModule {
+        id: "osc1".into(),
+        module_type: "oscillator".into(),
+        name: Some("Lead".into()),
+    };
+    let wire = serde_json::to_value(&named).unwrap();
+    assert_eq!(
+        wire,
+        json!({ "id": "osc1", "type": "oscillator", "name": "Lead" })
+    );
+    assert_eq!(
+        serde_json::from_value::<SummaryModule>(wire).unwrap(),
+        named
+    );
+
+    let unnamed = SummaryModule {
+        name: None,
+        ..named
+    };
+    let wire = serde_json::to_value(&unnamed).unwrap();
+    assert_eq!(wire, json!({ "id": "osc1", "type": "oscillator" }));
+    // A summary from before names existed reads as unnamed.
+    assert_eq!(
+        serde_json::from_value::<SummaryModule>(wire).unwrap(),
+        unnamed
+    );
 }
 
 #[test]
