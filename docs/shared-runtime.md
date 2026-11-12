@@ -87,7 +87,7 @@ peer's structural edit permanently stale.
 | `ReloadInvention`, `SwapModule`, `ApplyEdits` | When immediate. A timed one (with `when`) advances when it is adopted, not when it is queued. |
 | `SetControl` | When its intent is `author`. |
 | `SetControls` | When any write in it is `author`. |
-| Reads, `SaveInvention`, `FlushSession`, package commands, `Shutdown` | Never. |
+| Reads, `SaveInvention`, `FlushSession`, package commands, `PauseInvention`, `ResumeInvention`, `Shutdown` | Never. |
 
 A host does not call that directly once a command has run; it calls
 `RpcCommand::advances_revision_after(committed)`. Most authoring commands

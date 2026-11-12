@@ -272,6 +272,16 @@ pub enum RpcCommand {
         end_source: Option<String>,
     },
     UnloadInvention,
+    /// Pause the loaded piece without unloading it: its output fades to
+    /// silence over 10 ms and it holds where it stands, clocks, module
+    /// state, control values and waiting requests kept, until a
+    /// [`RpcCommand::ResumeInvention`]. Writes and edits made meanwhile
+    /// apply, and are heard on resume. Pausing a paused piece changes
+    /// nothing.
+    PauseInvention,
+    /// Resume a paused piece from where it held, fading in over 10 ms.
+    /// Resuming a playing piece changes nothing.
+    ResumeInvention,
     SetControl {
         module_id: String,
         key: String,

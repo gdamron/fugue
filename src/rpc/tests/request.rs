@@ -13,6 +13,8 @@ fn rpc_commands_round_trip_json() {
             end_source: Some("seq".to_string()),
         },
         RpcCommand::UnloadInvention,
+        RpcCommand::PauseInvention,
+        RpcCommand::ResumeInvention,
         RpcCommand::SetControl {
             module_id: "osc".to_string(),
             key: "frequency".to_string(),

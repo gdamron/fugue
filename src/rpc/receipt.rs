@@ -151,7 +151,8 @@ pub enum ControlRequestState {
 impl super::RpcCommand {
     /// Whether a daemon acknowledges this command with a full snapshot unless
     /// the request asks for a [`MutationReceipt`]: the commands that load,
-    /// reload or unload an invention, write controls, or edit its graph. Only
+    /// reload, unload, pause or resume an invention, write controls, or edit
+    /// its graph. Only
     /// these honor [`RpcRequest::reply`], so a client sends a non-default
     /// reply on no other command.
     ///
@@ -166,6 +167,8 @@ impl super::RpcCommand {
             Self::LoadInvention { .. }
             | Self::LoadExample { .. }
             | Self::UnloadInvention
+            | Self::PauseInvention
+            | Self::ResumeInvention
             | Self::SetControl { .. }
             | Self::SetControls { .. }
             | Self::AddModule { .. }
