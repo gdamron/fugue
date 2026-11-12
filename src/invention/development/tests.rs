@@ -141,6 +141,7 @@ fn an_added_development_with_a_schedule_starts_without_allocating() {
     pump.render(2);
     running
         .apply_edits(&[StructuralEdit::AddModule {
+            name: None,
             id: "lead".into(),
             module_type: "pattern".into(),
             config: json!({ "schedule": schedule(0, "o", 220.0) }),

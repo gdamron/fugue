@@ -246,6 +246,7 @@ fn a_batch_wider_than_the_shared_outcomes_says_what_became_of_each() {
 /// Queues an edit adding an lfo and retuning osc, landing 256 samples on.
 pub(super) fn retune_waiting(running: &mut RunningInvention) {
     let lfo = crate::rpc::StructuralEdit::AddModule {
+        name: None,
         id: "lfo".into(),
         module_type: "oscillator".into(),
         config: serde_json::json!({ "frequency": 3.0 }),

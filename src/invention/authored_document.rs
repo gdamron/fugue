@@ -63,6 +63,14 @@ pub(crate) fn place_module(document: &mut Invention, id: &str, position: Option<
     };
 }
 
+/// Names module `id`, or clears its name with `None`. Does nothing when no
+/// module has that id.
+pub(crate) fn name_module(document: &mut Invention, id: &str, name: Option<String>) {
+    if let Some(spec) = document.modules.iter_mut().find(|spec| spec.id == id) {
+        spec.name = name;
+    }
+}
+
 /// Writes a control value into a module's config so the document reproduces
 /// it on a cold rebuild, dropping the keys the write replaces (see
 /// [`forget_replaced`]) among those `keys_of` its type declares. Does
