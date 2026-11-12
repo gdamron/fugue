@@ -124,3 +124,13 @@ fn carrying_keeps_names_given_since_and_makes_the_changes_on_top() {
     assert_eq!(name(&batch, "tone"), Some("Bright filter"));
     assert_eq!(name(&batch, "osc"), Some("Saw"));
 }
+
+#[cfg(feature = "rpc-schema")]
+#[test]
+fn the_document_schema_offers_an_optional_module_name() {
+    let schema = serde_json::to_value(schemars::schema_for!(Invention)).unwrap();
+    let spec = &schema["$defs"]["ModuleSpec"];
+    assert!(spec["properties"].get("name").is_some(), "{spec:#}");
+    let required = spec["required"].as_array().cloned().unwrap_or_default();
+    assert!(!required.contains(&serde_json::json!("name")), "{spec:#}");
+}

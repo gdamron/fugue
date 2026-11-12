@@ -52,8 +52,12 @@ fn full_detail(types: &[&str]) -> Vec<ModuleTypeInfo> {
 
 #[test]
 fn full_discovery_lists_the_labels_a_type_declares_where_they_say_more() {
-    let infos = full_detail(&["filter", "oscillator"]);
-    let (filter, oscillator) = (&infos[0], &infos[1]);
+    let infos = full_detail(&["clock", "filter", "oscillator"]);
+    let (clock, filter, oscillator) = (&infos[0], &infos[1], &infos[2]);
+    let declares = |info: &ModuleTypeInfo| {
+        (info.controls.iter()).any(|c| c.label.is_some() || c.widget.is_some())
+    };
+    assert!(declares(clock) && declares(filter) && declares(oscillator));
     assert_eq!(oscillator.input_labels["frequency_mod"], "FM");
     assert_eq!(oscillator.input_labels["amplitude_mod"], "AM");
     assert!(!oscillator.input_labels.contains_key("frequency"));

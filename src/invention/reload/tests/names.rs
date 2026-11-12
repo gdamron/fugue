@@ -71,6 +71,24 @@ fn a_running_module_is_described_with_its_name_and_its_id() {
     let description = running.describe_module(&query).unwrap();
     assert_eq!(description.module_id.as_deref(), Some("osc1"));
     assert_eq!(description.name.as_deref(), Some("Lead"));
+    // Its type's labels, as the type listing reports them, beside its name.
+    let listed = crate::ModuleDescription::from_registry(
+        &running.registry(),
+        48_000,
+        crate::RegistryScope::Running,
+        &crate::DescribeModuleQuery {
+            module_type: Some("oscillator".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(description.info.label, listed.info.label);
+    assert_eq!(description.info.input_labels, listed.info.input_labels);
+    assert_eq!(description.info.input_labels["frequency_mod"], "FM");
+    assert!(description.info.controls.iter().any(|c| c.label.is_some()));
+    // The name addresses nothing: the id still does.
+    assert!(running.get_control("osc1", "frequency").is_ok());
+    assert!(running.get_control("Lead", "frequency").is_err());
     let unnamed = crate::DescribeModuleQuery {
         module_id: Some("osc2".into()),
         ..Default::default()
