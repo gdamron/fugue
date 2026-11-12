@@ -720,6 +720,16 @@ fn declares_labels(detail: &Value) -> bool {
         })
 }
 
+/// A choice control's options. ControlKind is externally tagged on the wire
+/// (`{"String": {"options": [...]}}`), so look inside the one variant.
+fn options_of(control: &Value) -> Value {
+    control["kind"]
+        .as_object()
+        .and_then(|variants| variants.values().find_map(|v| v.get("options")))
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
 const WIDGETS: [&str; 5] = ["knob", "slider", "stepper", "segmented", "menu"];
 
 fn listing_session() -> Session {
@@ -844,12 +854,18 @@ fn absent_labels_and_widgets_are_omitted_not_null_or_empty() {
 fn control_meta_omits_absent_label_widget_and_option_labels() {
     let session = listing_session();
     let listing = full_listing(&session);
-    let osc = type_detail(&listing, "oscillator");
-    let plain_control = controls(&osc)
+    // A control as a type that declares nothing would list it: any listed
+    // control with the declared fields stripped.
+    let mut plain_control = listing
         .iter()
+        .flat_map(|detail| controls(detail).iter())
         .find(|c| c.get("label").is_none() && c.get("widget").is_none())
-        .expect("the oscillator has a control with no label and no widget")
+        .or_else(|| listing.iter().flat_map(|d| controls(d).iter()).next())
+        .expect("some control is listed")
         .clone();
+    for field in ["label", "widget", "option_labels"] {
+        plain_control.as_object_mut().unwrap().remove(field);
+    }
     let meta: ControlMeta = serde_json::from_value(plain_control.clone()).expect("reads");
     let back = serde_json::to_value(&meta).unwrap();
     for field in ["label", "widget", "option_labels"] {
@@ -890,7 +906,8 @@ fn option_labels_name_only_the_options_of_a_choice_control() {
                 continue;
             };
             seen += 1;
-            let options: BTreeSet<&str> = control["kind"]["options"]
+            let listed = options_of(control);
+            let options: BTreeSet<&str> = listed
                 .as_array()
                 .unwrap_or_else(|| panic!("option_labels on a control without options: {control}"))
                 .iter()
