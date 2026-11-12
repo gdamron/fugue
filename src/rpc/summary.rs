@@ -90,6 +90,10 @@ pub struct SummaryModule {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct TransportSummary {
+    /// Whether the music plays: false with nothing loaded and while a
+    /// loaded piece is paused ([`RuntimeStatus::playing`]).
+    ///
+    /// [`RuntimeStatus::playing`]: crate::RuntimeStatus::playing
     pub playing: bool,
     /// The invention's clocks, in document order, up to
     /// [`MAX_SUMMARY_CLOCKS`].

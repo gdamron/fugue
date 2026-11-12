@@ -253,6 +253,9 @@ impl RpcCommand {
             | Self::FlushSession { .. }
             | Self::GetRequest { .. }
             | Self::ListPendingRequests { .. }
+            // Playback, not the authored piece.
+            | Self::PauseInvention
+            | Self::ResumeInvention
             | Self::Shutdown => false,
         }
     }
