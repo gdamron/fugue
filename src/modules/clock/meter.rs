@@ -57,16 +57,29 @@ impl Meter {
     }
 
     /// Moves past every bar line at or before `position`, adopting the
-    /// written meter at the first.
+    /// written meter at the first. Constant time however many bars it
+    /// crosses (a very fast clock crosses many in a block).
     pub(super) fn advance(&mut self, position: f64) {
-        while self.in_force > 0 {
-            let line = self.bar_start + f64::from(self.in_force);
-            if position < line {
-                break;
-            }
-            self.bar_start = line;
-            self.bar = self.bar.saturating_add(1);
-            self.in_force = self.written;
+        if self.in_force == 0 {
+            return;
+        }
+        let line = self.bar_start + f64::from(self.in_force);
+        // Not `<`: a position that is not a number moves nothing.
+        if !(position >= line) {
+            return;
+        }
+        self.bar_start = line;
+        self.bar = self.bar.saturating_add(1);
+        self.in_force = self.written;
+        if self.in_force == 0 {
+            return;
+        }
+        let length = f64::from(self.in_force);
+        let bars = ((position - self.bar_start) / length).floor();
+        if bars >= 1.0 {
+            self.bar_start += bars * length;
+            // The cast saturates.
+            self.bar = self.bar.saturating_add(bars as u32);
         }
     }
 
@@ -129,6 +142,29 @@ mod tests {
         meter.write(0, 2.0);
         assert_eq!(at(&mut meter, 3.5), (1, 4, 4));
         assert_eq!(at(&mut meter, 4.5), (0, 0, 0));
+    }
+
+    #[test]
+    fn a_meter_written_just_before_a_bar_line_takes_that_bar() {
+        let mut meter = Meter::new(4);
+        meter.write(3, 7.999);
+        assert_eq!(at(&mut meter, 8.0), (3, 1, 3));
+        assert_eq!(at(&mut meter, 11.0), (4, 1, 3));
+        // Once the line's first sample has played, the bar has begun.
+        let mut meter = Meter::new(4);
+        meter.write(3, 8.0);
+        assert_eq!(meter.reading(8.0), (3, 1, 4));
+        assert_eq!(at(&mut meter, 12.0), (4, 1, 3));
+    }
+
+    #[test]
+    fn crossing_many_bars_at_once_counts_each() {
+        let mut meter = Meter::new(4);
+        meter.write(3, 1.0);
+        assert_eq!(at(&mut meter, 4.0 + 3.0 * 1_000.0 + 1.5), (1_002, 2, 3));
+        let mut meter = Meter::new(1);
+        assert_eq!(at(&mut meter, 1e300).0, u32::MAX);
+        assert_eq!(at(&mut meter, f64::NAN).0, u32::MAX);
     }
 
     #[test]
