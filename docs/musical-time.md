@@ -122,8 +122,8 @@ On the wire, timed structural edits (`SwapModule`, `ApplyEdits`,
 `beats_per_bar` lands on the clock's own next bar line, which stays right
 across a meter change it has not reached yet; on a clock without a meter it
 is the next multiple of 4 beats. With `beats_per_bar` it is the next
-multiple of that many beats from beat 0, whatever the meter. The beat forms take an optional `clock`, and every form an
-optional `ttl_ms`.
+multiple of that many beats from beat 0, whatever the meter. The beat forms
+take an optional `clock`, and every form an optional `ttl_ms`.
 
 Control writes (`SetControl`, each write of `SetControls`) take the same
 `when` and `ttl_ms`, and one more form, `after_request` (`request`,
