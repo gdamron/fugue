@@ -46,6 +46,7 @@ fn a_live_edit_builds_under_the_lock_of_the_graph_it_edits() {
 
         let err = running
             .apply_edits(&[StructuralEdit::AddModule {
+                name: None,
                 id: "u".into(),
                 module_type: "sample_player".into(),
                 config,

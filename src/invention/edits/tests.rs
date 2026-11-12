@@ -127,6 +127,7 @@ fn refused(edits: Vec<StructuralEdit>) -> EditFailure {
 
 fn add(id: &str, module_type: &str, config: serde_json::Value) -> StructuralEdit {
     StructuralEdit::AddModule {
+        name: None,
         id: id.into(),
         module_type: module_type.into(),
         config,

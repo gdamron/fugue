@@ -4,7 +4,8 @@
 //! like its [layout](super::layout): surfaces show it, and agents read it
 //! beside the module's id, which stays what every command addresses. It
 //! never changes the sound: no module is built from it, a reload whose only
-//! difference is a name rebuilds nothing.
+//! difference is a name rebuilds nothing, and naming a module
+//! (`name_modules`) changes only the document.
 //!
 //! An older core reads a document with names and plays it, ignoring the
 //! field as it ignores any unknown one; saving there drops the names. That
@@ -18,7 +19,8 @@ use super::layout::{Layout, LayoutChange};
 pub const MAX_MODULE_NAME_BYTES: usize = 256;
 
 /// One change an edit batch makes to the names, in batch order: a module
-/// named, or its name cleared (`None`, as `remove_module` leaves it).
+/// named, or its name cleared (`None`, as `name_modules` with `null` or
+/// `remove_module` leaves it).
 pub(crate) type NameChange = (String, Option<String>);
 
 /// Why `name` cannot name a module, if it cannot: it is blank, longer than

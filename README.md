@@ -205,9 +205,10 @@ to show beside its id:
 ```
 
 A name is presentation too, with the same rules as the layout: a reload that
-changes only names rebuilds nothing, a name that is blank or holds a control
-character is dropped with a load warning, and an older core plays the piece
-and drops the names when it saves. Commands always address a module by its id.
+changes only names rebuilds nothing, the `name_modules` edit changes them
+without touching the audio, a name that is blank or holds a control character
+is dropped with a load warning, and an older core plays the piece and drops
+the names when it saves. Commands always address a module by its id.
 
 Load and run it:
 
