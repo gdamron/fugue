@@ -161,9 +161,11 @@ impl InventionBuilder {
                 .map_or(String::new(), |path| format!("{}: ", path.display())),
             &invention,
         )?;
-        // A layout entry that places no module of this document is dropped
-        // from it with a warning; the piece loads all the same.
-        let unplaced = invention.settle_layout();
+        // A layout entry that places no module of this document, or a main
+        // clock naming none of its clocks, is dropped from it with a
+        // warning; the piece loads all the same.
+        let mut unplaced = invention.settle_layout();
+        unplaced.extend(invention.settle_main_clock());
         // Retain the authored document (before asset resolution) so the
         // runtime can be saved back to disk without inlining `$asset`
         // references or losing developments, title, and the exposed sections.

@@ -35,6 +35,9 @@ fn worst_case() -> StatusSummary {
                     id: long(1_000),
                     bpm: Some(f32::MAX),
                     beats: Some(f64::MAX),
+                    bar: Some(u32::MAX),
+                    beat_in_bar: Some(u32::MAX),
+                    beats_per_bar: Some(u32::MAX),
                 })
                 .collect(),
         },

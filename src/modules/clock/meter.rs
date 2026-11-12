@@ -1,0 +1,233 @@
+//! The clock's meter: how many beats its bars have, and which bar and beat
+//! it is on.
+//!
+//! The clock keeps its own bar lines rather than dividing its beat count,
+//! so a meter change mid-piece leaves the bars already played as they
+//! were. A new meter written to a clock with one waits for the next bar
+//! line; written to a clock without one, it counts bars from the latest
+//! reset at once. Plain arithmetic on a few fields: nothing here allocates
+//! or locks, as it runs on the audio thread.
+
+/// A clock's bars, counted from its latest reset.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct Meter {
+    /// Beats in the bar playing now; 0 for no meter (then no bars).
+    in_force: u32,
+    /// The meter last written, which takes over at the next bar line.
+    written: u32,
+    /// The position the bar playing now began on.
+    bar_start: f64,
+    /// The bar playing now, from 1.
+    bar: u32,
+    /// Counts the times the bar lines moved other than by playing on to
+    /// them: a meter taking over at once (see [`Self::lines_moved`]).
+    moves: u64,
+}
+
+impl Meter {
+    /// A meter of `beats` from beat 0 (0 for none).
+    pub(super) fn new(beats: u32) -> Self {
+        Self {
+            in_force: beats,
+            written: beats,
+            bar_start: 0.0,
+            bar: 1,
+            moves: 0,
+        }
+    }
+
+    /// Changes each time a meter takes over at once, moving the bar lines
+    /// ahead: a bar line looked for before is stale then.
+    pub(super) fn lines_moved(&self) -> u64 {
+        self.moves
+    }
+
+    /// Writes a meter of `beats` at `position` (negative before the clock's
+    /// first sample since it was built or reset). It takes over at the next
+    /// bar line, or at once when no meter is in force or the clock has not
+    /// started: then bars count from beat 0 as if it had always held.
+    pub(super) fn write(&mut self, beats: u32, position: f64) {
+        self.advance(position);
+        self.written = beats;
+        if self.in_force == 0 || position < 0.0 {
+            let bars = if beats == 0 {
+                0.0
+            } else {
+                (position.max(0.0) / f64::from(beats)).floor()
+            };
+            self.in_force = beats;
+            self.bar_start = bars * f64::from(beats);
+            self.bar = (bars as u32).saturating_add(1);
+            self.moves = self.moves.wrapping_add(1);
+        }
+    }
+
+    /// Back to bar 1 at beat 0, with the meter last written in force.
+    pub(super) fn reset(&mut self) {
+        *self = Self {
+            moves: self.moves.wrapping_add(1),
+            ..Self::new(self.written)
+        };
+    }
+
+    /// Moves past every bar line at or before `position`, adopting the
+    /// written meter at the first. Constant time however many bars it
+    /// crosses (a very fast clock crosses many in a block).
+    pub(super) fn advance(&mut self, position: f64) {
+        if self.in_force == 0 {
+            return;
+        }
+        let line = self.bar_start + f64::from(self.in_force);
+        // A position that is not a number moves nothing, so a bad reading
+        // never jumps the bar count; an infinite one runs it out to the
+        // last bar, as any position past every line does.
+        if position.is_nan() || position < line {
+            return;
+        }
+        self.bar_start = line;
+        self.bar = self.bar.saturating_add(1);
+        self.in_force = self.written;
+        if self.in_force == 0 {
+            return;
+        }
+        let length = f64::from(self.in_force);
+        let bars = ((position - self.bar_start) / length).floor();
+        if bars >= 1.0 {
+            self.bar_start += bars * length;
+            // The cast saturates.
+            self.bar = self.bar.saturating_add(bars as u32);
+        }
+    }
+
+    /// The `(bar, beat in the bar, meter in force)` at `position`, all 0
+    /// with no meter. Call [`Self::advance`] to `position` first.
+    pub(super) fn reading(&self, position: f64) -> (u32, u32, u32) {
+        if self.in_force == 0 {
+            return (0, 0, 0);
+        }
+        let into = (position.max(self.bar_start) - self.bar_start).floor();
+        let beat = (into as u32).saturating_add(1).min(self.in_force);
+        (self.bar, beat, self.in_force)
+    }
+
+    /// The first bar line past `from`, or none with no meter (or none after
+    /// the next line, where a meter of 0 takes over). Exact without
+    /// [`Self::advance`] having reached `from`.
+    pub(super) fn next_line(&self, from: f64) -> Option<f64> {
+        if self.in_force == 0 {
+            return None;
+        }
+        if self.bar_start > from {
+            return Some(self.bar_start);
+        }
+        let line = self.bar_start + f64::from(self.in_force);
+        if line > from {
+            return Some(line);
+        }
+        let written = f64::from(self.written);
+        if written == 0.0 {
+            return None;
+        }
+        Some(line + written * (((from - line) / written).floor() + 1.0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Meter;
+
+    fn at(meter: &mut Meter, position: f64) -> (u32, u32, u32) {
+        meter.advance(position);
+        meter.reading(position)
+    }
+
+    #[test]
+    fn no_meter_counts_no_bars() {
+        let mut meter = Meter::new(0);
+        assert_eq!(at(&mut meter, 5.5), (0, 0, 0));
+        assert_eq!(meter.next_line(5.5), None);
+    }
+
+    #[test]
+    fn bars_count_from_one_on_their_downbeats() {
+        let mut meter = Meter::new(4);
+        assert_eq!(at(&mut meter, -1.0), (1, 1, 4));
+        assert_eq!(at(&mut meter, 0.0), (1, 1, 4));
+        assert_eq!(at(&mut meter, 3.999), (1, 4, 4));
+        assert_eq!(at(&mut meter, 4.0), (2, 1, 4));
+        assert_eq!(at(&mut meter, 9.5), (3, 2, 4));
+    }
+
+    #[test]
+    fn a_new_meter_waits_for_the_bar_line_and_played_bars_keep_their_numbers() {
+        let mut meter = Meter::new(4);
+        meter.write(3, 5.5);
+        assert_eq!(meter.next_line(5.5), Some(8.0));
+        assert_eq!(at(&mut meter, 7.5), (2, 4, 4));
+        assert_eq!(at(&mut meter, 8.0), (3, 1, 3));
+        assert_eq!(meter.next_line(8.0), Some(11.0));
+        assert_eq!(at(&mut meter, 11.0), (4, 1, 3));
+    }
+
+    #[test]
+    fn the_next_line_is_exact_before_the_meter_advances() {
+        let mut meter = Meter::new(4);
+        meter.write(3, 1.0);
+        // Not advanced past 4, where the 3 takes over.
+        assert_eq!(meter.next_line(4.5), Some(7.0));
+        assert_eq!(meter.next_line(10.0), Some(13.0));
+        assert_eq!(meter.next_line(-0.5), Some(0.0));
+    }
+
+    #[test]
+    fn a_meter_on_a_clock_without_one_counts_from_beat_zero_at_once() {
+        let mut meter = Meter::new(0);
+        meter.write(4, 5.5);
+        assert_eq!(meter.reading(5.5), (2, 2, 4));
+        assert_eq!(meter.next_line(5.5), Some(8.0));
+    }
+
+    #[test]
+    fn a_meter_of_zero_ends_the_bars_at_the_next_line() {
+        let mut meter = Meter::new(4);
+        meter.write(0, 2.0);
+        assert_eq!(meter.next_line(2.0), Some(4.0));
+        assert_eq!(meter.next_line(5.0), None);
+        assert_eq!(at(&mut meter, 3.5), (1, 4, 4));
+        assert_eq!(at(&mut meter, 4.5), (0, 0, 0));
+    }
+
+    #[test]
+    fn a_meter_written_just_before_a_bar_line_takes_that_bar() {
+        let mut meter = Meter::new(4);
+        meter.write(3, 7.999);
+        assert_eq!(at(&mut meter, 8.0), (3, 1, 3));
+        assert_eq!(at(&mut meter, 11.0), (4, 1, 3));
+        // Once the line's first sample has played, the bar has begun.
+        let mut meter = Meter::new(4);
+        meter.write(3, 8.0);
+        assert_eq!(meter.reading(8.0), (3, 1, 4));
+        assert_eq!(at(&mut meter, 12.0), (4, 1, 3));
+    }
+
+    #[test]
+    fn crossing_many_bars_at_once_counts_each() {
+        let mut meter = Meter::new(4);
+        meter.write(3, 1.0);
+        assert_eq!(at(&mut meter, 4.0 + 3.0 * 1_000.0 + 1.5), (1_002, 2, 3));
+        let mut meter = Meter::new(1);
+        assert_eq!(at(&mut meter, 1e300).0, u32::MAX);
+        let mut meter = Meter::new(4);
+        assert_eq!(at(&mut meter, f64::NAN), (1, 1, 4));
+        assert_eq!(at(&mut meter, f64::INFINITY).0, u32::MAX);
+    }
+
+    #[test]
+    fn a_reset_adopts_the_written_meter_at_bar_one() {
+        let mut meter = Meter::new(4);
+        meter.write(3, 5.5);
+        meter.reset();
+        assert_eq!(at(&mut meter, 0.5), (1, 1, 3));
+        assert_eq!(at(&mut meter, 3.5), (2, 1, 3));
+    }
+}

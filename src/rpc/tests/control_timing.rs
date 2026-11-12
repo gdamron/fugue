@@ -37,7 +37,7 @@ fn a_write_timed_to_a_beat_or_a_request_parses() {
         panic!("{at_bar:?}");
     };
     let next_bar = ControlWhen::NextBar {
-        beats_per_bar: 4.0,
+        beats_per_bar: None,
         clock: Some("clock".into()),
     };
     assert_eq!(timing.when.as_ref(), Some(&next_bar));

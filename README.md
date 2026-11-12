@@ -191,6 +191,12 @@ load warning. A document without a layout saves without the key. The layout
 doesn't raise `minimum_core_version`: an older core plays the piece and drops
 the arrangement when it saves.
 
+A piece with more than one clock may name the one that leads where a surface
+shows a single clock, such as the status summary, with `"main_clock": "<id>"`.
+It is presentation only, like the layout: changing it rebuilds nothing, an id
+that names no clock of the piece is dropped with a load warning, and an older
+core drops it. With none, the piece's first clock leads.
+
 Load and run it:
 
 ```rust

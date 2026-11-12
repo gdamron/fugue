@@ -14,7 +14,8 @@ use crate::module_config::{names, replaced_by, ConfigKey};
 use crate::ControlValue;
 
 /// Records a module added, replaced, or swapped: updates the spec with the
-/// same id in place, or appends a new one.
+/// same id in place, or appends a new one. A main clock swapped for a module
+/// of another type is a main clock no more.
 pub(crate) fn upsert_module(
     document: &mut Invention,
     id: &str,
@@ -23,6 +24,9 @@ pub(crate) fn upsert_module(
 ) {
     match document.modules.iter_mut().find(|spec| spec.id == id) {
         Some(spec) => {
+            if spec.module_type != module_type {
+                forget_main_clock(&mut document.main_clock, id);
+            }
             spec.module_type = module_type.to_string();
             spec.config = config.clone();
         }
@@ -34,11 +38,19 @@ pub(crate) fn upsert_module(
     }
 }
 
-/// Removes a module's spec and its place in the layout. Connections are
-/// left to the caller.
+/// Removes a module's spec, its place in the layout and its naming as the
+/// main clock. Connections are left to the caller.
 pub(crate) fn remove_module(document: &mut Invention, id: &str) {
     document.modules.retain(|spec| spec.id != id);
     document.layout.modules.remove(id);
+    forget_main_clock(&mut document.main_clock, id);
+}
+
+/// Clears `main_clock` when it names module `id`.
+fn forget_main_clock(main_clock: &mut Option<String>, id: &str) {
+    if main_clock.as_deref() == Some(id) {
+        *main_clock = None;
+    }
 }
 
 /// Places module `id` at `position` in the layout, or unplaces it with

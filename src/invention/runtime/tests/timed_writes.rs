@@ -56,7 +56,7 @@ fn timed(module_id: &str, key: &str, value: ControlValue, when: ControlWhen) -> 
 
 fn next_bar() -> ControlWhen {
     ControlWhen::NextBar {
-        beats_per_bar: 4.0,
+        beats_per_bar: Some(4.0),
         clock: None,
     }
 }
@@ -187,7 +187,7 @@ fn a_write_after_a_timed_edit_lands_on_the_edit_s_sample() {
     pump.render(100);
     let config = serde_json::json!({ "degrees": [0, 7] });
     let edit_when = EditWhen::NextBar {
-        beats_per_bar: 4.0,
+        beats_per_bar: Some(4.0),
         clock: None,
     };
     let edit = running

@@ -138,13 +138,16 @@ pub enum LoggedBeat {
         offset: f32,
         repeat: bool,
     },
+    /// The clock's own next bar line, as its meter placed it (the next
+    /// multiple of 4 beats on a clock without one).
+    Bar { clock: String },
 }
 
 impl LoggedBeat {
     /// The clock it counts on.
     pub fn clock(&self) -> &str {
         match self {
-            Self::After { clock, .. } | Self::Grid { clock, .. } => clock,
+            Self::After { clock, .. } | Self::Grid { clock, .. } | Self::Bar { clock } => clock,
         }
     }
 }
