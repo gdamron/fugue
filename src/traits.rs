@@ -21,12 +21,14 @@ mod control_validation;
 pub(crate) mod exact_number;
 mod feedback_cut;
 pub(crate) mod labels;
+mod stored_notes;
 
 pub use control_hints::{ControlScale, ControlWidget, NumberFormat, NumberHints};
 pub use control_validation::ControlSurfaceMap;
 pub(crate) use control_validation::{check_finite, check_listed_control, read_only};
 pub use feedback_cut::FeedbackCut;
 pub use labels::{tidy_key, TypeLabels};
+pub use stored_notes::{StepFields, StoredNotes};
 
 /// Maximum number of frames the engine processes in a single block.
 ///

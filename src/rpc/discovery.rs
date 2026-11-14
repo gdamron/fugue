@@ -218,6 +218,10 @@ pub struct ModuleTypeInfo {
     /// Labels of output ports, by port, as for inputs.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub output_labels: BTreeMap<String, String>,
+    /// How the notes the type stores map to notes, when it stores any; an
+    /// editor edits a pattern through this, never by type name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stored_notes: Option<Box<crate::StoredNotes>>,
 }
 
 impl ModuleTypeInfo {
@@ -421,6 +425,7 @@ impl ModuleDescription {
                 label: None,
                 input_labels: BTreeMap::new(),
                 output_labels: BTreeMap::new(),
+                stored_notes: registry.stored_notes(name).map(Box::new),
             }
             .labeled(registry.labels(name)),
             control_values,
@@ -439,6 +444,7 @@ impl ModuleDescription {
         let type_name = snapshot.info.module_type;
         let is_sink = registry.is_sink(&type_name);
         let labels = registry.labels(&type_name);
+        let stored_notes = registry.stored_notes(&type_name).map(Box::new);
         let control_values = snapshot
             .controls
             .iter()
@@ -462,6 +468,7 @@ impl ModuleDescription {
                 label: None,
                 input_labels: BTreeMap::new(),
                 output_labels: BTreeMap::new(),
+                stored_notes,
             }
             .labeled(labels),
             control_values,
@@ -672,3 +679,7 @@ mod tests {
         assert_eq!(error.code, RpcErrorCode::ResponseTooLarge);
     }
 }
+
+#[cfg(test)]
+#[path = "discovery_stored_notes_tests.rs"]
+mod stored_notes_tests;

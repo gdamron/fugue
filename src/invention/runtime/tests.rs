@@ -14,6 +14,7 @@ mod editing;
 mod exact_integers;
 mod front_doors;
 mod non_finite;
+mod pattern_edit;
 mod pause;
 mod pending;
 mod reclaimer;

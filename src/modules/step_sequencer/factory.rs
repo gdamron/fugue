@@ -56,6 +56,10 @@ impl ModuleFactory for StepSequencerFactory {
         TYPE_ID
     }
 
+    fn stored_notes(&self) -> Option<crate::StoredNotes> {
+        Some(controls::stored_notes())
+    }
+
     fn config_keys(&self) -> &'static [ConfigKey] {
         const {
             &[

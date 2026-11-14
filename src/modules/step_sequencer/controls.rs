@@ -7,7 +7,7 @@ use crate::control_request::{
     RtValue,
 };
 use crate::payload::Payload;
-use crate::ControlValue;
+use crate::{ControlValue, StepFields, StoredNotes};
 
 use super::grace::{DEFAULT_GRACE_DURATION, MAX_GRACE_DURATION, MIN_GRACE_DURATION};
 use super::{Step, DEFAULT_GATE_LENGTH, DEFAULT_ROOT_NOTE, DEFAULT_STEPS};
@@ -89,6 +89,28 @@ pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);
 /// start before it applies its own values.
 pub(super) fn defaults() -> impl Iterator<Item = RtValue> {
     DECLS.iter().map(|decl| decl.default)
+}
+
+/// The notes the sequencer stores: its `pattern`, one step per clock step,
+/// each a note offset from `root_note` (see [`Step`]).
+pub(super) fn stored_notes() -> StoredNotes {
+    use std::borrow::Cow::Borrowed;
+    StoredNotes {
+        pattern: Borrowed("pattern"),
+        step_count: Borrowed("step_count"),
+        max_steps: MAX_STEPS as u32,
+        root: Borrowed("root_note"),
+        gate_length: Borrowed("gate_length"),
+        offset_range: [i8::MIN.into(), i8::MAX.into()],
+        pitch_range: [0, 127],
+        step: StepFields {
+            note: Borrowed("note"),
+            gate_length: Borrowed("gate_length"),
+            held: Borrowed("held"),
+            velocity: Borrowed("velocity"),
+            grace: Borrowed("grace"),
+        },
+    }
 }
 
 /// Builds a written `pattern` into the payload the sequencer keeps.
