@@ -196,6 +196,7 @@ fn a_pattern_the_sequencer_cannot_hold_is_refused_and_nothing_changes() {
     let (mut running, pump) = start_manual(runtime);
     let mut played = pump.render(at);
     let before = serde_json::to_value(running.document().unwrap()).unwrap();
+    let shown = running.get_control("seq", "pattern").unwrap();
     for value in &refused {
         let edit = StructuralEdit::SetControl {
             module_id: "seq".into(),
@@ -210,6 +211,59 @@ fn a_pattern_the_sequencer_cannot_hold_is_refused_and_nothing_changes() {
         assert_eq!(after, before, "{value} changed the document");
     }
     played.extend(pump.render(blocks - at));
+    // What a roll reads back is the pattern as it was.
+    assert_eq!(running.get_control("seq", "pattern").unwrap(), shown);
     running.stop();
     assert_eq!(first_difference(&played, &session(DOC, blocks, None)), None);
+}
+
+#[test]
+fn a_running_step_sequencer_reads_back_the_controls_its_declaration_names() {
+    let invention = Invention::from_json(DOC).unwrap();
+    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let (running, _pump) = start_manual(runtime);
+    let description = running
+        .describe_module(&crate::DescribeModuleQuery {
+            module_id: Some("seq".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    let declared = description.info.stored_notes.clone().expect("declared");
+    let named = [
+        &declared.pattern,
+        &declared.step_count,
+        &declared.root,
+        &declared.gate_length,
+    ];
+    for key in named {
+        assert!(
+            description.info.controls.iter().any(|c| &c.key == key),
+            "{key} is no control"
+        );
+        assert!(
+            description.control_values.contains_key(key.as_ref()),
+            "{key}"
+        );
+    }
+    let value = |key: &str| serde_json::to_value(&description.control_values[key]).unwrap();
+    let pattern: serde_json::Value =
+        serde_json::from_str(value(&declared.pattern).as_str().unwrap()).unwrap();
+    let document: serde_json::Value = serde_json::from_str(DOC).unwrap();
+    let authored = &document["modules"][1]["config"];
+    let steps = pattern.as_array().unwrap();
+    assert_eq!(steps.len(), authored["pattern"].as_array().unwrap().len());
+    for (step, (read, held)) in steps
+        .iter()
+        .zip(authored["pattern"].as_array().unwrap())
+        .enumerate()
+    {
+        assert_eq!(read["note"], held["note"], "step {step}");
+    }
+    for (key, config) in [
+        (&declared.root, "root_note"),
+        (&declared.step_count, "step_count"),
+    ] {
+        assert_eq!(value(key).as_f64(), authored[config].as_f64(), "{key}");
+    }
+    running.stop();
 }
