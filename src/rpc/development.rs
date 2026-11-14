@@ -1,7 +1,6 @@
 //! A development's inside as the running piece built it: the answer to
 //! [`RpcCommand::GetDevelopment`](super::RpcCommand::GetDevelopment).
 
-use super::authored_snapshot::LimitedWriter;
 use super::{RpcError, RpcErrorCode, RuntimeRevision, MAX_INLINE_SNAPSHOT_BYTES};
 use crate::Invention;
 use serde::{Deserialize, Serialize};
@@ -38,25 +37,70 @@ pub struct DevelopmentSnapshot {
     pub definition: Invention,
 }
 
+/// [`DevelopmentSnapshot`] borrowed, serialized the same way, so its size
+/// is measured before anything is copied.
+#[derive(Serialize)]
+struct Borrowed<'a> {
+    revision: &'a RuntimeRevision,
+    path: &'a [String],
+    declared: DevelopmentDeclaration,
+    definition: &'a Invention,
+}
+
 impl DevelopmentSnapshot {
-    /// The snapshot, refused with `ResponseTooLarge` when its JSON would
-    /// exceed [`MAX_DEVELOPMENT_BYTES`].
-    pub fn bounded(self) -> Result<Self, RpcError> {
-        let mut writer = LimitedWriter {
-            bytes: Vec::new(),
-            limit: MAX_DEVELOPMENT_BYTES,
+    /// The snapshot of `definition`, refused with `ResponseTooLarge` when
+    /// its JSON would exceed [`MAX_DEVELOPMENT_BYTES`].
+    pub fn bounded(
+        revision: RuntimeRevision,
+        path: &[String],
+        declared: DevelopmentDeclaration,
+        definition: &Invention,
+    ) -> Result<Self, RpcError> {
+        let borrowed = Borrowed {
+            revision: &revision,
+            path,
+            declared,
+            definition,
         };
-        match serde_json::to_writer(&mut writer, &self) {
-            Ok(()) => Ok(self),
+        let mut counted = Counted(0);
+        match serde_json::to_writer(&mut counted, &borrowed) {
+            Ok(()) => Ok(Self {
+                revision,
+                path: path.to_vec(),
+                declared,
+                definition: definition.clone(),
+            }),
             Err(error) if error.is_io() => Err(RpcError::new(
                 RpcErrorCode::ResponseTooLarge,
                 format!(
-                    "development '{}' exceeds {MAX_DEVELOPMENT_BYTES} bytes; read it with \
-                     inspect_invention or save_invention instead",
-                    self.path.join("/")
+                    "development '{}' exceeds {MAX_DEVELOPMENT_BYTES} bytes; {}",
+                    path.join("/"),
+                    match declared {
+                        DevelopmentDeclaration::Inline =>
+                            "read its definition in parts with inspect_invention",
+                        DevelopmentDeclaration::Path =>
+                            "read the file its declaration names on the daemon host",
+                        DevelopmentDeclaration::Ref => "read it from its package's source",
+                    }
                 ),
             )),
             Err(error) => Err(RpcError::new(RpcErrorCode::Internal, error.to_string())),
         }
+    }
+}
+
+/// Counts the bytes written, failing past the bound.
+struct Counted(usize);
+
+impl std::io::Write for Counted {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > MAX_DEVELOPMENT_BYTES.saturating_sub(self.0) {
+            return Err(std::io::Error::other("development size limit exceeded"));
+        }
+        self.0 += bytes.len();
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }

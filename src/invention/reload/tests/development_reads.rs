@@ -152,6 +152,35 @@ fn a_nested_name_resolves_as_its_builder_sees_it() {
 }
 
 #[test]
+fn an_inherited_development_sees_only_what_was_declared_before_it() {
+    let uses = |types: &[&str]| {
+        let modules: Vec<Value> = (types.iter().enumerate())
+            .map(|(i, t)| json!({ "id": format!("m{i}"), "type": t }))
+            .collect();
+        json!({
+            "modules": modules,
+            "connections": [],
+            "outputs": [{ "name": "audio", "from": "m0", "from_port": "audio" }]
+        })
+    };
+    let developments = json!([
+        { "name": "base", "definition": tone("base_osc") },
+        { "name": "tone", "definition": uses(&["base"]) },
+        { "name": "between", "definition": tone("between_osc") },
+        { "name": "voice", "definition": uses(&["tone", "between"]) },
+    ]);
+    let running = start(&piece(developments, "voice").to_string());
+
+    // Inside tone, entered from voice, what the piece declared before tone.
+    let base = read(&running, &["voice", "tone", "base"]).unwrap();
+    assert_eq!(module_ids(&base), ["base_osc"]);
+    // Voice sees `between`; tone, declared before it, does not.
+    assert!(read(&running, &["voice", "between"]).is_ok());
+    let hidden = read(&running, &["voice", "tone", "between"]).unwrap_err();
+    assert_eq!(hidden.code, RpcErrorCode::InvalidRequest);
+}
+
+#[test]
 fn unknown_and_empty_paths_are_refused() {
     let developments = json!([{ "name": "voice", "definition": tone("osc") }]);
     let running = start(&piece(developments, "voice").to_string());

@@ -106,7 +106,10 @@ same for one declared inline, by `path` or by catalog `ref`, and says which in
 - **As loaded.** It reads the definitions kept at load and adopted by each
   reload, on the control thread. It never reads a file or the catalog again,
   so a development file edited on disk shows its change only after a reload,
-  as the music does. Nothing on the audio thread is read or locked.
+  as the music does. Nothing on the audio thread is read or locked. A timed
+  reload adopts no definitions (it refuses one that would build a development
+  differently), so a timed reload that changes only a development's layout,
+  names or how it is declared shows here after the next untimed reload.
 - **Bound.** The answer, `Development { development: {revision, path,
   declared, definition} }`, is at most 64 KiB of compact JSON
   (`MAX_DEVELOPMENT_BYTES`); a larger one is `ResponseTooLarge`, never cut.

@@ -58,13 +58,7 @@ impl RunningInvention {
         revision: crate::rpc::RuntimeRevision,
     ) -> Result<crate::rpc::DevelopmentSnapshot, crate::RpcError> {
         let (declared, definition) = self.development_definitions.development(path)?;
-        crate::rpc::DevelopmentSnapshot {
-            revision,
-            path: path.to_vec(),
-            declared,
-            definition: definition.clone(),
-        }
-        .bounded()
+        crate::rpc::DevelopmentSnapshot::bounded(revision, path, declared, definition)
     }
 
     /// Adopts the development definitions a reload's validation build

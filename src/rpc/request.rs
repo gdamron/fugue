@@ -408,12 +408,9 @@ pub enum RpcCommand {
     GetInvention {
         delivery: SnapshotDelivery,
     },
-    /// Read one development's definition as the running piece loaded it,
-    /// whether declared inline, by path or by catalog reference. `path` names
-    /// a development the piece declares, then each one entered inside the
-    /// one before. Answers [`RpcResponsePayload::Development`]; read-only.
-    ///
-    /// [`RpcResponsePayload::Development`]: super::RpcResponsePayload::Development
+    /// Read one development's definition as the piece loaded it (inline, by
+    /// path or by ref): `path` names one the piece declares, then each one
+    /// entered inside the one before. See docs/authored-inspection.md.
     GetDevelopment {
         path: Vec<String>,
     },
