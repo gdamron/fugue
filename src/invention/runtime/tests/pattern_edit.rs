@@ -131,6 +131,7 @@ fn a_pattern_read_from_a_score_file_is_replaced_in_the_document_only() {
     let score = dir.path().join("score.json");
     let written = serde_json::json!({ "cells": [pattern] }).to_string();
     std::fs::write(&score, &written).unwrap();
+    let modified = std::fs::metadata(&score).unwrap().modified().unwrap();
     document["assets"] = serde_json::json!({ "score": { "path": score } });
     document["modules"][1]["config"]["pattern"] =
         serde_json::json!({ "$asset": "score", "path": "/cells/0" });
@@ -158,10 +159,57 @@ fn a_pattern_read_from_a_score_file_is_replaced_in_the_document_only() {
         saved.assets.contains_key("score"),
         "the score stays declared"
     );
+    // What a save would write holds the edit too.
+    let to_save = running.document_to_save().expect("a document to save");
+    let seq = to_save.modules.iter().find(|module| module.id == "seq");
+    let saved_pattern: serde_json::Value =
+        serde_json::from_str(seq.unwrap().config["pattern"].as_str().unwrap()).unwrap();
+    assert_eq!(saved_pattern, new);
     assert_eq!(
         std::fs::read_to_string(&score).unwrap(),
         written,
         "never written"
     );
+    assert_eq!(
+        std::fs::metadata(&score).unwrap().modified().unwrap(),
+        modified
+    );
     running.stop();
+}
+
+#[test]
+fn a_pattern_the_sequencer_cannot_hold_is_refused_and_nothing_changes() {
+    let mut too_long = vec![serde_json::json!({ "note": 0 }); 65];
+    too_long[0] = serde_json::json!(0);
+    let refused = [
+        "not json".to_string(),
+        r#"{"note": 3}"#.to_string(),
+        serde_json::Value::from(too_long).to_string(),
+        r#"[{"note": 3, "pitch": 60}]"#.to_string(),
+        r#"[{"note": 300}]"#.to_string(),
+        r#"[{"note": 0, "gate_length": "long"}]"#.to_string(),
+    ];
+    let blocks = 18 * STEP_BLOCKS;
+    let at = 4 * STEP_BLOCKS + INTO_STEP;
+    let invention = Invention::from_json(DOC).unwrap();
+    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let (mut running, pump) = start_manual(runtime);
+    let mut played = pump.render(at);
+    let before = serde_json::to_value(running.document().unwrap()).unwrap();
+    for value in &refused {
+        let edit = StructuralEdit::SetControl {
+            module_id: "seq".into(),
+            key: "pattern".into(),
+            value: value.clone().into(),
+        };
+        let error = running
+            .apply_edits(&[edit])
+            .expect_err(&format!("{value} is refused"));
+        assert!(!error.message.is_empty());
+        let after = serde_json::to_value(running.document().unwrap()).unwrap();
+        assert_eq!(after, before, "{value} changed the document");
+    }
+    played.extend(pump.render(blocks - at));
+    running.stop();
+    assert_eq!(first_difference(&played, &session(DOC, blocks, None)), None);
 }

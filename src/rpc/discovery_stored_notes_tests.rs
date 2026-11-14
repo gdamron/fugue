@@ -55,6 +55,16 @@ fn a_module_that_makes_its_notes_as_it_plays_declares_none() {
 }
 
 #[test]
+fn only_the_step_sequencer_stores_notes_among_the_builtin_types() {
+    let registry = ModuleRegistry::default();
+    let declaring: Vec<&str> = registry
+        .types()
+        .filter(|name| registry.stored_notes(name).is_some())
+        .collect();
+    assert_eq!(declaring, ["step_sequencer"]);
+}
+
+#[test]
 fn a_running_step_sequencer_keeps_its_declaration() {
     let registry = ModuleRegistry::default();
     let snapshot: RuntimeModuleSnapshot = serde_json::from_value(serde_json::json!({
