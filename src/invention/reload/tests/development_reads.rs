@@ -205,6 +205,19 @@ fn a_development_past_the_bound_is_too_large_not_cut() {
 
     let error = read(&running, &["voice"]).unwrap_err();
     assert_eq!(error.code, RpcErrorCode::ResponseTooLarge);
+    assert!(
+        error.message.contains("inspect_invention"),
+        "{}",
+        error.message
+    );
+
+    let mut voice = tone("osc");
+    voice["description"] = json!("a".repeat(crate::rpc::MAX_DEVELOPMENT_BYTES / 2));
+    let developments = json!([{ "name": "voice", "definition": voice }]);
+    let running = start(&piece(developments, "voice").to_string());
+    let whole = read(&running, &["voice"]).unwrap();
+    let description = whole.definition.description.unwrap();
+    assert_eq!(description.len(), crate::rpc::MAX_DEVELOPMENT_BYTES / 2);
     assert!(!crate::RpcCommand::GetDevelopment {
         path: names(&["voice"])
     }
