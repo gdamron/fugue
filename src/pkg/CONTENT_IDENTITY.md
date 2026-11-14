@@ -312,7 +312,9 @@ Detail also returns `dependencies` (array of exact content references) and
 `assets` (array of paths relative to their declaring document, for inspection
 only). For pad both are empty. Detail has a 256 KiB cap and errors explicitly
 instead of truncating an interface. Full definition reads are explicit, separately
-bounded operations; compact detail never dumps the invention graph.
+bounded operations; compact detail never dumps the invention graph. Once a piece
+that declares a development is loaded, `get_development` reads its inside as
+loaded (see `docs/authored-inspection.md`).
 
 The caller copies `ref` into this complete proposed invention document. Its
 clock triggers a sustained A3 pad through the bundled instrument:

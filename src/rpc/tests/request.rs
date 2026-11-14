@@ -98,6 +98,9 @@ fn rpc_commands_round_trip_json() {
         RpcCommand::ListPackages {
             query: Default::default(),
         },
+        RpcCommand::GetDevelopment {
+            path: vec!["voice".to_string(), "env".to_string()],
+        },
         RpcCommand::ListDevelopments {
             query: crate::pkg::content::ContentListQuery::default(),
         },
@@ -455,4 +458,16 @@ fn a_control_write_names_its_source_and_priority_only_when_set() {
     assert_eq!(json["priority"], -2);
     let decoded: ControlWrite = serde_json::from_value(json).unwrap();
     assert_eq!(decoded, tagged);
+}
+
+#[test]
+fn get_development_reads_by_path_on_the_wire_and_moves_no_revision() {
+    let command = RpcCommand::GetDevelopment {
+        path: vec!["voice".into(), "env".into()],
+    };
+    assert!(!command.advances_revision());
+    let wire = serde_json::json!({ "command": "get_development", "path": ["voice", "env"] });
+    assert_eq!(serde_json::to_value(&command).unwrap(), wire);
+    let parsed: RpcCommand = serde_json::from_value(wire).unwrap();
+    assert_eq!(parsed, command);
 }

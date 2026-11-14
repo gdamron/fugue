@@ -200,6 +200,7 @@ impl RpcCommand {
         match self {
             Self::InspectInvention { .. }
             | Self::GetInvention { .. }
+            | Self::GetDevelopment { .. }
             // Writes the current document again; the file matches current state.
             | Self::SaveInvention { .. }
             | Self::ListPackages { .. }

@@ -134,7 +134,7 @@ fn document<'a>(root: &'a Value, scope: &str) -> Result<&'a Value, RpcError> {
                 ));
             }
             doc = doc.get("developments").and_then(|v| v.get(index)).and_then(|v| v.get("definition"))
-                .filter(|v| v.is_object()).ok_or_else(|| invalid("inline development scope not found; external declarations require describe_development or source access"))?;
+                .filter(|v| v.is_object()).ok_or_else(|| invalid("inline development scope not found; external declarations are read with get_development"))?;
         }
     }
     Ok(doc)

@@ -240,6 +240,7 @@ impl RpcCommand {
             Self::SetControls { writes } => writes.iter().any(|write| write.intent.is_authoring()),
             Self::InspectInvention { .. }
             | Self::GetInvention { .. }
+            | Self::GetDevelopment { .. }
             | Self::SaveInvention { .. }
             | Self::InstallPackage(_)
             | Self::ListPackages { .. }

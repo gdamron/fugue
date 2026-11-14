@@ -408,6 +408,12 @@ pub enum RpcCommand {
     GetInvention {
         delivery: SnapshotDelivery,
     },
+    /// Read one development's definition as the piece loaded it (inline, by
+    /// path or by ref): `path` names one the piece declares, then each one
+    /// entered inside the one before. See docs/authored-inspection.md.
+    GetDevelopment {
+        path: Vec<String>,
+    },
     /// Write the daemon's retained declarative document — the authored
     /// invention updated by runtime mutations — to a file. Lossless:
     /// developments, assets, title/description, and the exposed

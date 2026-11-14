@@ -150,6 +150,12 @@ pub enum RpcResponsePayload {
     AuthoredSnapshot {
         snapshot: Box<AuthoredSnapshot>,
     },
+    /// A [`RpcCommand::GetDevelopment`] answer.
+    ///
+    /// [`RpcCommand::GetDevelopment`]: super::RpcCommand::GetDevelopment
+    Development {
+        development: Box<super::DevelopmentSnapshot>,
+    },
     /// The running session's request log, in reply to
     /// [`RpcCommand::ExportRequestLog`].
     ///

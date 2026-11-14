@@ -178,6 +178,7 @@ impl super::RpcCommand {
             Self::ApplyEdits { .. }
             | Self::InspectInvention { .. }
             | Self::GetInvention { .. }
+            | Self::GetDevelopment { .. }
             | Self::SaveInvention { .. }
             | Self::InstallPackage(_)
             | Self::ListPackages { .. }
