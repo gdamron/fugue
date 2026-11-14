@@ -67,13 +67,27 @@ fn first_difference(a: &[f32], b: &[f32]) -> Option<usize> {
         .position(|(x, y)| x.to_bits() != y.to_bits())
 }
 
+/// An edit lands this far into a step: inside the step's gate, so a note is
+/// sounding when the pattern is swapped.
+const INTO_STEP: usize = STEP_BLOCKS / 10;
+
+/// The piece is audible around block `at`: an edit there would be heard if
+/// it disturbed the voice.
+fn assert_sounding(output: &[f32], at: usize) {
+    let around = &output[at * 64..(at + 8) * 64];
+    let peak = around.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    assert!(peak > 1e-3, "silent at the edit (peak {peak})");
+}
+
 #[test]
 fn an_edit_ahead_of_the_playhead_sounds_as_if_the_pattern_had_always_held_it() {
     let pattern = edited(6, 12);
     let blocks = 18 * STEP_BLOCKS;
-    let live = session(DOC, blocks, Some((STEP_BLOCKS * 3 / 2, &pattern)));
+    let at = 4 * STEP_BLOCKS + INTO_STEP;
+    let live = session(DOC, blocks, Some((at, &pattern)));
     let as_loaded = session(&loaded_with(&pattern), blocks, None);
     let unedited = session(DOC, blocks, None);
+    assert_sounding(&unedited, at);
     // The same output, sample for sample, as the edited pattern played from
     // its start: no click, no restart and no jump in position.
     assert_eq!(first_difference(&live, &as_loaded), None);
@@ -94,8 +108,10 @@ fn an_edit_to_the_sounding_step_is_heard_the_next_time_round() {
     // Step 3 is sounding as the edit lands; it plays out as it began.
     let pattern = edited(2, 7);
     let blocks = 20 * STEP_BLOCKS;
-    let live = session(DOC, blocks, Some((STEP_BLOCKS * 5 / 2, &pattern)));
+    let at = 2 * STEP_BLOCKS + INTO_STEP;
+    let live = session(DOC, blocks, Some((at, &pattern)));
     let unedited = session(DOC, blocks, None);
+    assert_sounding(&unedited, at);
     let changed = first_difference(&live, &unedited).expect("the edit is heard");
     assert!(
         changed >= 18 * STEP_BLOCKS * 64,
