@@ -190,3 +190,39 @@ fn a_development_key_reaching_two_patterns_is_refused() {
     let error = built.err().unwrap().to_string();
     assert!(error.contains("exactly one"), "{error}");
 }
+
+/// The declaration names this module's own controls and step fields, so an
+/// editor that follows it writes a pattern the sequencer reads.
+#[test]
+fn stored_notes_name_its_own_controls_and_step_fields() {
+    use crate::control_request::DeclKind;
+    let notes = controls::stored_notes();
+    let kind = |key: &str| {
+        let index = (controls::TABLE.resolve(key)).unwrap_or_else(|| panic!("no control {key}"));
+        controls::TABLE.decl(index).unwrap().0.kind
+    };
+    assert!(matches!(kind(&notes.pattern), DeclKind::Payload));
+    assert!(matches!(
+        kind(&notes.step_count),
+        DeclKind::Integer { max, .. } if max as u32 == notes.max_steps
+    ));
+    assert!(matches!(
+        kind(&notes.root),
+        DeclKind::Integer { min: 0, max: 127 }
+    ));
+    assert!(matches!(kind(&notes.gate_length), DeclKind::Number { .. }));
+    let fields = &notes.step;
+    for field in [
+        &fields.note,
+        &fields.gate_length,
+        &fields.held,
+        &fields.velocity,
+        &fields.grace,
+    ] {
+        assert!(
+            STEP_KEYS.contains(&field.as_ref()),
+            "{field} is not a step key"
+        );
+    }
+    assert_eq!(notes.offset_range, [i8::MIN as i32, i8::MAX as i32]);
+}

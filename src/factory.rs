@@ -115,6 +115,13 @@ pub trait ModuleFactory: Send + Sync + 'static {
         crate::TypeLabels::NONE
     }
 
+    /// How the notes this type stores in the document map to notes (see
+    /// [`StoredNotes`](crate::StoredNotes)), for editors; none by default,
+    /// as for a type that makes its notes as it plays.
+    fn stored_notes(&self) -> Option<crate::StoredNotes> {
+        None
+    }
+
     /// Returns input ports for type discovery when constructing the module
     /// requires side effects or mandatory config.
     fn input_ports(&self) -> Option<&'static [&'static str]> {

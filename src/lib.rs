@@ -46,7 +46,7 @@ pub use flush_to_zero::flush_to_zero_enabled;
 pub use traits::{
     tidy_key, validate_port, ControlKind, ControlMeta, ControlScale, ControlSurface, ControlValue,
     ControlWidget, FeedbackCut, Module, NumberFormat, NumberHints, SinkModule, SinkOutput,
-    TypeLabels, DEFAULT_BLOCK_SIZE, MAX_BLOCK,
+    StepFields, StoredNotes, TypeLabels, DEFAULT_BLOCK_SIZE, MAX_BLOCK,
 };
 
 // Re-export factory system

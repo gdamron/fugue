@@ -228,6 +228,12 @@ impl ModuleRegistry {
         (self.factories.get(type_id)).map_or(crate::TypeLabels::NONE, |f| f.labels())
     }
 
+    /// The stored notes a type declares (see [`ModuleFactory::stored_notes`]);
+    /// none for an unknown type.
+    pub fn stored_notes(&self, type_id: &str) -> Option<crate::StoredNotes> {
+        self.factories.get(type_id).and_then(|f| f.stored_notes())
+    }
+
     /// Returns factory-declared input ports when available.
     pub fn factory_input_ports(&self, type_id: &str) -> Option<&'static [&'static str]> {
         self.factories.get(type_id).and_then(|f| f.input_ports())

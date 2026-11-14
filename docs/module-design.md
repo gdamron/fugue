@@ -235,6 +235,44 @@ Two small differences from the device path are deliberate:
 - When no one is reading, do nothing beyond a single relaxed load. The
   spectrum tap does exactly that.
 
+## Stored notes
+
+A module that keeps its notes in the document says so in its description, so
+an editor can show and change them without knowing the module's type. Its
+factory returns a [`StoredNotes`](../src/traits/stored_notes.rs) from
+`ModuleFactory::stored_notes`, and `describe_module` and
+`describe_module_types` carry it as `stored_notes`. The step sequencer's:
+
+```json
+"stored_notes": {
+  "pattern": "pattern",
+  "step_count": "step_count",
+  "max_steps": 64,
+  "root": "root_note",
+  "gate_length": "gate_length",
+  "offset_range": [-128, 127],
+  "pitch_range": [0, 127],
+  "step": { "note": "note", "gate_length": "gate_length", "held": "held", "velocity": "velocity", "grace": "grace" }
+}
+```
+
+It is data only: the controls that hold the pattern, the root note, the step
+count and the default gate, the step object's fields, and the ranges a step
+can store. `pattern` holds the steps as JSON text, one per clock step, so a
+note's start and length count in steps. A note sounds for its gate length, a
+ratio of one step, or through the held steps after it.
+
+An editor changes the notes by writing the whole pattern with one
+`apply_edits` `set_control` (see [apply-edits.md](apply-edits.md)). The
+module is not rebuilt and keeps its position: the step sounding plays out,
+and the next clock edge reads the new pattern. A pattern read from a score
+asset (`{"$asset": …}`) is replaced in the document by the written text; the
+asset file is never written.
+
+A module that makes its notes as it plays, such as `melody`, declares none.
+The declaration is shaped so that `cell_sequencer` can adopt it later with
+one more field naming its bank of cells.
+
 ## Modules see only their ports and controls
 
 A module exposes signal flow and controls. It doesn't reach into the
