@@ -133,7 +133,10 @@ pub struct ContentInterface {
     pub controls: Vec<crate::invention::format::DevelopmentControl>,
 }
 
-/// Bounded details; the internal module graph is deliberately omitted.
+/// Bounded details; the internal module graph is deliberately omitted, so a
+/// catalog listing stays small. A loaded piece's development, whether
+/// declared inline, by path or by reference, is read whole with
+/// [`crate::RpcCommand::GetDevelopment`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct ContentDetail {

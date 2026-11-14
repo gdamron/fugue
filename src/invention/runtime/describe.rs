@@ -48,6 +48,25 @@ impl RunningInvention {
         }
     }
 
+    /// The development `path` names (see [`crate::RpcCommand::GetDevelopment`]),
+    /// as the running piece loaded it, at `revision`. Read on the calling
+    /// control thread from the definitions kept at load and reload; nothing
+    /// the audio thread reads is touched, and no file is read again.
+    pub fn development(
+        &self,
+        path: &[String],
+        revision: crate::rpc::RuntimeRevision,
+    ) -> Result<crate::rpc::DevelopmentSnapshot, crate::RpcError> {
+        let (declared, definition) = self.development_definitions.development(path)?;
+        crate::rpc::DevelopmentSnapshot {
+            revision,
+            path: path.to_vec(),
+            declared,
+            definition: definition.clone(),
+        }
+        .bounded()
+    }
+
     /// Adopts the development definitions a reload's validation build
     /// loaded, for the next reload to compare against. The reload's registry
     /// is adopted by its commit, under the publisher (see

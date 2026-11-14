@@ -5,6 +5,7 @@ use indexmap::IndexMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use crate::rpc::{DevelopmentDeclaration, RpcError, RpcErrorCode};
 use crate::Invention;
 
 use crate::invention::builder::load_development_definition;
@@ -35,6 +36,16 @@ impl DevelopmentDefinitions {
     pub(crate) fn loaded(&self) -> &Arc<LoadedDevelopments> {
         &self.loaded
     }
+
+    /// How the development `path` names is declared, and its definition as
+    /// loaded (see [`LoadedDevelopments::find`]).
+    pub fn development(
+        &self,
+        path: &[String],
+    ) -> Result<(DevelopmentDeclaration, &Invention), RpcError> {
+        let found = self.loaded.find(path)?;
+        Ok((found.declared, &found.definition))
+    }
 }
 
 /// The developments one document declares, each loaded with the ones its
@@ -51,13 +62,16 @@ pub(crate) struct LoadedDevelopments(pub(super) IndexMap<String, LoadedDevelopme
 /// One loaded development declaration.
 #[derive(Debug, Clone)]
 pub(crate) struct LoadedDevelopment {
+    /// How the declaring document names its definition.
+    pub(crate) declared: DevelopmentDeclaration,
     pub(crate) definition: Invention,
     /// The developments `definition` declares.
     pub(crate) scope: Arc<LoadedDevelopments>,
 }
 
 /// Two declarations build the same development when they differ at most in
-/// the minimum core they declare, their layout or their module names: saving
+/// how they are declared, the minimum core they declare, their layout or
+/// their module names: saving
 /// writes that minimum into the file, presentation builds nothing, and
 /// reloading must not rebuild
 /// instances nobody touched.
@@ -103,6 +117,7 @@ impl LoadedDevelopments {
                 nested?
             };
             let loaded = LoadedDevelopment {
+                declared: DevelopmentDeclaration::of(spec),
                 definition,
                 scope: Arc::new(nested),
             };
@@ -114,6 +129,57 @@ impl LoadedDevelopments {
     /// The declaration of `name` in this scope.
     pub(crate) fn get(&self, name: &str) -> Option<&LoadedDevelopment> {
         self.0.get(name)
+    }
+
+    /// The development `path` names, as loaded: its first name declared in
+    /// this scope, and each next one visible inside the one before it, as
+    /// its builder sees them: declared in that development's own
+    /// definition, or inherited from an enclosing scope that declares it
+    /// before the development that encloses it.
+    pub(crate) fn find(&self, path: &[String]) -> Result<&LoadedDevelopment, RpcError> {
+        let refuse = |message: String| RpcError::new(RpcErrorCode::InvalidRequest, message);
+        let (mut scope, mut found) = (self, None);
+        // What the current scope inherits, outermost first, in declaration
+        // order.
+        let mut inherited: Vec<(&str, &LoadedDevelopment)> = Vec::new();
+        for (depth, name) in path.iter().enumerate() {
+            let entry = match scope.0.get_full(name.as_str()) {
+                Some((index, _, entry)) => {
+                    let before = scope.0.iter().take(index);
+                    inherited.extend(before.map(|(name, entry)| (name.as_str(), entry)));
+                    entry
+                }
+                None => match inherited.iter().rposition(|(seen, _)| *seen == name) {
+                    Some(index) => {
+                        let entry = inherited[index].1;
+                        inherited.truncate(index);
+                        entry
+                    }
+                    None => {
+                        return Err(refuse(match depth {
+                            0 => format!("the piece declares no development named '{name}'"),
+                            _ => format!(
+                                "no development named '{name}' is visible inside '{}'",
+                                path[..depth].join("/")
+                            ),
+                        }))
+                    }
+                },
+            };
+            scope = &entry.scope;
+            found = Some(entry);
+        }
+        found.ok_or_else(|| refuse("name the development to read".into()))
+    }
+}
+
+impl DevelopmentDeclaration {
+    fn of(spec: &crate::invention::format::DevelopmentSpec) -> Self {
+        match (&spec.reference, &spec.path) {
+            (Some(_), _) => Self::Ref,
+            (None, Some(_)) => Self::Path,
+            (None, None) => Self::Inline,
+        }
     }
 }
 

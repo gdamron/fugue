@@ -80,10 +80,38 @@ single snapshot. Perform gestures do not change authored state or its revision.
 
 External development/asset declarations are returned as authored paths/refs.
 Their contents are **not** part of the retained document and are not covered by
-its revision. An external development has no inline scope. Follow catalog refs
-with `DescribeDevelopment`/`describe_development`; daemon-local paths require
-explicit source access. Do not interpret independently loaded files as part of
-the same revision. Snapshot/file delivery remains `GetInvention`'s responsibility.
+its revision. An external development has no inline scope. Read its inside with
+`GetDevelopment` (below); `DescribeDevelopment`/`describe_development` gives a
+catalog ref's interface without loading it. Do not interpret independently
+loaded files as part of the same revision. Snapshot/file delivery remains
+`GetInvention`'s responsibility.
+
+## A development's inside
+
+`RpcCommand::GetDevelopment { path }` reads one development's definition as
+the running piece loaded it: its modules, connections, exposed inputs, outputs
+and controls, `layout`, and the developments it declares itself. It answers the
+same for one declared inline, by `path` or by catalog `ref`, and says which in
+`declared` (`inline`, `path` or `ref`).
+
+```json
+{"command": "get_development", "path": ["voice", "env"]}
+```
+
+- **Path.** The first name is a development the piece declares; each next one
+  is a development visible inside the one before, as its builder resolves it:
+  declared in that development's own definition, or inherited from an
+  enclosing scope that declares it earlier. A name that resolves to nothing,
+  or an empty path, is `InvalidRequest`.
+- **As loaded.** It reads the definitions kept at load and adopted by each
+  reload, on the control thread. It never reads a file or the catalog again,
+  so a development file edited on disk shows its change only after a reload,
+  as the music does. Nothing on the audio thread is read or locked.
+- **Bound.** The answer, `Development { development: {revision, path,
+  declared, definition} }`, is at most 64 KiB of compact JSON
+  (`MAX_DEVELOPMENT_BYTES`); a larger one is `ResponseTooLarge`, never cut.
+- **Revision.** It carries the revision the host reports with it and moves
+  none. With nothing loaded it is `AudioThreadStopped`, as other reads are.
 
 ## Reproducible context evaluation
 

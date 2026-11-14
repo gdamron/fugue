@@ -408,6 +408,15 @@ pub enum RpcCommand {
     GetInvention {
         delivery: SnapshotDelivery,
     },
+    /// Read one development's definition as the running piece loaded it,
+    /// whether declared inline, by path or by catalog reference. `path` names
+    /// a development the piece declares, then each one entered inside the
+    /// one before. Answers [`RpcResponsePayload::Development`]; read-only.
+    ///
+    /// [`RpcResponsePayload::Development`]: super::RpcResponsePayload::Development
+    GetDevelopment {
+        path: Vec<String>,
+    },
     /// Write the daemon's retained declarative document — the authored
     /// invention updated by runtime mutations — to a file. Lossless:
     /// developments, assets, title/description, and the exposed

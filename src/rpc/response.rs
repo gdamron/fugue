@@ -147,6 +147,12 @@ pub enum RpcResponsePayload {
         page: Box<InspectionPage>,
     },
     /// A revision-stamped authored snapshot, never a flattened runtime graph.
+    /// A [`RpcCommand::GetDevelopment`] answer.
+    ///
+    /// [`RpcCommand::GetDevelopment`]: super::RpcCommand::GetDevelopment
+    Development {
+        development: Box<super::DevelopmentSnapshot>,
+    },
     AuthoredSnapshot {
         snapshot: Box<AuthoredSnapshot>,
     },

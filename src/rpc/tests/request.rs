@@ -98,6 +98,9 @@ fn rpc_commands_round_trip_json() {
         RpcCommand::ListPackages {
             query: Default::default(),
         },
+        RpcCommand::GetDevelopment {
+            path: vec!["voice".to_string(), "env".to_string()],
+        },
         RpcCommand::ListDevelopments {
             query: crate::pkg::content::ContentListQuery::default(),
         },

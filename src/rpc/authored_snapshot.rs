@@ -76,9 +76,9 @@ impl AuthoredSnapshot {
     }
 }
 
-struct LimitedWriter {
-    bytes: Vec<u8>,
-    limit: usize,
+pub(super) struct LimitedWriter {
+    pub(super) bytes: Vec<u8>,
+    pub(super) limit: usize,
 }
 
 impl Write for LimitedWriter {
