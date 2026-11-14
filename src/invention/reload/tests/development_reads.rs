@@ -80,6 +80,7 @@ fn path_developments_read_from_what_was_loaded_nested_ones_too() {
     let mut pad = tone("inner_voice");
     pad["modules"][0]["type"] = json!("grain");
     pad["developments"] = json!([{ "name": "grain", "path": "parts/grain.json" }]);
+    pad["layout"] = json!({ "modules": { "inner_voice": { "x": 12.0, "y": 34.0 } } });
     write(&dir.path().join("pad.json"), &pad);
     write(&dir.path().join("parts/grain.json"), &tone("grain_osc"));
     let document = piece(json!([{ "name": "pad", "path": "pad.json" }]), "pad");
@@ -91,6 +92,10 @@ fn path_developments_read_from_what_was_loaded_nested_ones_too() {
     let outer = read(&running, &["pad"]).unwrap();
     assert_eq!(outer.declared, DevelopmentDeclaration::Path);
     assert_eq!(module_ids(&outer), ["inner_voice"]);
+    let placed = &outer.definition.layout.modules["inner_voice"];
+    assert_eq!((placed.x, placed.y), (12.0, 34.0));
+    // It lists the development it declares itself.
+    assert_eq!(outer.definition.developments[0].name, "grain");
     let inner = read(&running, &["pad", "grain"]).unwrap();
     assert_eq!(inner.declared, DevelopmentDeclaration::Path);
     assert_eq!(module_ids(&inner), ["grain_osc"]);
@@ -182,14 +187,20 @@ fn an_inherited_development_sees_only_what_was_declared_before_it() {
 
 #[test]
 fn unknown_and_empty_paths_are_refused() {
-    let developments = json!([{ "name": "voice", "definition": tone("osc") }]);
+    let mut voice = tone("osc");
+    voice["developments"] = json!([{ "name": "grain", "definition": tone("grain_osc") }]);
+    let developments = json!([{ "name": "voice", "definition": voice }]);
     let running = start(&piece(developments, "voice").to_string());
+    assert!(read(&running, &["voice", "grain"]).is_ok());
 
     for path in [
         &[][..],
         &["missing"][..],
         &["voice", "missing"][..],
         &["dac"][..],
+        // A module id, and a name declared only inside a development.
+        &["v"][..],
+        &["grain"][..],
     ] {
         let error = read(&running, path).unwrap_err();
         assert_eq!(error.code, RpcErrorCode::InvalidRequest, "{path:?}");
