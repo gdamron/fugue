@@ -51,6 +51,8 @@ pub fn packs_dir() -> &'static Path {
 /// A running piece.
 pub struct Piece {
     pub running: RunningInvention,
+    /// What its load set aside without refusing it.
+    pub load_warnings: Vec<String>,
     slot: Arc<Mutex<Option<Render>>>,
 }
 
@@ -72,11 +74,16 @@ impl Piece {
         let (runtime, _) = InventionBuilder::new(RATE)
             .build(invention)
             .unwrap_or_else(|e| panic!("builds: {e}"));
+        let load_warnings = runtime.load_warnings();
         let slot = Arc::new(Mutex::new(None));
         let running = runtime
             .start_with_backend(Capture(slot.clone()))
             .expect("a capturing backend starts");
-        Piece { running, slot }
+        Piece {
+            running,
+            load_warnings,
+            slot,
+        }
     }
 
     /// Renders `blocks` blocks and returns both channels interleaved.

@@ -13,7 +13,7 @@ use fugue::Invention;
 
 /// Installs `test.layout.voice` 1.0.0, whose development declares an inline
 /// `inner`, and returns its development file.
-fn install() -> PathBuf {
+pub(crate) fn install() -> PathBuf {
     static INSTALLED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     INSTALLED.get_or_init(install_once).clone()
 }
@@ -41,7 +41,7 @@ fn install_once() -> PathBuf {
     file
 }
 
-fn shared_piece() -> Value {
+pub(crate) fn shared_piece() -> Value {
     let reference = json!({ "package": "test.layout.voice", "version": "1.0.0" });
     piece(json!([{ "name": "shared", "ref": reference }]), &["shared"])
 }
@@ -231,11 +231,13 @@ fn a_piece_that_is_an_installed_package_file_stays_read_only_inside() {
 
 /// Installs `test.layout.voice` 2.0.0, whose outer module is renamed from
 /// `body` to `core`.
-fn install_renamed() {
+pub(crate) fn install_renamed() {
+    static INSTALLED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    INSTALLED.get_or_init(install_renamed_once);
+}
+
+fn install_renamed_once() {
     let root = packs_dir().join("test.layout.voice").join("2.0.0");
-    if root.exists() {
-        return;
-    }
     write_json(
         &root.join("fugue.pkg.json"),
         &json!({ "id": "test.layout.voice", "version": "2.0.0", "kind": "development",

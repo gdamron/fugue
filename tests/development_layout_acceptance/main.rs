@@ -19,6 +19,9 @@
 //!   the package; null and "back to the original" remove overrides, a reload
 //!   to a new version drops those naming what is gone, and a piece that is
 //!   itself an installed package's file stays read-only (`package`);
+//! - going back to the original is one development's, Undo restores it,
+//!   overrides travel with a saved piece, an older core ignores them, and the
+//!   view's wire shape (`borrowed`);
 //! - a file that cannot be written, or that changed on disk, is refused with
 //!   a reason and nothing changes (`refusals`);
 //! - a move inside a development is applied alone and at once: mixed with a
@@ -28,6 +31,7 @@
 //!   result (`inline`, `wire`).
 
 mod audio;
+mod borrowed;
 mod file;
 mod harness;
 mod inline;
