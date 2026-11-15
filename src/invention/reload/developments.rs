@@ -319,6 +319,61 @@ impl LoadedDevelopments {
         }
     }
 
+    /// The names of the developments, in any scope, that may hold content
+    /// read through a package: their definitions instantiate one of
+    /// `loaders` or a development that does, expand a `$asset` (its config is
+    /// compared unexpanded, so new bytes behind one go unseen), or declare
+    /// developments this tree never loaded (see [`Self::named`]). A name is
+    /// matched wherever it is declared, so two declarations under one alias
+    /// count as one: it errs toward including a name.
+    pub(crate) fn holding_packages(&self, loaders: &[&str]) -> HashSet<String> {
+        let mut declared = Vec::new();
+        self.named(&mut Vec::new(), &HashSet::new(), &mut declared);
+        let mut found: HashSet<String> = (declared.iter())
+            .filter(|(_, entry, unloaded)| *unloaded || !entry.definition.assets.is_empty())
+            .map(|(name, ..)| name.to_string())
+            .collect();
+        loop {
+            let before = found.len();
+            for (name, entry, _) in &declared {
+                let uses = |module: &crate::invention::format::ModuleSpec| {
+                    loaders.contains(&module.module_type.as_str())
+                        || found.contains(&module.module_type)
+                };
+                if !found.contains(*name) && entry.definition.modules.iter().any(uses) {
+                    found.insert(name.to_string());
+                }
+            }
+            if found.len() == before {
+                return found;
+            }
+        }
+    }
+
+    /// Every loaded development with its name, nested ones too, and whether
+    /// its definition declares a development the builder loads on its own:
+    /// an alias declared again inside a development of that name has its
+    /// scope left empty (see `load_within`), and the builder then loads what
+    /// it declares, unless the development inherits one under that name.
+    fn named<'a>(
+        &'a self,
+        enclosing: &mut Vec<&'a str>,
+        inherited: &HashSet<&'a str>,
+        into: &mut Vec<(&'a str, &'a LoadedDevelopment, bool)>,
+    ) {
+        let mut visible = inherited.clone();
+        for (name, entry) in &self.0 {
+            let unloaded = enclosing.contains(&name.as_str())
+                && (entry.definition.developments.iter())
+                    .any(|spec| !visible.contains(spec.name.as_str()));
+            into.push((name.as_str(), entry, unloaded));
+            enclosing.push(name.as_str());
+            entry.scope.named(enclosing, &visible, into);
+            enclosing.pop();
+            visible.insert(name.as_str());
+        }
+    }
+
     /// The declaration of `name` in this scope.
     pub(crate) fn get(&self, name: &str) -> Option<&LoadedDevelopment> {
         self.0.get(name)

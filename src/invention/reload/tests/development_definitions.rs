@@ -194,3 +194,116 @@ fn reload_detects_a_change_to_either_siblings_nested_definition() {
     let report = running.reload(doc(&root)).expect("diff applies");
     assert_eq!(report.swapped, vec!["b"]);
 }
+
+#[test]
+fn developments_holding_a_loader_are_found_through_nesting_and_inheritance() {
+    let tone = |id: &str, kind: &str| {
+        format!(
+            r#"{{ "modules": [ {{ "id": "{id}", "type": "{kind}" }} ], "connections": [],
+                 "outputs": [ {{ "name": "audio", "from": "{id}", "from_port": "audio" }} ] }}"#
+        )
+    };
+    let document = doc(&format!(
+        r#"{{
+            "version": "1.0.0",
+            "developments": [
+                {{ "name": "loader", "definition": {} }},
+                {{ "name": "plain", "definition": {} }},
+                {{ "name": "uses_loader", "definition": {} }},
+                {{ "name": "holds_nested", "definition": {{
+                    "developments": [ {{ "name": "inner", "definition": {} }} ],
+                    "modules": [ {{ "id": "i", "type": "inner" }} ], "connections": [],
+                    "outputs": [ {{ "name": "audio", "from": "i", "from_port": "audio" }} ]
+                }} }}
+            ],
+            "modules": [ {{ "id": "dac", "type": "dac" }} ],
+            "connections": []
+        }}"#,
+        tone("s", "sample_player"),
+        tone("o", "oscillator"),
+        tone("l", "loader"),
+        tone("s", "sample_player"),
+    ));
+    let definitions = DevelopmentDefinitions::resolve(&document).unwrap();
+
+    let mut found: Vec<String> = (definitions.loaded.holding_packages(&["sample_player"]))
+        .into_iter()
+        .collect();
+    found.sort();
+    assert_eq!(found, ["holds_nested", "inner", "loader", "uses_loader"]);
+    assert!(definitions
+        .loaded
+        .holding_packages(&["sample_kit"])
+        .is_empty());
+}
+
+#[test]
+fn a_development_whose_scope_a_repeated_alias_left_unloaded_may_hold_packages() {
+    // The inner `a` repeats an enclosing alias, so its scope is left empty
+    // and the builder alone loads the innermost `a`, which plays a sample. A
+    // `b` that loads nothing shares the name of nothing hidden.
+    let leaf = r#"{ "modules": [ { "id": "s", "type": "sample_player" } ], "connections": [],
+        "outputs": [ { "name": "audio", "from": "s", "from_port": "audio" } ] }"#;
+    let holding = |name: &str, inner: &str| {
+        format!(
+            r#"{{ "developments": [ {{ "name": "{name}", "definition": {inner} }} ],
+                 "modules": [ {{ "id": "x", "type": "{name}" }} ], "connections": [],
+                 "outputs": [ {{ "name": "audio", "from": "x", "from_port": "audio" }} ] }}"#
+        )
+    };
+    let plain = r#"{ "modules": [ { "id": "o", "type": "oscillator" } ], "connections": [],
+        "outputs": [ { "name": "audio", "from": "o", "from_port": "audio" } ] }"#;
+    let document = doc(&format!(
+        r#"{{
+            "version": "1.0.0",
+            "developments": [
+                {{ "name": "b", "definition": {plain} }},
+                {{ "name": "a", "definition": {} }}
+            ],
+            "modules": [ {{ "id": "dac", "type": "dac" }} ],
+            "connections": []
+        }}"#,
+        holding("a", &holding("a", leaf)),
+    ));
+    let definitions = DevelopmentDefinitions::resolve(&document).unwrap();
+
+    let found = definitions.loaded.holding_packages(&["sample_kit"]);
+    assert_eq!(found, ["a".to_string()].into_iter().collect());
+
+    // What that inner `a` declares is inherited (`b`, declared before the
+    // outer `a`), so the builder loads nothing of its own there.
+    let document = doc(&format!(
+        r#"{{
+            "version": "1.0.0",
+            "developments": [
+                {{ "name": "b", "definition": {plain} }},
+                {{ "name": "a", "definition": {} }}
+            ],
+            "modules": [ {{ "id": "dac", "type": "dac" }} ],
+            "connections": []
+        }}"#,
+        holding("a", &holding("b", plain)),
+    ));
+    let definitions = DevelopmentDefinitions::resolve(&document).unwrap();
+    assert!(definitions
+        .loaded
+        .holding_packages(&["sample_kit"])
+        .is_empty());
+}
+
+#[test]
+fn a_development_playing_a_wasm_module_counts_as_holding_package_content() {
+    let document = doc(r#"{
+            "version": "1.0.0",
+            "developments": [ { "name": "wrapped", "definition": {
+                "modules": [ { "id": "w", "type": "wasm_module" } ], "connections": [],
+                "outputs": [ { "name": "audio", "from": "w", "from_port": "audio" } ]
+            } } ],
+            "modules": [ { "id": "dac", "type": "dac" } ],
+            "connections": []
+        }"#);
+    let definitions = DevelopmentDefinitions::resolve(&document).unwrap();
+    let loaders = crate::invention::reload::governed::DEVELOPMENT_LOADERS;
+    let found = definitions.loaded.holding_packages(&loaders);
+    assert_eq!(found, ["wrapped".to_string()].into_iter().collect());
+}
