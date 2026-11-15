@@ -73,8 +73,9 @@ pub struct Step {
     /// Continue the previous active note without retriggering.
     pub held: bool,
     /// Optional velocity for this step (0.0-1.0), from the score's
-    /// dynamics. If None, the sequencer's velocity output stays at full
-    /// (1.0).
+    /// dynamics. The sequencer's `velocity` output carries it as the note
+    /// starts, or full (1.0) if None; it is heard only where that output is
+    /// connected.
     pub velocity: Option<f32>,
     /// Grace notes decorating this step, empty for most steps. Only
     /// meaningful on note steps; how the chain is realized (timing,

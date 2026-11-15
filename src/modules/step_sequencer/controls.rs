@@ -92,7 +92,9 @@ pub(super) fn defaults() -> impl Iterator<Item = RtValue> {
 }
 
 /// The notes the sequencer stores: its `pattern`, one step per clock step,
-/// each a note offset from `root_note` (see [`Step`]).
+/// each a note offset from `root_note` (see [`Step`]). A step's `velocity`
+/// reaches the `velocity` output, so it is heard only where that output is
+/// connected.
 pub(super) fn stored_notes() -> StoredNotes {
     use std::borrow::Cow::Borrowed;
     StoredNotes {
