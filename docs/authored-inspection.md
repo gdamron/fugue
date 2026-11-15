@@ -110,8 +110,14 @@ same for one declared inline, by `path` or by catalog `ref`, and says which in
   reload adopts no definitions (it refuses one that would build a development
   differently), so a timed reload that changes only a development's layout,
   names or how it is declared shows here after the next untimed reload.
+- **Saved in.** `saved_in` says where a move inside it (`move_modules`
+  with a `development` path, see `docs/apply-edits.md`) is saved:
+  `{"kind":"piece"}` inline in the loaded document, or
+  `{"kind":"read_only","reason":…}` never, saying why (an installed package;
+  a development file, not arranged yet). A move shows here at once, without a
+  reload.
 - **Bound.** The answer, `Development { development: {revision, path,
-  declared, definition} }`, is at most 64 KiB of compact JSON
+  declared, saved_in, definition} }`, is at most 64 KiB of compact JSON
   (`MAX_DEVELOPMENT_BYTES`); a larger one is `ResponseTooLarge`, never cut.
 - **Revision.** It carries the revision the host reports with it and moves
   none. With nothing loaded it is `AudioThreadStopped`, as other reads are.

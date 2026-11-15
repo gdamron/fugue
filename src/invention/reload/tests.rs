@@ -14,6 +14,7 @@ use crate::ControlValue;
 
 mod authored;
 mod clock;
+mod development_arranging;
 mod development_assets;
 mod development_definitions;
 mod development_events;

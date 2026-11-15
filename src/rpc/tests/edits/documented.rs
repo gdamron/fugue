@@ -59,7 +59,7 @@ fn the_documented_move_parses_and_round_trips() {
     let edit: StructuralEdit = serde_json::from_str(json).unwrap();
     assert_eq!(edit.op(), EditOp::MoveModules);
     assert_eq!(EditOp::MoveModules.as_str(), "move_modules");
-    let StructuralEdit::MoveModules { positions } = &edit else {
+    let StructuralEdit::MoveModules { positions, .. } = &edit else {
         panic!("expected move_modules, got {edit:?}");
     };
     let osc = positions["osc"].expect("osc is placed");

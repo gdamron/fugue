@@ -157,7 +157,10 @@ fn a_timed_reload_keeps_a_drag_made_while_it_waits() {
     // Dragged while it waits: osc1, which the reload leaves, and osc2.
     let drag = |id: &str, x: f64| (id.to_string(), Some(Position { x, y: 5.0 }));
     let positions = [drag("osc1", 7.0), drag("osc2", 8.0)].into_iter().collect();
-    let moves = [crate::rpc::StructuralEdit::MoveModules { positions }];
+    let moves = [crate::rpc::StructuralEdit::MoveModules {
+        development: None,
+        positions,
+    }];
     running.apply_edits(&moves).expect("the drag commits");
 
     running.pump.render(64);

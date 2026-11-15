@@ -3,8 +3,10 @@
 
 use indexmap::IndexMap;
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::invention::layout::Layout;
 use crate::rpc::{DevelopmentDeclaration, RpcError, RpcErrorCode};
 use crate::Invention;
 
@@ -46,6 +48,12 @@ impl DevelopmentDefinitions {
         let found = self.loaded.find(path)?;
         Ok((found.declared, &found.definition))
     }
+
+    /// Where a move inside the development `path` names is saved.
+    pub fn saved_in(&self, path: &[String]) -> Result<crate::rpc::DevelopmentSavedIn, RpcError> {
+        let found = self.loaded.find(path)?;
+        Ok(crate::invention::edits::saved_in(&found.home))
+    }
 }
 
 /// The developments one document declares, each loaded with the ones its
@@ -67,6 +75,82 @@ pub(crate) struct LoadedDevelopment {
     pub(crate) definition: Invention,
     /// The developments `definition` declares.
     pub(crate) scope: Arc<LoadedDevelopments>,
+    /// Where `definition` is written down, so where its layout is saved.
+    pub(crate) home: DevelopmentHome,
+}
+
+/// Where a loaded development's definition is written down: the document a
+/// move inside it changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DevelopmentHome {
+    /// Inline in the piece's own document, at these declaration names,
+    /// each inline in the definition before it.
+    Piece(Vec<String>),
+    /// In a development file, at `path` as it was read, and inline inside
+    /// it at the declaration names `within` (none: the file's own).
+    File { path: PathBuf, within: Vec<String> },
+    /// In an installed package (a `ref`, or anything declared inside one):
+    /// never written here.
+    Package,
+}
+
+impl DevelopmentHome {
+    /// The home of a declaration of `name`, declared as `declared`, in a
+    /// definition whose home is `self`. `definition` is what it loaded.
+    fn of_declaration(
+        &self,
+        name: &str,
+        declared: DevelopmentDeclaration,
+        definition: &Invention,
+    ) -> Self {
+        let inline = |chain: &[String]| [chain, &[name.to_string()]].concat();
+        match (declared, self) {
+            (DevelopmentDeclaration::Ref, _) | (_, Self::Package) => Self::Package,
+            (DevelopmentDeclaration::Path, _) => match &definition.source_path {
+                Some(path) => Self::File {
+                    path: path.clone(),
+                    within: Vec::new(),
+                },
+                None => Self::Package,
+            },
+            (DevelopmentDeclaration::Inline, Self::Piece(chain)) => Self::Piece(inline(chain)),
+            (DevelopmentDeclaration::Inline, Self::File { path, within }) => Self::File {
+                path: path.clone(),
+                within: inline(within),
+            },
+        }
+    }
+
+    /// The declaration names from `self`'s document root to `other`, when
+    /// `other` is written down in the same document as `self` and inside
+    /// it (or is it).
+    pub(crate) fn inside<'a>(&self, other: &'a Self) -> Option<&'a [String]> {
+        let (own, theirs) = match (self, other) {
+            (Self::Piece(own), Self::Piece(theirs)) => (own, theirs),
+            (
+                Self::File { path, within: own },
+                Self::File {
+                    path: at,
+                    within: theirs,
+                },
+            ) if path == at => (own, theirs),
+            _ => return None,
+        };
+        theirs.strip_prefix(own.as_slice())
+    }
+}
+
+/// The inline definition `chain` names inside `document`, each name a
+/// declaration of the definition before it.
+pub(crate) fn inline_definition_mut<'a>(
+    mut document: &'a mut Invention,
+    chain: &[String],
+) -> Option<&'a mut Invention> {
+    for name in chain {
+        let spec = (document.developments.iter_mut()).find(|spec| &spec.name == name)?;
+        document = spec.definition.as_deref_mut()?;
+    }
+    Some(document)
 }
 
 /// Two declarations build the same development when they differ at most in
@@ -84,7 +168,8 @@ impl PartialEq for LoadedDevelopment {
 impl LoadedDevelopments {
     /// Loads every development `document` declares, recursively.
     pub(crate) fn load(document: &Invention) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::load_within(document, &HashSet::new(), &mut Vec::new())
+        let home = DevelopmentHome::Piece(Vec::new());
+        Self::load_within(document, &home, &HashSet::new(), &mut Vec::new())
     }
 
     /// Loads `document`'s declarations, skipping those whose alias is in
@@ -92,6 +177,7 @@ impl LoadedDevelopments {
     /// them, and the builder keeps those (see `register_developments`).
     fn load_within(
         document: &Invention,
+        home: &DevelopmentHome,
         inherited: &HashSet<String>,
         ancestry: &mut Vec<String>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -101,6 +187,8 @@ impl LoadedDevelopments {
                 continue;
             }
             let definition = load_development_definition(document, spec)?;
+            let declared = DevelopmentDeclaration::of(spec);
+            let own = home.of_declaration(&spec.name, declared, &definition);
             // A development declared again inside its own definition is a
             // cycle: its scope is left empty there.
             let nested = if ancestry.contains(&spec.name) {
@@ -112,18 +200,37 @@ impl LoadedDevelopments {
                 let mut visible = inherited.clone();
                 visible.extend(scope.keys().cloned());
                 ancestry.push(spec.name.clone());
-                let nested = Self::load_within(&definition, &visible, ancestry);
+                let nested = Self::load_within(&definition, &own, &visible, ancestry);
                 ancestry.pop();
                 nested?
             };
             let loaded = LoadedDevelopment {
-                declared: DevelopmentDeclaration::of(spec),
+                declared,
                 definition,
                 scope: Arc::new(nested),
+                home: own,
             };
             scope.insert(spec.name.clone(), loaded);
         }
         Ok(Self(scope))
+    }
+
+    /// Gives the definition written down at `home` the layout `layout`, in
+    /// every development loaded from it, and in each definition loaded
+    /// around it in the same document (whose own copy of it is inline).
+    pub(crate) fn arrange(&mut self, home: &DevelopmentHome, layout: &Layout) {
+        for entry in self.0.values_mut() {
+            let inside = entry.home.inside(home);
+            if let Some(definition) =
+                inside.and_then(|chain| inline_definition_mut(&mut entry.definition, chain))
+            {
+                definition.layout = layout.clone();
+            }
+            if entry.scope.0.is_empty() {
+                continue;
+            }
+            Arc::make_mut(&mut entry.scope).arrange(home, layout);
+        }
     }
 
     /// The declaration of `name` in this scope.
