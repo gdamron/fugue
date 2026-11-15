@@ -110,6 +110,11 @@ pub enum StructuralEdit {
     // is made. Every id must name a module that exists at this point in
     // the batch (see docs/apply-edits.md).
     MoveModules {
+        // The development whose own modules these are, by the path
+        // `get_development` takes; omitted, the piece's own. A plain
+        // comment, as `name` above.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        development: Option<Vec<String>>,
         positions: BTreeMap<String, Option<Position>>,
     },
     /// Names modules (`null` clears). Document-only; ids still address.
@@ -154,6 +159,17 @@ impl std::fmt::Display for EditOp {
 }
 
 impl StructuralEdit {
+    /// The development a `move_modules` places modules inside, if any.
+    pub fn development(&self) -> Option<&[String]> {
+        match self {
+            Self::MoveModules {
+                development: Some(path),
+                ..
+            } => Some(path),
+            _ => None,
+        }
+    }
+
     /// The kind of this edit.
     pub fn op(&self) -> EditOp {
         match self {
@@ -211,7 +227,11 @@ impl StructuralEdit {
                 check("module_id", module_id)?;
                 check("key", key)
             }
-            Self::MoveModules { positions } => {
+            Self::MoveModules {
+                development,
+                positions,
+            } => {
+                (development.iter().flatten()).try_for_each(|name| check("development", name))?;
                 positions.keys().try_for_each(|id| check("positions", id))
             }
             Self::NameModules { names } => names.keys().try_for_each(|id| check("names", id)),
@@ -267,7 +287,7 @@ pub fn check_edit_batch(edits: &[StructuralEdit]) -> Result<(), RpcError> {
                     )));
                 }
             }
-            StructuralEdit::MoveModules { positions } => {
+            StructuralEdit::MoveModules { positions, .. } => {
                 if let Some(message) = move_refusal(positions) {
                     return Err(RpcError::invalid_edit(EditFailure::new(
                         index,
@@ -393,6 +413,11 @@ pub enum EditFailureReason {
     /// `move_modules` places no module, too many, or one at a position that
     /// is not finite.
     InvalidPosition,
+    /// `move_modules` names a development the piece does not declare.
+    UnknownDevelopment,
+    /// `move_modules` names a development that is never written here: one
+    /// from an installed package, or (not yet arranged) a development file.
+    ReadOnlyDevelopment,
 }
 
 /// The structured detail of a refused edit, carried on

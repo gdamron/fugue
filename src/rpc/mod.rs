@@ -6,7 +6,9 @@
 mod authored_snapshot;
 mod control_timing;
 mod development;
-pub use development::{DevelopmentDeclaration, DevelopmentSnapshot, MAX_DEVELOPMENT_BYTES};
+pub use development::{
+    DevelopmentDeclaration, DevelopmentSavedIn, DevelopmentSnapshot, MAX_DEVELOPMENT_BYTES,
+};
 mod inspection;
 pub use inspection::{
     InspectionCoverage, InspectionCursor, InspectionEntry, InspectionPage, InspectionQuery,

@@ -104,7 +104,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
                 key,
                 value,
             } => self.set_control(index, module_id, key, value),
-            StructuralEdit::MoveModules { positions } => self.move_modules(positions),
+            StructuralEdit::MoveModules { positions, .. } => self.move_modules(positions),
             StructuralEdit::NameModules { names } => self.name_modules(names),
         }
     }

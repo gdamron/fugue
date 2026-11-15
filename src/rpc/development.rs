@@ -22,6 +22,22 @@ pub enum DevelopmentDeclaration {
     Ref,
 }
 
+/// Where a move inside a development is saved (see `move_modules`'s
+/// `development`), so whether it can be arranged.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DevelopmentSavedIn {
+    /// Inline in the loaded piece's own document.
+    Piece,
+    /// In the development file at `path` on the daemon host, which every
+    /// piece that uses the file shares.
+    File { path: String },
+    /// Never written here, for `reason`: it comes from an installed
+    /// package, or a frozen lockfile locks its file.
+    ReadOnly { reason: String },
+}
+
 /// One development's definition as the running piece loaded it, whether
 /// declared inline, by path or by catalog reference.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -32,6 +48,8 @@ pub struct DevelopmentSnapshot {
     /// The development read, as the request named it.
     pub path: Vec<String>,
     pub declared: DevelopmentDeclaration,
+    /// Where a move inside it is saved.
+    pub saved_in: DevelopmentSavedIn,
     /// Its modules, connections, exposed inputs, outputs and controls, and
     /// layout, with the developments it declares itself.
     pub definition: Invention,
@@ -44,6 +62,7 @@ struct Borrowed<'a> {
     revision: &'a RuntimeRevision,
     path: &'a [String],
     declared: DevelopmentDeclaration,
+    saved_in: &'a DevelopmentSavedIn,
     definition: &'a Invention,
 }
 
@@ -54,12 +73,14 @@ impl DevelopmentSnapshot {
         revision: RuntimeRevision,
         path: &[String],
         declared: DevelopmentDeclaration,
+        saved_in: DevelopmentSavedIn,
         definition: &Invention,
     ) -> Result<Self, RpcError> {
         let borrowed = Borrowed {
             revision: &revision,
             path,
             declared,
+            saved_in: &saved_in,
             definition,
         };
         let mut counted = Counted(0);
@@ -68,6 +89,7 @@ impl DevelopmentSnapshot {
                 revision,
                 path: path.to_vec(),
                 declared,
+                saved_in,
                 definition: definition.clone(),
             }),
             Err(error) if error.is_io() => Err(RpcError::new(

@@ -24,6 +24,8 @@
 //! the batch is planned and prepared again from the same candidate, as a
 //! reload is.
 
+mod arrange;
+pub(crate) use arrange::saved_in;
 mod commit;
 mod facts;
 mod plan;
@@ -271,6 +273,7 @@ impl RunningInvention {
         if only_presentation(edits) {
             return self.present_modules(edits);
         }
+        arrange::refuse_mixed(edits, false)?;
         let mut batch = self.live.graph_policy().run(|| self.batch(edits))?;
         let mut attempt = 1;
         loop {
@@ -300,12 +303,18 @@ impl RunningInvention {
     /// announces nothing, so a drag on the canvas or a rename is never
     /// heard. Refused as any batch is: by size, by a bad name or position,
     /// or by a module that does not exist (`unknown_module` at its edit).
-    fn present_modules(&self, edits: &[StructuralEdit]) -> Result<ApplyEditsReport, RpcError> {
+    ///
+    /// A move inside a development (its `development`) is saved in that
+    /// development's own document: the piece's, or the one file it writes
+    /// (see the `arrange` module), refused with nothing changed when it
+    /// cannot be.
+    fn present_modules(&mut self, edits: &[StructuralEdit]) -> Result<ApplyEditsReport, RpcError> {
         check_edit_batch(edits)?;
         for (index, edit) in edits.iter().enumerate() {
             edit.check_names(index).map_err(RpcError::invalid_edit)?;
         }
-        self.live.edit_document(|state| {
+        let arranged = self.arrangements(edits)?;
+        let (report, layouts) = self.live.edit_document(|state| {
             let untouched = state.modules.len();
             let document = state.document.as_mut().ok_or_else(|| {
                 RpcError::new(
@@ -324,7 +333,11 @@ impl RunningInvention {
                     RpcError::invalid_edit(EditFailure::new(index, edit.op(), reason, message))
                 };
                 match edit {
-                    StructuralEdit::MoveModules { positions } => {
+                    StructuralEdit::MoveModules {
+                        development: Some(_),
+                        ..
+                    } => {}
+                    StructuralEdit::MoveModules { positions, .. } => {
                         for (id, position) in positions {
                             if !ids.contains(id.as_str()) {
                                 return Err(unknown(id));
@@ -343,13 +356,17 @@ impl RunningInvention {
                     _ => unreachable!("only moves and names take this path"),
                 }
             }
+            let layouts = self.arrange(&mut edited, &arranged)?;
             *document = edited;
-            Ok(ApplyEditsReport {
+            let report = ApplyEditsReport {
                 edit_count: edits.len(),
                 untouched,
                 ..ApplyEditsReport::default()
-            })
-        })
+            };
+            Ok((report, layouts))
+        })?;
+        self.adopt_layouts(&layouts);
+        Ok(report)
     }
 
     /// Applies `edits` again, as [`Self::batch`] does, to the retained

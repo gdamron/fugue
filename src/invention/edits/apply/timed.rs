@@ -40,6 +40,7 @@ impl RunningInvention {
         when: &EditWhen,
         ttl_ms: Option<u64>,
     ) -> Result<RequestStatus, RpcError> {
+        super::arrange::refuse_mixed(edits, true)?;
         let time = edit_time(when, None)?;
         let ttl = self.ttl_samples(ttl_ms);
         let mut batch = self.live.graph_policy().run(|| self.batch(edits))?;

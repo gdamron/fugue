@@ -22,7 +22,9 @@ use super::builder::{resolve_invention_assets, InventionBuilder};
 use super::runtime::{ControlSurfaceInstance, GraphCommandError, RunningInvention};
 
 pub use developments::DevelopmentDefinitions;
-pub(crate) use developments::{changed_development_types, LoadedDevelopments};
+pub(crate) use developments::{
+    changed_development_types, inline_definition_mut, DevelopmentHome, LoadedDevelopments,
+};
 pub(crate) use plan::{plan_reload, scalar_control_value, Implicit, ReloadPlan};
 
 /// What a successful diff-applied reload did to the running graph.

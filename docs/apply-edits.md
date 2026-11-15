@@ -103,6 +103,41 @@ a timed batch or reload that lands keeps the names given meanwhile with its
 own on top, and neither can be timed on its own. Removing a module drops its
 name; `SwapModule` keeps it.
 
+### Arranging a development's inside
+
+`move_modules` with a `development` path places modules inside one
+development's definition instead of the piece's own:
+
+```json
+{ "op": "move_modules", "development": ["voice"], "positions": { "env": { "x": 120, "y": 40 }, "vca": null } }
+```
+
+The path is the one `get_development` takes (see
+`docs/authored-inspection.md`): the first name is a development the piece
+declares, each next one a development visible inside the one before. Each id
+names a module of that development's own definition. The move changes that
+definition's `layout` only, so nothing is built, published or heard, and it
+runs on the calling control thread. The revision advances, and
+`get_development` shows the move at once, no reload needed. Every use of the
+development shares its one definition, so every instance shows the new
+arrangement.
+
+Where the arrangement is saved depends on who owns the definition, which
+`get_development` reports as `saved_in`:
+
+- **Inline in the piece** (`piece`): the definition's `layout` in the
+  retained document, so `get_invention` and `save_invention` show it.
+- **Read-only** (`read_only`): a development from an installed package (a
+  `ref`, or anything declared inside one), and, not arranged yet, one from a
+  development file. It is never written; a move inside it is refused
+  `read_only_development`.
+
+A move inside a development applies at once, in a batch of `move_modules` and
+`name_modules` alone: with a structural edit, or timed, the batch is refused
+`invalid_request` with nothing applied. While a timed edit batch or timed reload waits to
+land, a move inside a development is refused `invalid_request`; make it once
+the timed change has landed.
+
 Coordinates are numbers: an integer re-saves as a float (`120` becomes
 `120.0`), and every value round-trips exactly.
 
@@ -115,7 +150,8 @@ is parsed, so a misspelled edit field fails loudly instead of being ignored.
 Fields the envelope or the command itself does not know are ignored, as for
 every other command.
 
-Edits address the invention's top-level modules. They do not reach inside a
+Edits address the invention's top-level modules. Apart from a
+`move_modules` arranging a development's inside, they do not reach inside a
 development's definition, and they do not change the document's developments,
 assets, title or exposed sections.
 
@@ -236,7 +272,7 @@ resend the batch with a **new** ticket (see
 | `reason` | Raised by | Meaning |
 | --- | --- | --- |
 | `invalid_name` | any | An id, type, port or key is empty or longer than 256 bytes; or a module name is blank, too long or holds a control character, or a `name_modules` names none or more than 1024. |
-| `unknown_module` | any | The module does not exist at this point in the batch. |
+| `unknown_module` | any | The module does not exist at this point in the batch (inside a development, in its definition). |
 | `duplicate_module` | `add_module` | The id already exists at this point in the batch. |
 | `unknown_module_type` | `add_module` | The running invention cannot build this type. |
 | `invalid_config` | `add_module` | The module type refused the config. |
@@ -246,6 +282,8 @@ resend the batch with a **new** ticket (see
 | `unknown_control` | `set_control` | The module exposes no control with that key. |
 | `invalid_control_value` | `set_control` | The value cannot be coerced to the control's kind, is not a finite number, or the module refuses it. |
 | `invalid_position` | `move_modules` | It places no module, more than 1024, or one at a position that is not finite. |
+| `unknown_development` | `move_modules` | Its `development` path names no development the piece declares. |
+| `read_only_development` | `move_modules` | The development is never written here: an installed package's, or a development file's (not arranged yet). |
 
 Messages that name a port or control list what is available, so an agent can
 correct the edit without another read.

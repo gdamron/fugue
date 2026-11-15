@@ -74,6 +74,7 @@ fn names_and_moves_apply_together_as_one_document_change() {
     running
         .apply_edits(&[
             StructuralEdit::MoveModules {
+                development: None,
                 positions: positions.into_iter().collect(),
             },
             names(&[("osc1", Some("Lead"))]),

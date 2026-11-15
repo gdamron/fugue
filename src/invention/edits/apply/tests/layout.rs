@@ -16,7 +16,10 @@ fn moves(positions: &[(&str, Option<Position>)]) -> StructuralEdit {
         .iter()
         .map(|(id, position)| (id.to_string(), *position))
         .collect();
-    StructuralEdit::MoveModules { positions }
+    StructuralEdit::MoveModules {
+        development: None,
+        positions,
+    }
 }
 
 fn placed(running: &RunningInvention) -> BTreeMap<String, Position> {
@@ -154,6 +157,7 @@ fn a_move_places_at_most_the_limit_and_refuses_one_more_with_nothing_changed() {
     let document = json!({ "version": "1.0.0", "modules": modules, "connections": [] });
     let (mut running, _pump) = start(&document.to_string());
     let moving_first = |count: usize| StructuralEdit::MoveModules {
+        development: None,
         positions: (0..count)
             .map(|i| (format!("m{i}"), at(i as f64, -(i as f64))))
             .collect(),
