@@ -319,6 +319,39 @@ impl LoadedDevelopments {
         }
     }
 
+    /// The names of the developments, in any scope, whose definitions
+    /// instantiate one of `types`, directly or through a development they
+    /// use. A name is matched wherever it is declared, so two declarations
+    /// under one alias count as one: it errs toward including a name.
+    pub(crate) fn instantiating(&self, types: &[&str]) -> HashSet<String> {
+        let mut declared = Vec::new();
+        self.named(&mut declared);
+        let mut found: HashSet<String> = HashSet::new();
+        loop {
+            let before = found.len();
+            for (name, entry) in &declared {
+                let uses = |module: &crate::invention::format::ModuleSpec| {
+                    types.contains(&module.module_type.as_str())
+                        || found.contains(&module.module_type)
+                };
+                if !found.contains(*name) && entry.definition.modules.iter().any(uses) {
+                    found.insert(name.to_string());
+                }
+            }
+            if found.len() == before {
+                return found;
+            }
+        }
+    }
+
+    /// Every loaded development with its name, nested ones too.
+    fn named<'a>(&'a self, into: &mut Vec<(&'a str, &'a LoadedDevelopment)>) {
+        for (name, entry) in &self.0 {
+            into.push((name.as_str(), entry));
+            entry.scope.named(into);
+        }
+    }
+
     /// The declaration of `name` in this scope.
     pub(crate) fn get(&self, name: &str) -> Option<&LoadedDevelopment> {
         self.0.get(name)
