@@ -322,30 +322,22 @@ impl LoadedDevelopments {
     /// The names of the developments, in any scope, that may hold content
     /// read through a package: their definitions instantiate one of
     /// `loaders` or a development that does, expand a `$asset` (its config is
-    /// compared unexpanded, so new bytes behind one go unseen), or declare a
-    /// development this tree did not load (a repeated alias leaves its scope
-    /// empty, and the builder then loads what it declares). A name is
+    /// compared unexpanded, so new bytes behind one go unseen), or declare
+    /// developments this tree never loaded (see [`Self::named`]). A name is
     /// matched wherever it is declared, so two declarations under one alias
     /// count as one: it errs toward including a name.
     pub(crate) fn holding_packages(&self, loaders: &[&str]) -> HashSet<String> {
         let mut declared = Vec::new();
-        self.named(&mut declared);
-        let loaded: HashSet<&str> = declared.iter().map(|(name, _)| *name).collect();
-        let opaque = |entry: &LoadedDevelopment| {
-            !entry.definition.assets.is_empty()
-                || (entry.definition.developments.iter())
-                    .any(|spec| !loaded.contains(spec.name.as_str()))
-        };
+        self.named(&mut Vec::new(), &mut declared);
         let mut found: HashSet<String> = (declared.iter())
-            .filter(|(_, entry)| opaque(entry))
-            .map(|(name, _)| name.to_string())
+            .filter(|(_, entry, unloaded)| *unloaded || !entry.definition.assets.is_empty())
+            .map(|(name, ..)| name.to_string())
             .collect();
-        let types = loaders;
         loop {
             let before = found.len();
-            for (name, entry) in &declared {
+            for (name, entry, _) in &declared {
                 let uses = |module: &crate::invention::format::ModuleSpec| {
-                    types.contains(&module.module_type.as_str())
+                    loaders.contains(&module.module_type.as_str())
                         || found.contains(&module.module_type)
                 };
                 if !found.contains(*name) && entry.definition.modules.iter().any(uses) {
@@ -358,11 +350,22 @@ impl LoadedDevelopments {
         }
     }
 
-    /// Every loaded development with its name, nested ones too.
-    fn named<'a>(&'a self, into: &mut Vec<(&'a str, &'a LoadedDevelopment)>) {
+    /// Every loaded development with its name, nested ones too, and whether
+    /// what its definition declares went unloaded: an alias declared again
+    /// inside a development of that name has its scope left empty (see
+    /// `load_within`), and the builder then loads those declarations itself.
+    fn named<'a>(
+        &'a self,
+        enclosing: &mut Vec<&'a str>,
+        into: &mut Vec<(&'a str, &'a LoadedDevelopment, bool)>,
+    ) {
         for (name, entry) in &self.0 {
-            into.push((name.as_str(), entry));
-            entry.scope.named(into);
+            let unloaded =
+                enclosing.contains(&name.as_str()) && !entry.definition.developments.is_empty();
+            into.push((name.as_str(), entry, unloaded));
+            enclosing.push(name.as_str());
+            entry.scope.named(enclosing, into);
+            enclosing.pop();
         }
     }
 

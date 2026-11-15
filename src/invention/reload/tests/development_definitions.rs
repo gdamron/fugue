@@ -240,24 +240,31 @@ fn developments_holding_a_loader_are_found_through_nesting_and_inheritance() {
 #[test]
 fn a_development_whose_scope_a_repeated_alias_left_unloaded_may_hold_packages() {
     // The inner `a` repeats an enclosing alias, so its scope is left empty
-    // and `b` is loaded only by the builder: what `b` holds is unknown here.
-    let document = doc(r#"{
+    // and the builder alone loads the innermost `a`, which plays a sample. A
+    // `b` that loads nothing shares the name of nothing hidden.
+    let leaf = r#"{ "modules": [ { "id": "s", "type": "sample_player" } ], "connections": [],
+        "outputs": [ { "name": "audio", "from": "s", "from_port": "audio" } ] }"#;
+    let holding = |name: &str, inner: &str| {
+        format!(
+            r#"{{ "developments": [ {{ "name": "{name}", "definition": {inner} }} ],
+                 "modules": [ {{ "id": "x", "type": "{name}" }} ], "connections": [],
+                 "outputs": [ {{ "name": "audio", "from": "x", "from_port": "audio" }} ] }}"#
+        )
+    };
+    let plain = r#"{ "modules": [ { "id": "o", "type": "oscillator" } ], "connections": [],
+        "outputs": [ { "name": "audio", "from": "o", "from_port": "audio" } ] }"#;
+    let document = doc(&format!(
+        r#"{{
             "version": "1.0.0",
-            "developments": [ { "name": "a", "definition": {
-                "developments": [ { "name": "a", "definition": {
-                    "developments": [ { "name": "b", "definition": {
-                        "modules": [ { "id": "s", "type": "sample_player" } ], "connections": [],
-                        "outputs": [ { "name": "audio", "from": "s", "from_port": "audio" } ]
-                    } } ],
-                    "modules": [ { "id": "b", "type": "b" } ], "connections": [],
-                    "outputs": [ { "name": "audio", "from": "b", "from_port": "audio" } ]
-                } } ],
-                "modules": [ { "id": "a", "type": "a" } ], "connections": [],
-                "outputs": [ { "name": "audio", "from": "a", "from_port": "audio" } ]
-            } } ],
-            "modules": [ { "id": "dac", "type": "dac" } ],
+            "developments": [
+                {{ "name": "b", "definition": {plain} }},
+                {{ "name": "a", "definition": {} }}
+            ],
+            "modules": [ {{ "id": "dac", "type": "dac" }} ],
             "connections": []
-        }"#);
+        }}"#,
+        holding("a", &holding("a", leaf)),
+    ));
     let definitions = DevelopmentDefinitions::resolve(&document).unwrap();
 
     let found = definitions.loaded.holding_packages(&["sample_kit"]);
