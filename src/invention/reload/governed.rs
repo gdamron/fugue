@@ -47,11 +47,8 @@ pub(super) fn rebuild_under_another_policy(
         return;
     }
     let loading = validated.definitions.loaded.instantiating(&PACKAGE_LOADERS);
-    let holds_packages = |module_type: &str| {
-        PACKAGE_LOADERS.contains(&module_type)
-            || (validated.definitions.loaded.0.contains_key(module_type)
-                && loading.contains(module_type))
-    };
+    let holds_packages =
+        |module_type: &str| PACKAGE_LOADERS.contains(&module_type) || loading.contains(module_type);
     let rebuilt: Vec<_> = (validated.resolved.modules.iter())
         .filter(|spec| plan.unchanged.contains(&spec.id) && holds_packages(&spec.module_type))
         .cloned()

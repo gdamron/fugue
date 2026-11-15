@@ -194,3 +194,42 @@ fn reload_detects_a_change_to_either_siblings_nested_definition() {
     let report = running.reload(doc(&root)).expect("diff applies");
     assert_eq!(report.swapped, vec!["b"]);
 }
+
+#[test]
+fn developments_instantiating_a_type_are_found_through_nesting_and_inheritance() {
+    let tone = |id: &str, kind: &str| {
+        format!(
+            r#"{{ "modules": [ {{ "id": "{id}", "type": "{kind}" }} ], "connections": [],
+                 "outputs": [ {{ "name": "audio", "from": "{id}", "from_port": "audio" }} ] }}"#
+        )
+    };
+    let document = doc(&format!(
+        r#"{{
+            "version": "1.0.0",
+            "developments": [
+                {{ "name": "loader", "definition": {} }},
+                {{ "name": "plain", "definition": {} }},
+                {{ "name": "uses_loader", "definition": {} }},
+                {{ "name": "holds_nested", "definition": {{
+                    "developments": [ {{ "name": "inner", "definition": {} }} ],
+                    "modules": [ {{ "id": "i", "type": "inner" }} ], "connections": [],
+                    "outputs": [ {{ "name": "audio", "from": "i", "from_port": "audio" }} ]
+                }} }}
+            ],
+            "modules": [ {{ "id": "dac", "type": "dac" }} ],
+            "connections": []
+        }}"#,
+        tone("s", "sample_player"),
+        tone("o", "oscillator"),
+        tone("l", "loader"),
+        tone("s", "sample_player"),
+    ));
+    let definitions = DevelopmentDefinitions::resolve(&document).unwrap();
+
+    let mut found: Vec<String> = (definitions.loaded.instantiating(&["sample_player"]))
+        .into_iter()
+        .collect();
+    found.sort();
+    assert_eq!(found, ["holds_nested", "inner", "loader", "uses_loader"]);
+    assert!(definitions.loaded.instantiating(&["sample_kit"]).is_empty());
+}
