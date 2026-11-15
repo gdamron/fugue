@@ -139,10 +139,22 @@ Where the arrangement is saved depends on who owns the definition, which
   portable rename compares first, so a save by another writer in the moment
   between that last read and the rename is still lost (an accepted, rare
   window, named in `development_file.rs`).
-- **Read-only** (`read_only`): a development from an installed package (a
-  `ref`, or anything declared inside one), a file in the package cache, or a
-  file a frozen lockfile locks. It is never written; a move inside it is
-  refused `read_only_development`.
+- **An override in the piece** (`override`): a development the piece
+  borrows: one from an installed package (a `ref`, or anything declared
+  inside one), a file in the package cache, or a file a frozen lockfile
+  locks. Its original is never written. The move is saved in the piece's own
+  `layout.overrides`, keyed by the path into the development and the module
+  id (`"voice/filter"`, or `"voice/env/attack"` one development deeper), and
+  `get_development` shows the author's arrangement with the overrides on
+  top. `null` removes a module's override, back to where the author put it,
+  so one `move_modules` with `null` for every id `get_development` lists in
+  `overrides` goes back to the original. A name holding `/` cannot be keyed;
+  a move of it is refused `read_only_development`.
+
+Overrides are presentation, as the rest of a layout is: they build nothing,
+and they do not raise the document's `minimum_core_version`. An older core
+ignores `layout.overrides` as a member it does not know, and loads and plays
+the piece as before (saving there drops them).
 
 A move inside a development applies at once, in a batch of `move_modules` and
 `name_modules` alone: with a structural edit, or timed, the batch is refused

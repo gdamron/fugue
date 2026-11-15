@@ -2,8 +2,10 @@
 //! [`RpcCommand::GetDevelopment`](super::RpcCommand::GetDevelopment).
 
 use super::{RpcError, RpcErrorCode, RuntimeRevision, MAX_INLINE_SNAPSHOT_BYTES};
+use crate::invention::layout::Position;
 use crate::Invention;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// The most UTF-8 JSON bytes one development reply carries, the inline
 /// snapshot's bound (64 KiB).
@@ -33,8 +35,12 @@ pub enum DevelopmentSavedIn {
     /// In the development file at `path` on the daemon host, which every
     /// piece that uses the file shares.
     File { path: String },
-    /// Never written here, for `reason`: it comes from an installed
-    /// package, or a frozen lockfile locks its file.
+    /// In the loaded piece's own layout, as overrides layered on the
+    /// original, which is never written: the piece borrows it from an
+    /// installed package (or a file a frozen lockfile locks). Removing the
+    /// overrides goes back to the author's arrangement.
+    Override,
+    /// Never written here, for `reason`.
     ReadOnly { reason: String },
 }
 
@@ -51,8 +57,19 @@ pub struct DevelopmentSnapshot {
     /// Where a move inside it is saved.
     pub saved_in: DevelopmentSavedIn,
     /// Its modules, connections, exposed inputs, outputs and controls, and
-    /// layout, with the developments it declares itself.
+    /// layout, with the developments it declares itself. The layout is the
+    /// author's with the piece's overrides on top.
     pub definition: Invention,
+    /// The piece's overrides inside it, by module id: where the arrangement
+    /// shown differs from the original. Empty when it does not.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub overrides: BTreeMap<String, Position>,
+}
+
+/// The piece's overrides inside one development, for its snapshot.
+#[derive(Debug, Clone, Default)]
+pub struct DevelopmentOverrides {
+    pub positions: BTreeMap<String, Position>,
 }
 
 /// [`DevelopmentSnapshot`] borrowed, serialized the same way, so its size
@@ -64,6 +81,8 @@ struct Borrowed<'a> {
     declared: DevelopmentDeclaration,
     saved_in: &'a DevelopmentSavedIn,
     definition: &'a Invention,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    overrides: &'a BTreeMap<String, Position>,
 }
 
 impl DevelopmentSnapshot {
@@ -75,6 +94,7 @@ impl DevelopmentSnapshot {
         declared: DevelopmentDeclaration,
         saved_in: DevelopmentSavedIn,
         definition: &Invention,
+        overrides: DevelopmentOverrides,
     ) -> Result<Self, RpcError> {
         let borrowed = Borrowed {
             revision: &revision,
@@ -82,6 +102,7 @@ impl DevelopmentSnapshot {
             declared,
             saved_in: &saved_in,
             definition,
+            overrides: &overrides.positions,
         };
         let mut counted = Counted(0);
         match serde_json::to_writer(&mut counted, &borrowed) {
@@ -91,6 +112,7 @@ impl DevelopmentSnapshot {
                 declared,
                 saved_in,
                 definition: definition.clone(),
+                overrides: overrides.positions,
             }),
             Err(error) if error.is_io() => Err(RpcError::new(
                 RpcErrorCode::ResponseTooLarge,

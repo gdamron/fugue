@@ -1,6 +1,8 @@
 //! `move_modules` inside a development: the arrangement saved in the
 //! development's own document, the piece's (for an inline definition) or
-//! its file, and never in an installed package's. Presentation only, as a
+//! its file, and never in an installed package's: inside a development the
+//! piece borrows, the move is saved in the piece's layout as an override
+//! (see [`crate::invention::layout_overrides`]). Presentation only, as a
 //! move of the piece's own modules: nothing is built, published or heard,
 //! and it all runs on the calling control thread.
 
@@ -8,6 +10,7 @@ use std::sync::Arc;
 
 use crate::invention::development_file::{self, NotWritten, Staged};
 use crate::invention::layout::{Layout, Position};
+use crate::invention::layout_overrides;
 use crate::invention::reload::{DevelopmentDefinitions, DevelopmentHome, LoadedDevelopments};
 use crate::invention::runtime::RunningInvention;
 use crate::rpc::{
@@ -21,7 +24,12 @@ use crate::Invention;
 pub(super) struct Arrangement {
     /// The batch index of the first edit that moves inside it.
     index: usize,
+    /// The path that names it, which keys its overrides.
+    path: Vec<String>,
     home: DevelopmentHome,
+    /// Whether its moves are overrides in the piece's layout: the piece
+    /// borrows it.
+    overrides: bool,
     base: Layout,
     moves: Vec<(String, Option<Position>)>,
 }
@@ -31,8 +39,18 @@ impl Arrangement {
     /// saved in a development file.
     fn in_file(&self) -> Option<(&Self, &std::path::PathBuf, &[String])> {
         match &self.home {
-            DevelopmentHome::File { path, within } => Some((self, path, within)),
+            DevelopmentHome::File { path, within } if !self.overrides => Some((self, path, within)),
             _ => None,
+        }
+    }
+
+    /// Whether `other`'s moves belong with this one's: the same document,
+    /// or for overrides the same path.
+    fn joins(&self, home: &DevelopmentHome, path: &[String], overrides: bool) -> bool {
+        match (self.overrides, overrides) {
+            (true, true) => self.path == path,
+            (false, false) => &self.home == home,
+            _ => false,
         }
     }
 
@@ -75,19 +93,26 @@ fn refused(index: usize, reason: EditFailureReason, message: String) -> RpcError
     ))
 }
 
+/// Whether the development at `home` is borrowed: it is never written here
+/// (an installed package's, a file in the package cache, or one a frozen
+/// lockfile locks), so a piece arranges it with overrides.
+pub(crate) fn borrowed(home: &DevelopmentHome) -> bool {
+    match home {
+        DevelopmentHome::Piece(_) => false,
+        DevelopmentHome::File { path, .. } => development_file::never_written(path).is_some(),
+        DevelopmentHome::Package => true,
+    }
+}
+
 /// Where a move inside the development at `home` is saved.
 pub(crate) fn saved_in(home: &DevelopmentHome) -> DevelopmentSavedIn {
     match home {
         DevelopmentHome::Piece(_) => DevelopmentSavedIn::Piece,
-        DevelopmentHome::File { path, .. } => match development_file::never_written(path) {
-            Some(reason) => DevelopmentSavedIn::ReadOnly { reason },
-            None => DevelopmentSavedIn::File {
-                path: path.display().to_string(),
-            },
+        _ if borrowed(home) => DevelopmentSavedIn::Override,
+        DevelopmentHome::File { path, .. } => DevelopmentSavedIn::File {
+            path: path.display().to_string(),
         },
-        DevelopmentHome::Package => DevelopmentSavedIn::ReadOnly {
-            reason: "it comes from an installed package".to_string(),
-        },
+        DevelopmentHome::Package => unreachable!("a package's is borrowed"),
     }
 }
 
@@ -111,7 +136,8 @@ impl RunningInvention {
             let entry = loaded.find(path).map_err(|error| {
                 refused(index, EditFailureReason::UnknownDevelopment, error.message)
             })?;
-            if let DevelopmentSavedIn::ReadOnly { reason } = saved_in(&entry.home) {
+            let saved = saved_in(&entry.home);
+            if let DevelopmentSavedIn::ReadOnly { reason } = saved {
                 return Err(refused(
                     index,
                     EditFailureReason::ReadOnlyDevelopment,
@@ -129,20 +155,35 @@ impl RunningInvention {
                     format!("development '{named}' has no module '{id}'"),
                 ));
             }
+            let overrides = saved == DevelopmentSavedIn::Override;
+            if overrides {
+                if let Some(id) =
+                    (positions.keys()).find(|id| layout_overrides::key(path, id).is_none())
+                {
+                    return Err(refused(
+                        index,
+                        EditFailureReason::ReadOnlyDevelopment,
+                        format!(
+                            "module '{id}' inside development '{named}' cannot be overridden: \
+                             an override is keyed by names without '/'"
+                        ),
+                    ));
+                }
+            }
             let moves = positions.iter().map(|(id, at)| (id.clone(), *at));
-            match found.iter_mut().find(|known| known.home == entry.home) {
+            match (found.iter_mut()).find(|known| known.joins(&entry.home, path, overrides)) {
                 Some(known) => known.moves.extend(moves),
                 None => found.push(Arrangement {
                     index,
+                    path: path.to_vec(),
                     home: entry.home.clone(),
+                    overrides,
                     base: entry.definition.layout.clone(),
                     moves: moves.collect(),
                 }),
             }
         }
-        let files = found
-            .iter()
-            .filter(|a| matches!(a.home, DevelopmentHome::File { .. }));
+        let files = found.iter().filter_map(Arrangement::in_file);
         if files.count() > 1 {
             return Err(RpcError::new(
                 RpcErrorCode::InvalidRequest,
@@ -220,6 +261,10 @@ pub(super) fn arrange(
     }
     let mut layouts = Vec::with_capacity(found.len());
     for arrangement in &found {
+        if arrangement.overrides {
+            override_moves(document, arrangement);
+            continue;
+        }
         let layout = match &arrangement.home {
             DevelopmentHome::Piece(chain) => {
                 let inline = crate::invention::reload::inline_definition_mut(document, chain);
@@ -233,12 +278,15 @@ pub(super) fn arrange(
                 layout
             }
             DevelopmentHome::File { .. } => arrangement.layout(None),
-            DevelopmentHome::Package => unreachable!("refused as read-only"),
+            DevelopmentHome::Package => unreachable!("a package's is arranged with overrides"),
         };
         layouts.push((arrangement.home.clone(), layout));
     }
     if let Some((index, staged)) = staged {
         staged.place().map_err(|why| not_written(index, why))?;
+    }
+    if layouts.is_empty() {
+        return Ok(());
     }
     let mut loaded: LoadedDevelopments = (**definitions.loaded()).clone();
     for (home, layout) in &layouts {
@@ -246,4 +294,17 @@ pub(super) fn arrange(
     }
     *definitions = DevelopmentDefinitions::of(Arc::new(loaded));
     Ok(())
+}
+
+/// Makes `arrangement`'s moves as overrides in the piece's `document`: a
+/// position overrides the author's, and `null` removes the override, back
+/// to where the author put the module. The definition is left as loaded.
+fn override_moves(document: &mut Invention, arrangement: &Arrangement) {
+    for (id, position) in &arrangement.moves {
+        let key = layout_overrides::key(&arrangement.path, id).expect("checked above");
+        match position {
+            Some(position) => document.layout.overrides.insert(key, *position),
+            None => document.layout.overrides.remove(&key),
+        };
+    }
 }

@@ -14,8 +14,10 @@
 //!   unmoved run and nothing is rebuilt (`audio`);
 //! - every use shows the new arrangement: two instances, and one file
 //!   declared under two names (`file`);
-//! - an installed-package development, and a file in the package cache, stay
-//!   read-only and say so (`package`);
+//! - inside an installed-package development, or a file in the package
+//!   cache, a move is an override in the piece's own layout, never written to
+//!   the package, and null and "back to the original" remove overrides
+//!   (`package`);
 //! - a file that cannot be written, or that changed on disk, is refused with
 //!   a reason and nothing changes (`refusals`);
 //! - a move inside a development is applied alone and at once: mixed with a

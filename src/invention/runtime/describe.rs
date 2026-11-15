@@ -57,10 +57,27 @@ impl RunningInvention {
         path: &[String],
         revision: crate::rpc::RuntimeRevision,
     ) -> Result<crate::rpc::DevelopmentSnapshot, crate::RpcError> {
-        let definitions = self.definitions();
+        use crate::invention::layout_overrides;
+        // One read of the state: the definitions and the piece's overrides
+        // on them are the same load's.
+        let (definitions, positions) = {
+            let state = self.state.lock().unwrap();
+            let document = state.document.as_ref();
+            (
+                state.developments.clone(),
+                document
+                    .map(|d| d.layout.overrides_in(path))
+                    .unwrap_or_default(),
+            )
+        };
         let (declared, definition) = definitions.development(path)?;
         let saved_in = definitions.saved_in(path)?;
-        crate::rpc::DevelopmentSnapshot::bounded(revision, path, declared, saved_in, definition)
+        let overrides = crate::rpc::DevelopmentOverrides { positions };
+        let shown = layout_overrides::layered(definition, &overrides.positions);
+        let definition = shown.as_ref().unwrap_or(definition);
+        crate::rpc::DevelopmentSnapshot::bounded(
+            revision, path, declared, saved_in, definition, overrides,
+        )
     }
 
     /// The development definitions the running piece holds (see
