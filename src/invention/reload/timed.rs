@@ -184,13 +184,16 @@ impl RunningInvention {
                     document.carry_presentation(current, &presentation);
                     document.carry_development_layouts(current, Some(&inline));
                 }
-                state.document = Some(document);
                 // Its definitions, as an untimed reload adopts them (the
                 // builds they make are the ones running: the reload was
-                // refused otherwise), each arrangement made meanwhile kept.
+                // refused otherwise), each arrangement made meanwhile kept,
+                // and an override made meanwhile that they no longer place
+                // dropped too.
                 let landed = (**loaded.loaded()).clone();
                 let landed = landed.landing(before.loaded(), state.developments.loaded());
-                state.developments = DevelopmentDefinitions::of(Arc::new(landed));
+                let landed = loaded.with_loaded(Arc::new(landed));
+                state.developments = landed.settled_again(&mut document);
+                state.document = Some(document);
             }
             // The graph is built under the reload's lock once it lands.
             #[cfg(not(target_arch = "wasm32"))]

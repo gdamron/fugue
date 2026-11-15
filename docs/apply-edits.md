@@ -150,11 +150,19 @@ Where the arrangement is saved depends on who owns the definition, which
   so one `move_modules` with `null` for every id `get_development` lists in
   `overrides` goes back to the original. A name holding `/` cannot be keyed;
   a move of it is refused `read_only_development`.
+- **Read-only** (`read_only`): every development inside a piece that is
+  itself an installed package's file (an installed example), which is never
+  saved here. A move inside one is refused `read_only_development`, with the
+  reason.
 
 Overrides are presentation, as the rest of a layout is: they build nothing,
 and they do not raise the document's `minimum_core_version`. An older core
 ignores `layout.overrides` as a member it does not know, and loads and plays
-the piece as before (saving there drops them).
+the piece as before (saving there drops them). When the original changes (the
+piece moves to a new package version), load and reload drop each override
+that no longer names a module of a development the piece borrows, with a
+warning naming its key, and `get_development` lists the dropped module ids in
+`overrides_dropped` until the next load or reload.
 
 A move inside a development applies at once, in a batch of `move_modules` and
 `name_modules` alone: with a structural edit, or timed, the batch is refused

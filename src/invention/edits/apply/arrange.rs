@@ -6,6 +6,7 @@
 //! move of the piece's own modules: nothing is built, published or heard,
 //! and it all runs on the calling control thread.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::invention::development_file::{self, NotWritten, Staged};
@@ -104,8 +105,18 @@ pub(crate) fn borrowed(home: &DevelopmentHome) -> bool {
     }
 }
 
-/// Where a move inside the development at `home` is saved.
-pub(crate) fn saved_in(home: &DevelopmentHome) -> DevelopmentSavedIn {
+/// Where a move inside the development at `home` is saved, in a piece read
+/// from `piece` (its source path, if any). A piece that is itself an
+/// installed package's file (an installed example) is never saved here, so
+/// nothing inside it is arranged.
+pub(crate) fn saved_in(home: &DevelopmentHome, piece: Option<&Path>) -> DevelopmentSavedIn {
+    if piece.and_then(development_file::never_written).is_some() {
+        return DevelopmentSavedIn::ReadOnly {
+            reason: "the piece comes from an installed package and is never saved here; \
+                     save it as your own piece to arrange it"
+                .to_string(),
+        };
+    }
     match home {
         DevelopmentHome::Piece(_) => DevelopmentSavedIn::Piece,
         _ if borrowed(home) => DevelopmentSavedIn::Override,
@@ -123,7 +134,7 @@ impl RunningInvention {
     /// is written per batch, and its new text is staged here, before any
     /// lock is taken (see [`development_file::stage_layout`]).
     pub(super) fn arrangements(&self, edits: &[StructuralEdit]) -> Result<Arranged, RpcError> {
-        let definitions = self.definitions();
+        let (definitions, piece) = self.definitions_and_source();
         let loaded = definitions.loaded();
         let mut found: Vec<Arrangement> = Vec::new();
         for (index, edit) in edits.iter().enumerate() {
@@ -136,7 +147,7 @@ impl RunningInvention {
             let entry = loaded.find(path).map_err(|error| {
                 refused(index, EditFailureReason::UnknownDevelopment, error.message)
             })?;
-            let saved = saved_in(&entry.home);
+            let saved = saved_in(&entry.home, piece.as_deref());
             if let DevelopmentSavedIn::ReadOnly { reason } = saved {
                 return Err(refused(
                     index,
@@ -292,7 +303,7 @@ pub(super) fn arrange(
     for (home, layout) in &layouts {
         loaded.arrange(home, layout);
     }
-    *definitions = DevelopmentDefinitions::of(Arc::new(loaded));
+    *definitions = definitions.with_loaded(Arc::new(loaded));
     Ok(())
 }
 

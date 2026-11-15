@@ -22,7 +22,7 @@
 //! [`authored_document`]: super::authored_document
 
 mod apply;
-pub(crate) use apply::saved_in;
+pub(crate) use apply::{borrowed, saved_in};
 mod candidate;
 #[cfg(test)]
 mod tests;

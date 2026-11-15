@@ -223,12 +223,16 @@ impl RunningInvention {
         // The retained document drops a layout entry placing no module of
         // it, a module this reload removes included, a main clock naming
         // none of its clocks, and a name that cannot name a module.
-        let unplaced = invention.settle_presentation();
-        let document = invention.clone();
+        let mut unplaced = invention.settle_presentation();
+        let mut document = invention.clone();
         let invalid = |error: Box<dyn std::error::Error>| ReloadError::Invalid(error.to_string());
         let (resolved, loaded) =
             resolve_invention_assets(invention, None, None).map_err(invalid)?;
-        let definitions = DevelopmentDefinitions::of(loaded.clone());
+        // And an override that no longer places a module of a development
+        // it borrows: one the new package version no longer has, say.
+        let (definitions, overridden) =
+            DevelopmentDefinitions::of(loaded.clone()).settling(&mut document);
+        unplaced.extend(overridden);
 
         // The built runtime is discarded but for its control surfaces.
         let (built, _) =

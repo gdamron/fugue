@@ -40,7 +40,8 @@ pub enum DevelopmentSavedIn {
     /// installed package (or a file a frozen lockfile locks). Removing the
     /// overrides goes back to the author's arrangement.
     Override,
-    /// Never written here, for `reason`.
+    /// Never written here, for `reason`: the piece itself is an installed
+    /// package's (an installed example), so nothing inside it is saved.
     ReadOnly { reason: String },
 }
 
@@ -64,12 +65,17 @@ pub struct DevelopmentSnapshot {
     /// shown differs from the original. Empty when it does not.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub overrides: BTreeMap<String, Position>,
+    /// The module ids whose overrides the piece's latest load or reload
+    /// dropped: the development no longer has them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overrides_dropped: Vec<String>,
 }
 
 /// The piece's overrides inside one development, for its snapshot.
 #[derive(Debug, Clone, Default)]
 pub struct DevelopmentOverrides {
     pub positions: BTreeMap<String, Position>,
+    pub dropped: Vec<String>,
 }
 
 /// [`DevelopmentSnapshot`] borrowed, serialized the same way, so its size
@@ -83,6 +89,8 @@ struct Borrowed<'a> {
     definition: &'a Invention,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     overrides: &'a BTreeMap<String, Position>,
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    overrides_dropped: &'a [String],
 }
 
 impl DevelopmentSnapshot {
@@ -103,6 +111,7 @@ impl DevelopmentSnapshot {
             saved_in: &saved_in,
             definition,
             overrides: &overrides.positions,
+            overrides_dropped: &overrides.dropped,
         };
         let mut counted = Counted(0);
         match serde_json::to_writer(&mut counted, &borrowed) {
@@ -113,6 +122,7 @@ impl DevelopmentSnapshot {
                 saved_in,
                 definition: definition.clone(),
                 overrides: overrides.positions,
+                overrides_dropped: overrides.dropped,
             }),
             Err(error) if error.is_io() => Err(RpcError::new(
                 RpcErrorCode::ResponseTooLarge,
