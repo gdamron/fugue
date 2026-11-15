@@ -130,8 +130,9 @@ Where the arrangement is saved depends on who owns the definition, which
 - **A development file** (`file`): that file, which every piece using it
   shares. Only the definition's `layout` member changes in the file's text,
   replaced, added or removed in place; every other byte stays as it was. The
-  new text is written beside the file with the file's permissions and renamed
-  over it, so a reader never sees half of it. A file that cannot be written,
+  new text is written and synced beside the file with the file's permissions
+  before any lock is taken, so a slow disk delays no other control write, and
+  then renamed over it, so a reader never sees half of it. A file that cannot be written,
   or that no longer holds what the piece loaded (it changed on disk; reload
   the piece, then arrange again), is refused `development_not_written` with
   nothing changed. The file is read once more just before the rename, but no
@@ -145,11 +146,15 @@ Where the arrangement is saved depends on who owns the definition, which
 
 A move inside a development applies at once, in a batch of `move_modules` and
 `name_modules` alone: with a structural edit, or timed, the batch is refused
-`invalid_request` with nothing applied. One batch writes at most one
-development file, so it stays all or nothing; a second is refused
+`invalid_request` with nothing applied. One batch arranges at most one
+development saved in a file, so it stays all or nothing; a second is refused
 `invalid_request`. A timed edit batch or timed reload that lands later
 keeps the move, unless the reload arranges that development itself; a timed
-reload's development definitions are adopted as it lands.
+reload's development definitions are adopted as it lands. A move made just
+as a timed reload lands is checked again against the definitions it
+brought; should they change once more meanwhile, it is refused
+`invalid_request` with nothing applied: read the development again, then
+move it again.
 
 Coordinates are numbers: an integer re-saves as a float (`120` becomes
 `120.0`), and every value round-trips exactly.

@@ -313,8 +313,38 @@ impl RunningInvention {
         for (index, edit) in edits.iter().enumerate() {
             edit.check_names(index).map_err(RpcError::invalid_edit)?;
         }
-        let arranged = self.arrangements(edits)?;
-        let report = self.live.edit_document(|state| {
+        // Checked against the definitions of what is playing: a timed reload
+        // already landed is adopted first, and one that lands as the lock is
+        // taken changes them, so the moves are checked again once.
+        self.live.adopt_landed();
+        for attempt in 0.. {
+            let arranged = self.arrangements(edits)?;
+            if let Some(report) = self.present_arranged(edits, arranged)? {
+                return Ok(report);
+            }
+            if attempt > 0 {
+                break;
+            }
+        }
+        Err(RpcError::new(
+            RpcErrorCode::InvalidRequest,
+            "the piece's developments changed while this move inside one was made; read \
+             the development again, then move it again; nothing was applied",
+        ))
+    }
+
+    /// [`Self::present_modules`] with its development moves checked:
+    /// `None`, with nothing applied, when the definitions they were checked
+    /// against changed before the lock was taken.
+    fn present_arranged(
+        &self,
+        edits: &[StructuralEdit],
+        arranged: arrange::Arranged,
+    ) -> Result<Option<ApplyEditsReport>, RpcError> {
+        self.live.edit_document(|state| {
+            if !arranged.checked_against(&state.developments) {
+                return Ok(None);
+            }
             let untouched = state.modules.len();
             let document = state.document.as_mut().ok_or_else(|| {
                 RpcError::new(
@@ -356,17 +386,15 @@ impl RunningInvention {
                     _ => unreachable!("only moves and names take this path"),
                 }
             }
-            arrange::arrange(&mut state.developments, &mut edited, &arranged)?;
+            arrange::arrange(&mut state.developments, &mut edited, arranged)?;
             let document = state.document.as_mut().expect("checked above");
             *document = edited;
-            let report = ApplyEditsReport {
+            Ok(Some(ApplyEditsReport {
                 edit_count: edits.len(),
                 untouched,
                 ..ApplyEditsReport::default()
-            };
-            Ok(report)
-        })?;
-        Ok(report)
+            }))
+        })
     }
 
     /// Applies `edits` again, as [`Self::batch`] does, to the retained
