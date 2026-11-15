@@ -18,6 +18,7 @@ pub mod builder;
 pub mod core_version;
 pub(crate) mod declared;
 pub mod development;
+pub(crate) mod development_file;
 // Only tests call the candidate step until the runtime's atomic apply path
 // is built on it; remove this allowance then.
 #[cfg_attr(not(test), allow(dead_code))]

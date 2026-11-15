@@ -127,16 +127,29 @@ Where the arrangement is saved depends on who owns the definition, which
 
 - **Inline in the piece** (`piece`): the definition's `layout` in the
   retained document, so `get_invention` and `save_invention` show it.
+- **A development file** (`file`): that file, which every piece using it
+  shares. Only the definition's `layout` member changes in the file's text,
+  replaced, added or removed in place; every other byte stays as it was. The
+  new text is written beside the file with the file's permissions and renamed
+  over it, so a reader never sees half of it. A file that cannot be written,
+  or that no longer holds what the piece loaded (it changed on disk; reload
+  the piece, then arrange again), is refused `development_not_written` with
+  nothing changed. The file is read once more just before the rename, but no
+  portable rename compares first, so a save by another writer in the moment
+  between that last read and the rename is still lost (an accepted, rare
+  window, named in `development_file.rs`).
 - **Read-only** (`read_only`): a development from an installed package (a
-  `ref`, or anything declared inside one), and, not arranged yet, one from a
-  development file. It is never written; a move inside it is refused
-  `read_only_development`.
+  `ref`, or anything declared inside one), a file in the package cache, or a
+  file a frozen lockfile locks. It is never written; a move inside it is
+  refused `read_only_development`.
 
 A move inside a development applies at once, in a batch of `move_modules` and
 `name_modules` alone: with a structural edit, or timed, the batch is refused
-`invalid_request` with nothing applied. While a timed edit batch or timed reload waits to
-land, a move inside a development is refused `invalid_request`; make it once
-the timed change has landed.
+`invalid_request` with nothing applied. One batch writes at most one
+development file, so it stays all or nothing; a second is refused
+`invalid_request`. While a timed edit batch or timed reload waits to land, a
+move inside a development is refused `invalid_request`; make it once the
+timed change has landed.
 
 Coordinates are numbers: an integer re-saves as a float (`120` becomes
 `120.0`), and every value round-trips exactly.
@@ -283,7 +296,8 @@ resend the batch with a **new** ticket (see
 | `invalid_control_value` | `set_control` | The value cannot be coerced to the control's kind, is not a finite number, or the module refuses it. |
 | `invalid_position` | `move_modules` | It places no module, more than 1024, or one at a position that is not finite. |
 | `unknown_development` | `move_modules` | Its `development` path names no development the piece declares. |
-| `read_only_development` | `move_modules` | The development is never written here: an installed package's, or a development file's (not arranged yet). |
+| `read_only_development` | `move_modules` | The development is never written here: an installed package's, or a file the package cache holds or a frozen lockfile locks. |
+| `development_not_written` | `move_modules` | The development's file cannot be written, or changed on disk since the piece loaded it. Nothing changed. |
 
 Messages that name a port or control list what is available, so an agent can
 correct the edit without another read.
