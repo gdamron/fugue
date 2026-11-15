@@ -1,11 +1,11 @@
-//! Arranging a development's inside as the piece goes on: refused while a
-//! timed edit waits, and one file reached by two spellings or a link.
+//! Arranging a development's inside as the piece goes on: a timed reload
+//! landing after the move, and one file reached by two spellings or a link.
 
 use serde_json::{json, Value};
 
 use super::*;
 use crate::invention::layout::Position;
-use crate::rpc::{RpcErrorCode, RuntimeRevision, StructuralEdit};
+use crate::rpc::{RuntimeRevision, StructuralEdit};
 
 fn names(path: &[&str]) -> Vec<String> {
     path.iter().map(|name| name.to_string()).collect()
@@ -55,9 +55,10 @@ fn inline_layout(document: &Invention) -> std::collections::BTreeMap<String, Pos
 }
 
 #[test]
-fn a_move_inside_waits_for_no_timed_reload_it_is_refused() {
+fn a_timed_reload_landing_keeps_an_inline_move_made_while_it_waits() {
     let declared = json!([{ "name": "voice", "definition": voice() }]);
     let mut running = start(&piece(declared.clone()).to_string());
+    // The reload adds a module and leaves the inside alone.
     let mut next = piece(declared);
     next["modules"]
         .as_array_mut()
@@ -67,15 +68,51 @@ fn a_move_inside_waits_for_no_timed_reload_it_is_refused() {
     let next = Invention::from_json(&next.to_string()).unwrap();
     running.reload_at(next, &when, None).expect("queued");
 
-    let refused = running.apply_edits(&[move_inside(&["voice"], "osc", 3.0)]);
-    assert_eq!(refused.unwrap_err().code, RpcErrorCode::InvalidRequest);
-    running.pump.render(64);
-    running.live.adopt_landed();
     running
         .apply_edits(&[move_inside(&["voice"], "osc", 3.0)])
         .unwrap();
-    assert_eq!(inline_layout(&running.document().unwrap())["osc"], at(3.0));
+    running.pump.render(64);
+    running.live.adopt_landed();
+
+    let document = running.document().unwrap();
+    assert!(
+        document.modules.iter().any(|spec| spec.id == "lfo"),
+        "landed"
+    );
+    assert_eq!(inline_layout(&document)["osc"], at(3.0));
     assert_eq!(layout_of(&running, &["voice"])["osc"], at(3.0));
+}
+
+#[test]
+fn a_timed_reload_that_moves_inside_itself_keeps_its_own_arrangement() {
+    let declared = json!([{ "name": "voice", "definition": voice() }]);
+    let mut running = start(&piece(declared).to_string());
+    let mut moved = voice();
+    moved["layout"] = json!({ "modules": { "amp": { "x": 9.0, "y": 1.0 } } });
+    let mut next = piece(json!([{ "name": "voice", "definition": moved }]));
+    next["modules"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "id": "lfo", "type": "lfo" }));
+    let when = crate::rpc::EditWhen::AfterSamples { samples: 2048 };
+    let next = Invention::from_json(&next.to_string()).unwrap();
+    running.reload_at(next, &when, None).expect("queued");
+
+    running
+        .apply_edits(&[move_inside(&["voice"], "osc", 3.0)])
+        .unwrap();
+    running.pump.render(64);
+    running.live.adopt_landed();
+
+    let layout = inline_layout(&running.document().unwrap());
+    assert_eq!(layout.get("amp"), Some(&at(9.0)), "the reload's own move");
+    assert_eq!(
+        layout.get("osc"),
+        None,
+        "the reload replaced the inside's layout"
+    );
+    let read = layout_of(&running, &["voice"]);
+    assert_eq!((read.get("amp"), read.get("osc")), (Some(&at(9.0)), None));
 }
 
 #[cfg(unix)]
@@ -123,4 +160,84 @@ fn one_file_under_two_spellings_and_a_link_is_one_development() {
         .apply_edits(&[move_inside(&["again"], "amp", 5.0)])
         .unwrap();
     assert_eq!(layout_of(&running, &["voice"])["amp"], at(5.0));
+}
+
+/// Lands the timed reload `next` (`piece` with an lfo added) on `running`.
+fn land(running: &mut Settled, next: Value, between: impl FnOnce(&mut Settled)) {
+    let mut next = next;
+    next["modules"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "id": "lfo", "type": "lfo" }));
+    let when = crate::rpc::EditWhen::AfterSamples { samples: 2048 };
+    let next = Invention::from_json(&next.to_string()).unwrap();
+    running.reload_at(next, &when, None).expect("queued");
+    between(running);
+    running.pump.render(64);
+    running.live.adopt_landed();
+    assert!(running
+        .document()
+        .unwrap()
+        .modules
+        .iter()
+        .any(|m| m.id == "lfo"));
+}
+
+#[test]
+fn a_timed_reload_that_lands_is_what_get_development_reads() {
+    let declared = json!([{ "name": "voice", "definition": voice() }]);
+    let mut running = start(&piece(declared).to_string());
+    let mut renamed = voice();
+    renamed["modules"][0]["name"] = json!("Body");
+    renamed["layout"] = json!({ "modules": { "osc": { "x": 2.0, "y": 1.0 } } });
+    land(
+        &mut running,
+        piece(json!([{ "name": "voice", "definition": renamed }])),
+        |_| {},
+    );
+
+    let revision = RuntimeRevision {
+        session_id: "session".into(),
+        revision: 1,
+    };
+    let read = running.development(&names(&["voice"]), revision).unwrap();
+    assert_eq!(read.definition.modules[0].name.as_deref(), Some("Body"));
+    assert_eq!(read.definition.layout.modules["osc"], at(2.0));
+    // A move after it lands arranges the definition it adopted.
+    running
+        .apply_edits(&[move_inside(&["voice"], "amp", 6.0)])
+        .unwrap();
+    let read = layout_of(&running, &["voice"]);
+    assert_eq!((read["osc"], read["amp"]), (at(2.0), at(6.0)));
+}
+
+#[test]
+fn a_file_arranged_while_a_timed_reload_waits_keeps_the_move_and_takes_the_next() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("voice.json");
+    std::fs::write(&file, serde_json::to_vec_pretty(&voice()).unwrap()).unwrap();
+    let path = dir.path().join("piece.json");
+    let declared = json!([{ "name": "voice", "path": "voice.json" }]);
+    std::fs::write(&path, piece(declared.clone()).to_string()).unwrap();
+    let document = Invention::from_file(&path.to_string_lossy()).unwrap();
+    let (runtime, _) = InventionBuilder::new(48_000).build(document).unwrap();
+    let mut running = Settled::start(runtime);
+    let mut next = piece(declared);
+    next["developments"][0]["path"] = json!(file.to_string_lossy());
+
+    land(&mut running, next, |running| {
+        running
+            .apply_edits(&[move_inside(&["voice"], "osc", 3.0)])
+            .unwrap();
+    });
+
+    assert_eq!(layout_of(&running, &["voice"])["osc"], at(3.0));
+    // What the piece holds is still what the file holds: the next move is
+    // written, not refused as changed on disk.
+    running
+        .apply_edits(&[move_inside(&["voice"], "amp", 4.0)])
+        .unwrap();
+    let written = Invention::from_file(&file.to_string_lossy()).unwrap();
+    assert_eq!(written.layout.modules["osc"], at(3.0));
+    assert_eq!(written.layout.modules["amp"], at(4.0));
 }

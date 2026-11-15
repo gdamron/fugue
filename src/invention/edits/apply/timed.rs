@@ -103,6 +103,7 @@ impl RunningInvention {
         let retain = move |state: &mut RuntimeState| {
             if let Some(current) = &state.document {
                 document.carry_presentation(current, &presentation);
+                document.carry_development_layouts(current, None);
             }
             state.document = Some(document);
             for (module_id, key, value) in &stored {

@@ -244,6 +244,35 @@ impl LoadedDevelopments {
         }
     }
 
+    /// The definitions a timed reload loaded, as they land: a development
+    /// arranged while the reload waited (its layout in `current` is not the
+    /// one in `before`, the definitions the reload was made against) keeps
+    /// that arrangement, unless the reload arranges it itself.
+    pub(crate) fn landing(mut self, before: &Self, current: &Self) -> Self {
+        let mut moved = Vec::new();
+        self.each(&mut |entry| {
+            let home = &entry.home;
+            let layout_at = |of: &'_ Self| of.at_home(home).map(|e| e.definition.layout.clone());
+            if let (Some(was), Some(now)) = (layout_at(before), layout_at(current)) {
+                if now != was && entry.definition.layout == was {
+                    moved.push((home.clone(), now));
+                }
+            }
+        });
+        for (home, layout) in &moved {
+            self.arrange(home, layout);
+        }
+        self
+    }
+
+    /// Calls `visit` with every loaded development, nested ones too.
+    fn each(&self, visit: &mut impl FnMut(&LoadedDevelopment)) {
+        for entry in self.0.values() {
+            visit(entry);
+            entry.scope.each(visit);
+        }
+    }
+
     /// The declaration of `name` in this scope.
     pub(crate) fn get(&self, name: &str) -> Option<&LoadedDevelopment> {
         self.0.get(name)

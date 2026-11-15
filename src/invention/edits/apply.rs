@@ -314,7 +314,7 @@ impl RunningInvention {
             edit.check_names(index).map_err(RpcError::invalid_edit)?;
         }
         let arranged = self.arrangements(edits)?;
-        let (report, layouts) = self.live.edit_document(|state| {
+        let report = self.live.edit_document(|state| {
             let untouched = state.modules.len();
             let document = state.document.as_mut().ok_or_else(|| {
                 RpcError::new(
@@ -356,16 +356,16 @@ impl RunningInvention {
                     _ => unreachable!("only moves and names take this path"),
                 }
             }
-            let layouts = self.arrange(&mut edited, &arranged)?;
+            arrange::arrange(&mut state.developments, &mut edited, &arranged)?;
+            let document = state.document.as_mut().expect("checked above");
             *document = edited;
             let report = ApplyEditsReport {
                 edit_count: edits.len(),
                 untouched,
                 ..ApplyEditsReport::default()
             };
-            Ok((report, layouts))
+            Ok(report)
         })?;
-        self.adopt_layouts(&layouts);
         Ok(report)
     }
 
@@ -437,7 +437,7 @@ impl RunningInvention {
         probe.developments.clear();
         // Its configs resolve against the developments as loaded: an
         // instance's keys name what its development exposes under them.
-        let loaded = self.development_definitions.loaded().clone();
+        let loaded = self.definitions().loaded().clone();
         let builder =
             InventionBuilder::with_registry(self.sample_rate, self.registry().for_validation())
                 .with_loaded(loaded);

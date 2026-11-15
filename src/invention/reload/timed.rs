@@ -3,13 +3,17 @@
 //! changes to modules it keeps chained to the landing (see
 //! `publish::timed_chain`).
 
+use std::sync::Arc;
+
 use super::commit::PreparedCommit;
 use super::{ReloadError, ReloadPlan, RELOAD_ATTEMPTS};
 use crate::control_request::RequestId;
 use crate::invention::declared::DeclaredSurface;
 use crate::invention::format::ModuleSpec;
+use crate::invention::layout::InlineLayouts;
 use crate::invention::names::PresentationChanges;
 use crate::invention::publish::EditTime;
+use crate::invention::reload::DevelopmentDefinitions;
 use crate::invention::runtime::timed::edit_time;
 use crate::invention::runtime::{GraphCommandError, RunningInvention};
 use crate::invention::state::RuntimeState;
@@ -48,10 +52,10 @@ impl RunningInvention {
         let time = edit_time(when, None).map_err(ReloadError::Apply)?;
         let ttl = self.ttl_samples(ttl_ms);
         let validated = self.validate_document(invention)?;
-        // Adopting new definitions (and the registry built from them) as a
-        // timed edit lands is not supported yet; the current registry
-        // already builds the same ones.
-        if validated.definitions.loaded != self.development_definitions.loaded {
+        // A timed reload builds with the registry running, so its
+        // definitions must build what the running ones do; they are adopted
+        // (presentation and all) as it lands. A new registry is not yet.
+        if validated.definitions.loaded != self.definitions().loaded {
             let message = "A timed reload cannot change a development's definition yet: \
                            reload untimed, or keep the definitions as they are";
             return Err(ReloadError::Invalid(message.to_string()));
@@ -67,10 +71,18 @@ impl RunningInvention {
             // now, made again on them as they stand when it lands.
             let (retained, _) = self.live.document_with_epoch();
             let presentation = PresentationChanges::between(retained.as_ref(), &validated.document);
+            let inline = retained
+                .as_ref()
+                .map(Invention::inline_layouts)
+                .unwrap_or_default();
+            let definitions = (self.definitions(), validated.definitions.clone());
             let queued = self
                 .prepare_plan(base, plan, document, None)
                 .map(|prepared| prepared.planned_at(authored))
-                .and_then(|prepared| self.queue_reload(prepared, presentation, time, ttl));
+                .and_then(|prepared| {
+                    let landing = (presentation, inline, definitions);
+                    self.queue_reload(prepared, landing, time, ttl)
+                });
             match queued {
                 Ok(id) => return Ok(self.status_of(id)),
                 Err(GraphCommandError::TopologyMoved) if attempt < RELOAD_ATTEMPTS => attempt += 1,
@@ -131,11 +143,19 @@ impl RunningInvention {
     /// Queues `prepared`, whose document, as it lands, takes the layout and
     /// names the retained document then has with `presentation` made on
     /// top: a module moved or named while it waits, and not moved or named
-    /// by the reload, keeps where it was moved and what it was called.
+    /// by the reload, keeps where it was moved and what it was called, and
+    /// so does a module moved inside an inline development (`inline`, the
+    /// layouts the reload was made against, says which the reload moves).
+    /// Its development definitions (`loaded`, made against `before`) are
+    /// adopted as it lands, an arrangement made meanwhile kept the same way.
     fn queue_reload(
         &self,
         prepared: PreparedCommit,
-        presentation: PresentationChanges,
+        (presentation, inline, (before, loaded)): (
+            PresentationChanges,
+            InlineLayouts,
+            (DevelopmentDefinitions, DevelopmentDefinitions),
+        ),
         time: EditTime<'_>,
         ttl: Option<u64>,
     ) -> Result<RequestId, GraphCommandError> {
@@ -162,8 +182,15 @@ impl RunningInvention {
             if let Some(mut document) = document {
                 if let Some(current) = &state.document {
                     document.carry_presentation(current, &presentation);
+                    document.carry_development_layouts(current, Some(&inline));
                 }
                 state.document = Some(document);
+                // Its definitions, as an untimed reload adopts them (the
+                // builds they make are the ones running: the reload was
+                // refused otherwise), each arrangement made meanwhile kept.
+                let landed = (**loaded.loaded()).clone();
+                let landed = landed.landing(before.loaded(), state.developments.loaded());
+                state.developments = DevelopmentDefinitions::of(Arc::new(landed));
             }
             // The graph is built under the reload's lock once it lands.
             #[cfg(not(target_arch = "wasm32"))]

@@ -57,9 +57,17 @@ impl RunningInvention {
         path: &[String],
         revision: crate::rpc::RuntimeRevision,
     ) -> Result<crate::rpc::DevelopmentSnapshot, crate::RpcError> {
-        let (declared, definition) = self.development_definitions.development(path)?;
-        let saved_in = self.development_definitions.saved_in(path)?;
+        let definitions = self.definitions();
+        let (declared, definition) = definitions.development(path)?;
+        let saved_in = definitions.saved_in(path)?;
         crate::rpc::DevelopmentSnapshot::bounded(revision, path, declared, saved_in, definition)
+    }
+
+    /// The development definitions the running piece holds (see
+    /// [`RuntimeState::developments`](crate::invention::state::RuntimeState)),
+    /// shared, not copied.
+    pub(crate) fn definitions(&self) -> crate::invention::reload::DevelopmentDefinitions {
+        self.state.lock().unwrap().developments.clone()
     }
 
     /// Adopts the development definitions a reload's validation build
@@ -70,6 +78,6 @@ impl RunningInvention {
         &mut self,
         definitions: crate::invention::reload::DevelopmentDefinitions,
     ) {
-        self.development_definitions = definitions;
+        self.state.lock().unwrap().developments = definitions;
     }
 }

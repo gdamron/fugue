@@ -80,11 +80,6 @@ impl LiveGraph {
         drop(self.lock());
     }
 
-    /// Whether a timed edit or reload is waiting to land.
-    pub(crate) fn timed_waiting(&self) -> bool {
-        self.lock().timed_waiting()
-    }
-
     /// What adopts a landed timed edit from the reclaimer thread (see
     /// [`Adopter`]).
     pub(super) fn adopter(&self) -> Adopter {

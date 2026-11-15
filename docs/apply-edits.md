@@ -147,9 +147,9 @@ A move inside a development applies at once, in a batch of `move_modules` and
 `name_modules` alone: with a structural edit, or timed, the batch is refused
 `invalid_request` with nothing applied. One batch writes at most one
 development file, so it stays all or nothing; a second is refused
-`invalid_request`. While a timed edit batch or timed reload waits to land, a
-move inside a development is refused `invalid_request`; make it once the
-timed change has landed.
+`invalid_request`. A timed edit batch or timed reload that lands later
+keeps the move, unless the reload arranges that development itself; a timed
+reload's development definitions are adopted as it lands.
 
 Coordinates are numbers: an integer re-saves as a float (`120` becomes
 `120.0`), and every value round-trips exactly.

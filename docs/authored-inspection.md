@@ -107,9 +107,12 @@ same for one declared inline, by `path` or by catalog `ref`, and says which in
   reload, on the control thread. It never reads a file or the catalog again,
   so a development file edited on disk shows its change only after a reload,
   as the music does. Nothing on the audio thread is read or locked. A timed
-  reload adopts no definitions (it refuses one that would build a development
-  differently), so a timed reload that changes only a development's layout,
-  names or how it is declared shows here after the next untimed reload.
+  reload's definitions are adopted as it lands, as an untimed reload's are
+  as it applies; a timed reload that would build a development differently
+  is refused, so what it changes is a development's layout, names or how it
+  is declared. A move made inside a development while a timed reload waits
+  is kept when it lands, unless the reload arranges that development itself,
+  when the reload's arrangement is what lands.
 - **Saved in.** `saved_in` says where a move inside it (`move_modules`
   with a `development` path, see `docs/apply-edits.md`) is saved:
   `{"kind":"piece"}` inline in the loaded document, `{"kind":"file","path":…}`

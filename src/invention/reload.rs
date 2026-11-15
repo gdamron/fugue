@@ -261,8 +261,7 @@ impl RunningInvention {
         &self,
         validated: &ValidatedDocument,
     ) -> Result<ReloadPlan, ReloadError> {
-        let changed_types =
-            changed_development_types(&self.development_definitions, &validated.definitions);
+        let changed_types = changed_development_types(&self.definitions(), &validated.definitions);
         // The modules and the lock they were built under, read together.
         #[cfg(not(target_arch = "wasm32"))]
         let (current_modules, current_connections, written, built_under) = {
