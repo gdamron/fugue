@@ -24,10 +24,13 @@
 //! - the edit is the agent's: it parses from the wire and repeats to the same
 //!   result (`inline`, `wire`).
 
+mod audio;
 mod file;
 mod harness;
 mod inline;
 mod package;
+mod refusals;
+mod wire;
 
 pub use harness::*;
 pub use serde_json::{json, Value};
