@@ -27,6 +27,7 @@ pub mod format;
 pub mod graph;
 pub mod handles;
 pub mod layout;
+pub(crate) mod layout_overrides;
 pub(crate) mod load_warnings;
 mod main_clock;
 #[cfg(test)]

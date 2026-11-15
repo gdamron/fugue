@@ -117,12 +117,17 @@ same for one declared inline, by `path` or by catalog `ref`, and says which in
   with a `development` path, see `docs/apply-edits.md`) is saved:
   `{"kind":"piece"}` inline in the loaded document, `{"kind":"file","path":…}`
   in that development file on the daemon's host, which every piece using it
-  shares, or `{"kind":"read_only","reason":…}` never, saying why (an installed
-  package, the package cache, a frozen lockfile). A file that simply cannot be
-  written is not reported here; a move is refused with the reason when made.
-  A move shows here at once, without a reload.
+  shares, `{"kind":"override"}` in the loaded document's own layout as
+  overrides on a development the piece borrows (an installed package, the
+  package cache, a frozen lockfile), whose original is never written. A file
+  that simply cannot be written is not reported here; a move is refused with
+  the reason when made. A move shows here at once, without a reload.
+- **Overrides.** Inside a borrowed development, `definition.layout` is the
+  author's arrangement with the piece's overrides on top. `overrides` lists
+  them by module id (absent when the arrangement is the original).
 - **Bound.** The answer, `Development { development: {revision, path,
-  declared, saved_in, definition} }`, is at most 64 KiB of compact JSON
+  declared, saved_in, definition, overrides?} }`, is at most 64 KiB of
+  compact JSON
   (`MAX_DEVELOPMENT_BYTES`); a larger one is `ResponseTooLarge`, never cut.
 - **Revision.** It carries the revision the host reports with it and moves
   none. With nothing loaded it is `AudioThreadStopped`, as other reads are.

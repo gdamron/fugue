@@ -60,6 +60,8 @@ fn breaks_the_line(c: char) -> bool {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PresentationChanges {
     pub(crate) layout: Vec<LayoutChange>,
+    /// The layout's changes to its overrides, by key.
+    pub(crate) overrides: Vec<LayoutChange>,
     pub(crate) names: Vec<NameChange>,
 }
 
@@ -76,6 +78,7 @@ impl PresentationChanges {
             .collect();
         Self {
             layout: document.layout.changes_from(base_layout),
+            overrides: document.layout.override_changes_from(base_layout),
             names,
         }
     }
@@ -99,7 +102,7 @@ impl Invention {
         current: &Invention,
         changes: &PresentationChanges,
     ) {
-        self.carry_layout(&current.layout, &changes.layout);
+        self.carry_layout(&current.layout, &changes.layout, &changes.overrides);
         for spec in &mut self.modules {
             spec.name = name_of(current, &spec.id).map(str::to_string);
         }

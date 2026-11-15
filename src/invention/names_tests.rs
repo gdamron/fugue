@@ -114,6 +114,7 @@ fn carrying_keeps_names_given_since_and_makes_the_changes_on_top() {
     batch.modules[1].name = Some("Saw".into());
     let changes = PresentationChanges {
         layout: Vec::new(),
+        overrides: Vec::new(),
         names: vec![("osc".into(), Some("Saw".into()))],
     };
     let mut current = Invention::from_json(NAMED).unwrap();

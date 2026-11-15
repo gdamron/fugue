@@ -8,6 +8,8 @@
 //!
 //! An older core reads a document with a layout and plays it, ignoring the
 //! field as it ignores any unknown one; saving there drops the arrangement.
+//! The same holds for a member of the layout an older core does not know,
+//! such as `overrides`: a layout accepts unknown members.
 //! That costs nothing audible, so a layout does not raise the document's
 //! `minimum_core_version`: refusing to play a piece over where its boxes sit
 //! would cost the composer more than the arrangement is worth.
@@ -34,12 +36,18 @@ pub struct Layout {
     /// document is deterministic.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub modules: BTreeMap<String, Position>,
+    /// Where the piece moved modules inside developments it borrows (from
+    /// an installed package), layered on the author's arrangement, by the
+    /// path into the development and the module id: `"voice/filter"`. Only
+    /// the piece's own layout holds them (see [`super::layout_overrides`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub overrides: BTreeMap<String, Position>,
 }
 
 impl Layout {
     /// Whether the layout places nothing; such a layout is not saved.
     pub fn is_empty(&self) -> bool {
-        self.modules.is_empty()
+        self.modules.is_empty() && self.overrides.is_empty()
     }
 
     /// What turns `base` into this layout: each module this one places
@@ -47,13 +55,40 @@ impl Layout {
     /// not, unplaced. A whole document's layout made into the changes it
     /// makes, for [`Invention::carry_layout`].
     pub(crate) fn changes_from(&self, base: &Layout) -> Vec<LayoutChange> {
-        let placed = (self.modules.iter())
-            .filter(|(id, position)| base.modules.get(*id) != Some(position))
-            .map(|(id, position)| (id.clone(), Some(*position)));
-        let unplaced = (base.modules.keys())
-            .filter(|id| !self.modules.contains_key(*id))
-            .map(|id| (id.clone(), None));
-        placed.chain(unplaced).collect()
+        changes(&self.modules, &base.modules)
+    }
+
+    /// What turns `base`'s overrides into this layout's, as
+    /// [`Self::changes_from`] does for module positions, by override key.
+    pub(crate) fn override_changes_from(&self, base: &Layout) -> Vec<LayoutChange> {
+        changes(&self.overrides, &base.overrides)
+    }
+}
+
+/// Each entry `now` has that `base` does not (or has elsewhere), and each
+/// `base` has that `now` does not, removed.
+fn changes(
+    now: &BTreeMap<String, Position>,
+    base: &BTreeMap<String, Position>,
+) -> Vec<LayoutChange> {
+    let placed = (now.iter())
+        .filter(|(id, position)| base.get(*id) != Some(position))
+        .map(|(id, position)| (id.clone(), Some(*position)));
+    let unplaced = (base.keys())
+        .filter(|id| !now.contains_key(*id))
+        .map(|id| (id.clone(), None));
+    placed.chain(unplaced).collect()
+}
+
+impl Layout {
+    /// Makes `changes` in `entries`, in order.
+    fn apply(entries: &mut BTreeMap<String, Position>, changes: &[LayoutChange]) {
+        for (id, position) in changes {
+            match position {
+                Some(position) => entries.insert(id.clone(), *position),
+                None => entries.remove(id),
+            };
+        }
     }
 }
 
@@ -85,14 +120,17 @@ impl Invention {
     /// modules this document has. A batch's document was edited from the
     /// layout as the batch read it; a module moved since (while a timed
     /// batch waited, say) keeps where it was moved.
-    pub(crate) fn carry_layout(&mut self, current: &Layout, changes: &[LayoutChange]) {
+    /// Overrides are carried the same way, by key, with `overrides` the
+    /// batch's changes to them.
+    pub(crate) fn carry_layout(
+        &mut self,
+        current: &Layout,
+        changes: &[LayoutChange],
+        overrides: &[LayoutChange],
+    ) {
         let mut layout = current.clone();
-        for (id, position) in changes {
-            match position {
-                Some(position) => layout.modules.insert(id.clone(), *position),
-                None => layout.modules.remove(id),
-            };
-        }
+        Layout::apply(&mut layout.modules, changes);
+        Layout::apply(&mut layout.overrides, overrides);
         let modules = &self.modules;
         layout
             .modules
