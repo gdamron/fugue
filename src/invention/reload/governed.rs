@@ -27,6 +27,19 @@ const PACKAGE_LOADERS: [&str; 4] = [
     "sample_slicer",
 ];
 
+/// What makes a development instance hold package content: the
+/// [`PACKAGE_LOADERS`], and a WASM module, which keeps the component its
+/// module package held as it was built (the lockfile does not verify that,
+/// so a top-level one is not rebuilt, but a development instance was before
+/// it was told apart from one that loads nothing).
+pub(super) const DEVELOPMENT_LOADERS: [&str; 5] = [
+    "sample_player",
+    "sample_kit",
+    "sample_instrument",
+    "sample_slicer",
+    "wasm_module",
+];
+
 /// Under another policy than the graph was built under (`built_under`:
 /// another lockfile or none), a module that may hold package content is
 /// rebuilt rather than kept: what it holds was loaded under that policy, and
@@ -36,8 +49,9 @@ const PACKAGE_LOADERS: [&str; 4] = [
 /// package ref to a loader unchanged, so its config does not change with the
 /// policy. Everything else keeps playing, development instances that load
 /// nothing included: their definitions were read again under the
-/// candidate's lock, and an unchanged one built what is running. Runs as a timed or untimed reload
-/// plans, under the candidate's lock ([`govern_here`]).
+/// candidate's lock, and an unchanged one built what is running. Runs as a
+/// timed or untimed reload plans, under the candidate's lock
+/// ([`govern_here`]).
 pub(super) fn rebuild_under_another_policy(
     plan: &mut ReloadPlan,
     validated: &ValidatedDocument,
@@ -49,7 +63,7 @@ pub(super) fn rebuild_under_another_policy(
     let holding = validated
         .definitions
         .loaded
-        .holding_packages(&PACKAGE_LOADERS);
+        .holding_packages(&DEVELOPMENT_LOADERS);
     let holds_packages =
         |module_type: &str| PACKAGE_LOADERS.contains(&module_type) || holding.contains(module_type);
     let rebuilt: Vec<_> = (validated.resolved.modules.iter())

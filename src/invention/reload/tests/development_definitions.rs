@@ -290,3 +290,20 @@ fn a_development_whose_scope_a_repeated_alias_left_unloaded_may_hold_packages() 
         .holding_packages(&["sample_kit"])
         .is_empty());
 }
+
+#[test]
+fn a_development_playing_a_wasm_module_counts_as_holding_package_content() {
+    let document = doc(r#"{
+            "version": "1.0.0",
+            "developments": [ { "name": "wrapped", "definition": {
+                "modules": [ { "id": "w", "type": "wasm_module" } ], "connections": [],
+                "outputs": [ { "name": "audio", "from": "w", "from_port": "audio" } ]
+            } } ],
+            "modules": [ { "id": "dac", "type": "dac" } ],
+            "connections": []
+        }"#);
+    let definitions = DevelopmentDefinitions::resolve(&document).unwrap();
+    let loaders = crate::invention::reload::governed::DEVELOPMENT_LOADERS;
+    let found = definitions.loaded.holding_packages(&loaders);
+    assert_eq!(found, ["wrapped".to_string()].into_iter().collect());
+}
