@@ -416,8 +416,11 @@ pub enum EditFailureReason {
     /// `move_modules` names a development the piece does not declare.
     UnknownDevelopment,
     /// `move_modules` names a development that is never written here: one
-    /// from an installed package, or (not yet arranged) a development file.
+    /// from an installed package, or a file a frozen lockfile locks.
     ReadOnlyDevelopment,
+    /// `move_modules` names a development file that could not be written,
+    /// or that changed on disk since the piece loaded it.
+    DevelopmentNotWritten,
 }
 
 /// The structured detail of a refused edit, carried on

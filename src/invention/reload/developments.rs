@@ -106,9 +106,12 @@ impl DevelopmentHome {
         let inline = |chain: &[String]| [chain, &[name.to_string()]].concat();
         match (declared, self) {
             (DevelopmentDeclaration::Ref, _) | (_, Self::Package) => Self::Package,
+            // The file itself, however the declaration spells its path: two
+            // spellings (or a link) of one file are one home, and a write
+            // replaces the file a link points to, not the link.
             (DevelopmentDeclaration::Path, _) => match &definition.source_path {
                 Some(path) => Self::File {
-                    path: path.clone(),
+                    path: std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()),
                     within: Vec::new(),
                 },
                 None => Self::Package,
@@ -213,6 +216,14 @@ impl LoadedDevelopments {
             scope.insert(spec.name.clone(), loaded);
         }
         Ok(Self(scope))
+    }
+
+    /// The first development loaded at `home`, searching nested scopes.
+    pub(crate) fn at_home(&self, home: &DevelopmentHome) -> Option<&LoadedDevelopment> {
+        self.0.values().find_map(|entry| match &entry.home == home {
+            true => Some(entry),
+            false => entry.scope.at_home(home),
+        })
     }
 
     /// Gives the definition written down at `home` the layout `layout`, in

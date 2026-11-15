@@ -112,10 +112,12 @@ same for one declared inline, by `path` or by catalog `ref`, and says which in
   names or how it is declared shows here after the next untimed reload.
 - **Saved in.** `saved_in` says where a move inside it (`move_modules`
   with a `development` path, see `docs/apply-edits.md`) is saved:
-  `{"kind":"piece"}` inline in the loaded document, or
-  `{"kind":"read_only","reason":…}` never, saying why (an installed package;
-  a development file, not arranged yet). A move shows here at once, without a
-  reload.
+  `{"kind":"piece"}` inline in the loaded document, `{"kind":"file","path":…}`
+  in that development file on the daemon's host, which every piece using it
+  shares, or `{"kind":"read_only","reason":…}` never, saying why (an installed
+  package, the package cache, a frozen lockfile). A file that simply cannot be
+  written is not reported here; a move is refused with the reason when made.
+  A move shows here at once, without a reload.
 - **Bound.** The answer, `Development { development: {revision, path,
   declared, saved_in, definition} }`, is at most 64 KiB of compact JSON
   (`MAX_DEVELOPMENT_BYTES`); a larger one is `ResponseTooLarge`, never cut.

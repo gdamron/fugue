@@ -1,12 +1,12 @@
 //! `move_modules` inside a development: the arrangement saved in the
-//! development's own document, the piece's for an inline definition, and
-//! never in an installed package's. A development file is not arranged
-//! yet. Presentation only, as a
+//! development's own document, the piece's (for an inline definition) or
+//! its file, and never in an installed package's. Presentation only, as a
 //! move of the piece's own modules: nothing is built, published or heard,
 //! and it all runs on the calling control thread.
 
 use std::sync::Arc;
 
+use crate::invention::development_file::{self, NotWritten};
 use crate::invention::layout::{Layout, Position};
 use crate::invention::reload::{DevelopmentHome, LoadedDevelopments};
 use crate::invention::runtime::RunningInvention;
@@ -19,6 +19,8 @@ use crate::Invention;
 /// The moves a batch makes inside one development, with what it starts
 /// from: its layout as loaded.
 pub(super) struct Arrangement {
+    /// The batch index of the first edit that moves inside it.
+    index: usize,
     home: DevelopmentHome,
     base: Layout,
     moves: Vec<(String, Option<Position>)>,
@@ -68,8 +70,11 @@ fn refused(index: usize, reason: EditFailureReason, message: String) -> RpcError
 pub(crate) fn saved_in(home: &DevelopmentHome) -> DevelopmentSavedIn {
     match home {
         DevelopmentHome::Piece(_) => DevelopmentSavedIn::Piece,
-        DevelopmentHome::File { .. } => DevelopmentSavedIn::ReadOnly {
-            reason: "its development file is not arranged yet".to_string(),
+        DevelopmentHome::File { path, .. } => match development_file::never_written(path) {
+            Some(reason) => DevelopmentSavedIn::ReadOnly { reason },
+            None => DevelopmentSavedIn::File {
+                path: path.display().to_string(),
+            },
         },
         DevelopmentHome::Package => DevelopmentSavedIn::ReadOnly {
             reason: "it comes from an installed package".to_string(),
@@ -80,7 +85,8 @@ pub(crate) fn saved_in(home: &DevelopmentHome) -> DevelopmentSavedIn {
 impl RunningInvention {
     /// The development moves in `edits`, one arrangement per development,
     /// each checked: the development exists and is saved somewhere it may
-    /// be written, and each id is one of its own modules.
+    /// be written, and each id is one of its own modules. At most one file
+    /// is written per batch.
     pub(super) fn arrangements(
         &self,
         edits: &[StructuralEdit],
@@ -119,6 +125,7 @@ impl RunningInvention {
             match found.iter_mut().find(|known| known.home == entry.home) {
                 Some(known) => known.moves.extend(moves),
                 None => found.push(Arrangement {
+                    index,
                     home: entry.home.clone(),
                     base: entry.definition.layout.clone(),
                     moves: moves.collect(),
@@ -132,17 +139,30 @@ impl RunningInvention {
                  development once it has; nothing was applied",
             ));
         }
+        let files = found
+            .iter()
+            .filter(|a| matches!(a.home, DevelopmentHome::File { .. }));
+        if files.count() > 1 {
+            return Err(RpcError::new(
+                RpcErrorCode::InvalidRequest,
+                "one apply_edits batch arranges developments in at most one file; \
+                 nothing was applied",
+            ));
+        }
         Ok(found)
     }
 
-    /// Makes `arranged` in `document` (the retained one, edited), returning
-    /// each development's new layout.
+    /// Makes `arranged` in `document` (the retained one, edited) and in the
+    /// one file it writes, if any, returning each development's new layout.
+    /// The file is written last: on any refusal nothing changed.
     pub(super) fn arrange(
         &self,
         document: &mut Invention,
         arranged: &[Arrangement],
     ) -> Result<Vec<(DevelopmentHome, Layout)>, RpcError> {
+        let loaded = self.development_definitions.loaded();
         let mut layouts = Vec::with_capacity(arranged.len());
+        let mut file = None;
         for arrangement in arranged {
             let layout = match &arrangement.home {
                 DevelopmentHome::Piece(chain) => {
@@ -156,11 +176,34 @@ impl RunningInvention {
                     }
                     layout
                 }
-                DevelopmentHome::File { .. } | DevelopmentHome::Package => {
-                    unreachable!("refused as read-only")
+                DevelopmentHome::File { path, within } => {
+                    let layout = arrangement.layout(None);
+                    file = Some((arrangement.index, path, within, layout.clone()));
+                    layout
                 }
+                DevelopmentHome::Package => unreachable!("refused as read-only"),
             };
             layouts.push((arrangement.home.clone(), layout));
+        }
+        if let Some((index, path, within, layout)) = file {
+            let root = DevelopmentHome::File {
+                path: path.clone(),
+                within: Vec::new(),
+            };
+            let own = loaded.at_home(&root).map(|entry| &entry.definition);
+            let own = own.ok_or_else(|| RpcError::new(RpcErrorCode::Internal, "no file"))?;
+            development_file::write_layout(path, within, own, &layout).map_err(
+                |why| match why {
+                    NotWritten::ReadOnly(message) => {
+                        refused(index, EditFailureReason::ReadOnlyDevelopment, message)
+                    }
+                    NotWritten::Failed(message) => refused(
+                        index,
+                        EditFailureReason::DevelopmentNotWritten,
+                        format!("{message}; nothing was applied"),
+                    ),
+                },
+            )?;
         }
         Ok(layouts)
     }

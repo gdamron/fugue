@@ -1,13 +1,11 @@
 //! Arranging a development's inside as the piece goes on: refused while a
-//! timed edit waits, and in a development file, not arranged yet.
+//! timed edit waits, and one file reached by two spellings or a link.
 
 use serde_json::{json, Value};
 
 use super::*;
 use crate::invention::layout::Position;
-use crate::rpc::{
-    DevelopmentSavedIn, EditFailureReason, RpcErrorCode, RuntimeRevision, StructuralEdit,
-};
+use crate::rpc::{RpcErrorCode, RuntimeRevision, StructuralEdit};
 
 fn names(path: &[&str]) -> Vec<String> {
     path.iter().map(|name| name.to_string()).collect()
@@ -80,28 +78,49 @@ fn a_move_inside_waits_for_no_timed_reload_it_is_refused() {
     assert_eq!(layout_of(&running, &["voice"])["osc"], at(3.0));
 }
 
+#[cfg(unix)]
 #[test]
-fn a_development_file_is_not_arranged_yet() {
+fn one_file_under_two_spellings_and_a_link_is_one_development() {
     let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("voice.json");
-    let written = serde_json::to_vec_pretty(&voice()).unwrap();
-    std::fs::write(&file, &written).unwrap();
+    let real = dir.path().join("dev").join("voice.json");
+    std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+    std::fs::write(&real, serde_json::to_vec_pretty(&voice()).unwrap()).unwrap();
+    let link = dir.path().join("linked.json");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let declared = json!([
+        { "name": "voice", "path": "dev/voice.json" },
+        { "name": "again", "path": "dev/../dev/voice.json" },
+        { "name": "linked", "path": "linked.json" }
+    ]);
     let path = dir.path().join("piece.json");
-    let declared = json!([{ "name": "voice", "path": "voice.json" }]);
     std::fs::write(&path, piece(declared).to_string()).unwrap();
     let document = Invention::from_file(&path.to_string_lossy()).unwrap();
     let (runtime, _) = InventionBuilder::new(48_000).build(document).unwrap();
     let mut running = Settled::start(runtime);
+
+    running
+        .apply_edits(&[move_inside(&["linked"], "osc", 4.0)])
+        .unwrap();
+
+    for name in ["voice", "again", "linked"] {
+        assert_eq!(layout_of(&running, &[name])["osc"], at(4.0), "{name}");
+    }
+    assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+    let written = Invention::from_file(&real.to_string_lossy()).unwrap();
+    assert_eq!(written.layout.modules["osc"], at(4.0));
     let revision = RuntimeRevision {
         session_id: "session".into(),
         revision: 1,
     };
-    let read = running.development(&names(&["voice"]), revision).unwrap();
-    assert!(matches!(read.saved_in, DevelopmentSavedIn::ReadOnly { .. }));
-
-    let refused = running.apply_edits(&[move_inside(&["voice"], "osc", 4.0)]);
-    let failure = refused.unwrap_err().edit.expect("an edit refusal");
-    assert_eq!(failure.reason, EditFailureReason::ReadOnlyDevelopment);
-    assert_eq!(std::fs::read(&file).unwrap(), written);
-    assert!(layout_of(&running, &["voice"]).is_empty());
+    let read = running.development(&names(&["again"]), revision).unwrap();
+    let canonical = std::fs::canonicalize(&real).unwrap();
+    let file = crate::rpc::DevelopmentSavedIn::File {
+        path: canonical.display().to_string(),
+    };
+    assert_eq!(read.saved_in, file);
+    // A second move through another spelling finds the file as it left it.
+    running
+        .apply_edits(&[move_inside(&["again"], "amp", 5.0)])
+        .unwrap();
+    assert_eq!(layout_of(&running, &["voice"])["amp"], at(5.0));
 }
