@@ -328,7 +328,7 @@ impl LoadedDevelopments {
     /// count as one: it errs toward including a name.
     pub(crate) fn holding_packages(&self, loaders: &[&str]) -> HashSet<String> {
         let mut declared = Vec::new();
-        self.named(&mut Vec::new(), &mut declared);
+        self.named(&mut Vec::new(), &HashSet::new(), &mut declared);
         let mut found: HashSet<String> = (declared.iter())
             .filter(|(_, entry, unloaded)| *unloaded || !entry.definition.assets.is_empty())
             .map(|(name, ..)| name.to_string())
@@ -351,21 +351,26 @@ impl LoadedDevelopments {
     }
 
     /// Every loaded development with its name, nested ones too, and whether
-    /// what its definition declares went unloaded: an alias declared again
-    /// inside a development of that name has its scope left empty (see
-    /// `load_within`), and the builder then loads those declarations itself.
+    /// its definition declares a development the builder loads on its own:
+    /// an alias declared again inside a development of that name has its
+    /// scope left empty (see `load_within`), and the builder then loads what
+    /// it declares, unless the development inherits one under that name.
     fn named<'a>(
         &'a self,
         enclosing: &mut Vec<&'a str>,
+        inherited: &HashSet<&'a str>,
         into: &mut Vec<(&'a str, &'a LoadedDevelopment, bool)>,
     ) {
+        let mut visible = inherited.clone();
         for (name, entry) in &self.0 {
-            let unloaded =
-                enclosing.contains(&name.as_str()) && !entry.definition.developments.is_empty();
+            let unloaded = enclosing.contains(&name.as_str())
+                && (entry.definition.developments.iter())
+                    .any(|spec| !visible.contains(spec.name.as_str()));
             into.push((name.as_str(), entry, unloaded));
             enclosing.push(name.as_str());
-            entry.scope.named(enclosing, into);
+            entry.scope.named(enclosing, &visible, into);
             enclosing.pop();
+            visible.insert(name.as_str());
         }
     }
 

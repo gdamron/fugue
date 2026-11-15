@@ -269,4 +269,24 @@ fn a_development_whose_scope_a_repeated_alias_left_unloaded_may_hold_packages() 
 
     let found = definitions.loaded.holding_packages(&["sample_kit"]);
     assert_eq!(found, ["a".to_string()].into_iter().collect());
+
+    // What that inner `a` declares is inherited (`b`, declared before the
+    // outer `a`), so the builder loads nothing of its own there.
+    let document = doc(&format!(
+        r#"{{
+            "version": "1.0.0",
+            "developments": [
+                {{ "name": "b", "definition": {plain} }},
+                {{ "name": "a", "definition": {} }}
+            ],
+            "modules": [ {{ "id": "dac", "type": "dac" }} ],
+            "connections": []
+        }}"#,
+        holding("a", &holding("b", plain)),
+    ));
+    let definitions = DevelopmentDefinitions::resolve(&document).unwrap();
+    assert!(definitions
+        .loaded
+        .holding_packages(&["sample_kit"])
+        .is_empty());
 }
