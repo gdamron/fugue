@@ -122,6 +122,7 @@ impl RunningInvention {
             let mut document = document.clone();
             if let Some(current) = &state.document {
                 document.carry_presentation(current, &batch.candidate.presentation);
+                document.carry_development_layouts(current, None);
             }
             previous = state.document.replace(document);
             // A survivor's stored config takes the batch's writes to keys it

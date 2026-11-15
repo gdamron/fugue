@@ -95,7 +95,7 @@ impl LiveFacts {
             ports: running.module_ports.lock().unwrap().clone(),
             surfaces: running.control_surfaces.lock().unwrap().clone(),
             assets,
-            developments: running.development_definitions.loaded().clone(),
+            developments: running.definitions().loaded().clone(),
             described: HashMap::new(),
             authored,
             waiting,

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::invention::development_file::{self, NotWritten};
 use crate::invention::layout::{Layout, Position};
-use crate::invention::reload::{DevelopmentHome, LoadedDevelopments};
+use crate::invention::reload::{DevelopmentDefinitions, DevelopmentHome, LoadedDevelopments};
 use crate::invention::runtime::RunningInvention;
 use crate::rpc::{
     DevelopmentSavedIn, EditFailure, EditFailureReason, EditOp, RpcError, RpcErrorCode,
@@ -91,7 +91,8 @@ impl RunningInvention {
         &self,
         edits: &[StructuralEdit],
     ) -> Result<Vec<Arrangement>, RpcError> {
-        let loaded = self.development_definitions.loaded();
+        let definitions = self.definitions();
+        let loaded = definitions.loaded();
         let mut found: Vec<Arrangement> = Vec::new();
         for (index, edit) in edits.iter().enumerate() {
             let (Some(path), StructuralEdit::MoveModules { positions, .. }) =
@@ -132,13 +133,6 @@ impl RunningInvention {
                 }),
             }
         }
-        if !found.is_empty() && self.live.timed_waiting() {
-            return Err(RpcError::new(
-                RpcErrorCode::InvalidRequest,
-                "a timed edit or reload is waiting to land; arrange inside a \
-                 development once it has; nothing was applied",
-            ));
-        }
         let files = found
             .iter()
             .filter(|a| matches!(a.home, DevelopmentHome::File { .. }));
@@ -151,25 +145,28 @@ impl RunningInvention {
         }
         Ok(found)
     }
+}
 
-    /// Makes `arranged` in `document` (the retained one, edited) and in the
-    /// one file it writes, if any, returning each development's new layout.
-    /// The file is written last: on any refusal nothing changed.
-    pub(super) fn arrange(
-        &self,
-        document: &mut Invention,
-        arranged: &[Arrangement],
-    ) -> Result<Vec<(DevelopmentHome, Layout)>, RpcError> {
-        let loaded = self.development_definitions.loaded();
+/// Makes `arranged` in `document` (the retained one, edited) and in the one
+/// file it writes, if any, then gives `definitions` (the running piece's)
+/// each development's new layout, so `get_development` shows it without a
+/// reload. The file is written last: on any refusal nothing changed.
+pub(super) fn arrange(
+    definitions: &mut DevelopmentDefinitions,
+    document: &mut Invention,
+    arranged: &[Arrangement],
+) -> Result<(), RpcError> {
+    {
+        let loaded = definitions.loaded();
         let mut layouts = Vec::with_capacity(arranged.len());
         let mut file = None;
         for arrangement in arranged {
             let layout = match &arrangement.home {
                 DevelopmentHome::Piece(chain) => {
                     let inline = crate::invention::reload::inline_definition_mut(document, chain);
-                    // Absent only when a timed reload replaced the document
-                    // without adopting its developments; the loaded one is
-                    // what is shown then.
+                    // Every reload, timed or not, adopts the definitions of
+                    // the document it retains, so this is found; were it
+                    // ever absent, the loaded layout is what is shown.
                     let layout = arrangement.layout(inline.as_deref().map(|d| &d.layout));
                     if let Some(definition) = inline {
                         definition.layout = layout.clone();
@@ -205,20 +202,14 @@ impl RunningInvention {
                 },
             )?;
         }
-        Ok(layouts)
-    }
-
-    /// The running piece's definitions with each of `layouts` given, so
-    /// `get_development` shows them without a reload.
-    pub(super) fn adopt_layouts(&mut self, layouts: &[(DevelopmentHome, Layout)]) {
         if layouts.is_empty() {
-            return;
+            return Ok(());
         }
-        let mut loaded: LoadedDevelopments = (**self.development_definitions.loaded()).clone();
-        for (home, layout) in layouts {
+        let mut loaded: LoadedDevelopments = (**loaded).clone();
+        for (home, layout) in &layouts {
             loaded.arrange(home, layout);
         }
-        self.development_definitions =
-            crate::invention::reload::DevelopmentDefinitions::of(Arc::new(loaded));
+        *definitions = DevelopmentDefinitions::of(Arc::new(loaded));
     }
+    Ok(())
 }

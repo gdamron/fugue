@@ -54,9 +54,6 @@ pub struct InventionRuntime {
     /// The registry as it was before development factories were registered,
     /// kept so a reload can re-validate a new document from a clean slate.
     pub(crate) base_registry: ModuleRegistry,
-    /// Development definitions as loaded for this document, kept so a reload
-    /// can detect definitions that changed on disk.
-    pub(crate) development_definitions: crate::invention::reload::DevelopmentDefinitions,
     /// Sample rate for building new modules at runtime.
     pub(crate) sample_rate: u32,
     /// Shared runtime snapshot for orchestration and introspection.
@@ -174,7 +171,6 @@ impl InventionRuntime {
             control_surfaces,
             live,
             base_registry: self.base_registry,
-            development_definitions: self.development_definitions,
             sample_rate: self.sample_rate,
             state: self.state,
             module_ports,
@@ -251,7 +247,6 @@ pub struct RunningInvention {
     /// registry live edits build against (see [`Self::registry`]).
     pub(crate) live: LiveGraph,
     pub(crate) base_registry: ModuleRegistry,
-    pub(crate) development_definitions: crate::invention::reload::DevelopmentDefinitions,
     pub(crate) sample_rate: u32,
     pub(crate) state: Arc<Mutex<RuntimeState>>,
     pub(crate) module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,

@@ -233,6 +233,7 @@ impl InventionBuilder {
         let routing = self.build_routing(&invention, &modules)?;
 
         let mut state = self.build_runtime_state(&invention, document);
+        state.developments = development_definitions;
         state.load_warnings = warnings;
         let state = Arc::new(Mutex::new(state));
 
@@ -243,7 +244,6 @@ impl InventionBuilder {
             routing,
             registry: self.registry,
             base_registry,
-            development_definitions,
             sample_rate: self.sample_rate,
             state,
         };
@@ -295,6 +295,7 @@ impl InventionBuilder {
             authored_epoch: 0,
             authored_log: Default::default(),
             load_warnings: Vec::new(),
+            developments: Default::default(),
         }
     }
 

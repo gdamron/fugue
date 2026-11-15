@@ -117,6 +117,11 @@ pub struct RuntimeState {
     /// What building this graph's document set aside without refusing it,
     /// each naming the module it is in (see `load_warnings`).
     pub(crate) load_warnings: Vec<crate::invention::load_warnings::Warning>,
+    /// The development definitions as the running piece holds them: as
+    /// loaded or last reloaded (a timed reload's as it lands), with every
+    /// move made inside one since. Kept here, under the state's own lock on
+    /// the control side, so a timed reload adopts them as it lands.
+    pub(crate) developments: crate::invention::reload::DevelopmentDefinitions,
 }
 
 /// What each module's stored config does not show of the authored writes

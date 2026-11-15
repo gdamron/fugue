@@ -18,6 +18,11 @@ use serde::{Deserialize, Serialize};
 
 use super::format::Invention;
 
+/// The layouts of a document's inline developments, nested by name; see
+/// [`Invention::inline_layouts`].
+#[derive(Debug, Clone, Default)]
+pub(crate) struct InlineLayouts(Vec<(String, Layout, InlineLayouts)>);
+
 /// The arrangement of an invention's own top-level modules.
 ///
 /// In a document: `"layout": { "modules": { "osc": { "x": 120, "y": 40 } } }`.
@@ -93,6 +98,49 @@ impl Invention {
             .modules
             .retain(|id, _| modules.iter().any(|spec| &spec.id == id));
         self.layout = layout;
+    }
+
+    /// The layout of each inline development this document declares,
+    /// nested ones too, by name.
+    pub(crate) fn inline_layouts(&self) -> InlineLayouts {
+        InlineLayouts(
+            (self.developments.iter())
+                .filter_map(|spec| Some((spec.name.clone(), spec.definition.as_deref()?)))
+                .map(|(name, definition)| {
+                    (name, definition.layout.clone(), definition.inline_layouts())
+                })
+                .collect(),
+        )
+    }
+
+    /// Takes the layout of each inline development `current` (the retained
+    /// document as this one replaces it) declares under the same name,
+    /// nested ones too: a move made inside one while this document waited
+    /// to land. With `base`, the layouts of the document this one was made
+    /// against, a development whose layout this one changes keeps its own.
+    pub(crate) fn carry_development_layouts(
+        &mut self,
+        current: &Invention,
+        base: Option<&InlineLayouts>,
+    ) {
+        for spec in &mut self.developments {
+            let Some(definition) = spec.definition.as_deref_mut() else {
+                continue;
+            };
+            let same = (current.developments.iter()).find(|other| other.name == spec.name);
+            let Some(retained) = same.and_then(|other| other.definition.as_deref()) else {
+                continue;
+            };
+            let was = base.map(|base| base.0.iter().find(|(name, ..)| name == &spec.name));
+            match was {
+                Some(Some((_, layout, _))) if *layout != definition.layout => {}
+                Some(None) => {}
+                _ => definition.layout = retained.layout.clone(),
+            }
+            let empty = InlineLayouts::default();
+            let inner = was.map(|was| was.map_or(&empty, |(_, _, inner)| inner));
+            definition.carry_development_layouts(retained, inner);
+        }
     }
 
     /// Drops the layout entries that cannot place a module: one naming no
