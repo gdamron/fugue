@@ -247,17 +247,16 @@ impl RunningInvention {
             if let Some(document) = document {
                 previous = state.document.replace(document);
             }
+            // With the document they were loaded from, so a reader never
+            // sees one without the other.
+            if let Some(definitions) = definitions {
+                state.developments = definitions;
+            }
             #[cfg(not(target_arch = "wasm32"))]
             {
                 state.built_under = built_under;
             }
         })?;
-        // Definitions are read only by the next reload's plan, and reloads
-        // are serialized by `&mut self`, so they need not land under the
-        // publisher with the registry.
-        if let Some(definitions) = definitions {
-            self.adopt_definitions(definitions);
-        }
 
         let snapshot = self.snapshot();
         let mut kept = Vec::new();

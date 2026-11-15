@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::invention::development_file::{self, NotWritten};
+use crate::invention::development_file::{self, NotWritten, Staged};
 use crate::invention::layout::{Layout, Position};
 use crate::invention::reload::{DevelopmentDefinitions, DevelopmentHome, LoadedDevelopments};
 use crate::invention::runtime::RunningInvention;
@@ -27,6 +27,15 @@ pub(super) struct Arrangement {
 }
 
 impl Arrangement {
+    /// This arrangement, with its file and the chain inside it, when it is
+    /// saved in a development file.
+    fn in_file(&self) -> Option<(&Self, &std::path::PathBuf, &[String])> {
+        match &self.home {
+            DevelopmentHome::File { path, within } => Some((self, path, within)),
+            _ => None,
+        }
+    }
+
     /// `base` (by default its own) with its moves made, in batch order.
     fn layout(&self, base: Option<&Layout>) -> Layout {
         let mut layout = base.unwrap_or(&self.base).clone();
@@ -86,11 +95,9 @@ impl RunningInvention {
     /// The development moves in `edits`, one arrangement per development,
     /// each checked: the development exists and is saved somewhere it may
     /// be written, and each id is one of its own modules. At most one file
-    /// is written per batch.
-    pub(super) fn arrangements(
-        &self,
-        edits: &[StructuralEdit],
-    ) -> Result<Vec<Arrangement>, RpcError> {
+    /// is written per batch, and its new text is staged here, before any
+    /// lock is taken (see [`development_file::stage_layout`]).
+    pub(super) fn arrangements(&self, edits: &[StructuralEdit]) -> Result<Arranged, RpcError> {
         let definitions = self.definitions();
         let loaded = definitions.loaded();
         let mut found: Vec<Arrangement> = Vec::new();
@@ -139,77 +146,104 @@ impl RunningInvention {
         if files.count() > 1 {
             return Err(RpcError::new(
                 RpcErrorCode::InvalidRequest,
-                "one apply_edits batch arranges developments in at most one file; \
-                 nothing was applied",
+                "one apply_edits batch arranges at most one development saved in a \
+                 file; nothing was applied",
             ));
         }
-        Ok(found)
+        let staged = match found.iter().find_map(Arrangement::in_file) {
+            Some((arrangement, path, within)) => {
+                let root = DevelopmentHome::File {
+                    path: path.clone(),
+                    within: Vec::new(),
+                };
+                let own = loaded.at_home(&root).map(|entry| &entry.definition);
+                let own = own.ok_or_else(|| RpcError::new(RpcErrorCode::Internal, "no file"))?;
+                let layout = arrangement.layout(None);
+                let staged = development_file::stage_layout(path, within, own, &layout)
+                    .map_err(|why| not_written(arrangement.index, why))?;
+                Some((arrangement.index, staged))
+            }
+            None => None,
+        };
+        Ok(Arranged {
+            definitions,
+            found,
+            staged,
+        })
+    }
+}
+
+/// A batch's arrangements, with the definitions they were checked against
+/// and the one file's new text, staged.
+pub(super) struct Arranged {
+    definitions: DevelopmentDefinitions,
+    found: Vec<Arrangement>,
+    staged: Option<(usize, Staged)>,
+}
+
+impl Arranged {
+    /// Whether `definitions` (the running piece's, under the lock) are the
+    /// ones these arrangements were checked against: not, when a timed
+    /// reload landed as the lock was taken.
+    pub(super) fn checked_against(&self, definitions: &DevelopmentDefinitions) -> bool {
+        self.found.is_empty() || Arc::ptr_eq(definitions.loaded(), self.definitions.loaded())
+    }
+}
+
+/// The refusal of the file write a development move at `index` needs.
+fn not_written(index: usize, why: NotWritten) -> RpcError {
+    match why {
+        NotWritten::ReadOnly(message) => {
+            refused(index, EditFailureReason::ReadOnlyDevelopment, message)
+        }
+        NotWritten::Failed(message) => {
+            refused(index, EditFailureReason::DevelopmentNotWritten, message)
+        }
     }
 }
 
 /// Makes `arranged` in `document` (the retained one, edited) and in the one
 /// file it writes, if any, then gives `definitions` (the running piece's)
 /// each development's new layout, so `get_development` shows it without a
-/// reload. The file is written last: on any refusal nothing changed.
+/// reload. The caller has checked that `definitions` are still those the
+/// moves were checked against ([`Arranged::checked_against`]). The file is
+/// renamed into place last: on any refusal nothing changed, and the staged
+/// file is removed.
 pub(super) fn arrange(
     definitions: &mut DevelopmentDefinitions,
     document: &mut Invention,
-    arranged: &[Arrangement],
+    arranged: Arranged,
 ) -> Result<(), RpcError> {
-    {
-        let loaded = definitions.loaded();
-        let mut layouts = Vec::with_capacity(arranged.len());
-        let mut file = None;
-        for arrangement in arranged {
-            let layout = match &arrangement.home {
-                DevelopmentHome::Piece(chain) => {
-                    let inline = crate::invention::reload::inline_definition_mut(document, chain);
-                    // Every reload, timed or not, adopts the definitions of
-                    // the document it retains, so this is found; were it
-                    // ever absent, the loaded layout is what is shown.
-                    let layout = arrangement.layout(inline.as_deref().map(|d| &d.layout));
-                    if let Some(definition) = inline {
-                        definition.layout = layout.clone();
-                    }
-                    layout
-                }
-                DevelopmentHome::File { path, within } => {
-                    let layout = arrangement.layout(None);
-                    file = Some((arrangement.index, path, within, layout.clone()));
-                    layout
-                }
-                DevelopmentHome::Package => unreachable!("refused as read-only"),
-            };
-            layouts.push((arrangement.home.clone(), layout));
-        }
-        if let Some((index, path, within, layout)) = file {
-            let root = DevelopmentHome::File {
-                path: path.clone(),
-                within: Vec::new(),
-            };
-            let own = loaded.at_home(&root).map(|entry| &entry.definition);
-            let own = own.ok_or_else(|| RpcError::new(RpcErrorCode::Internal, "no file"))?;
-            development_file::write_layout(path, within, own, &layout).map_err(
-                |why| match why {
-                    NotWritten::ReadOnly(message) => {
-                        refused(index, EditFailureReason::ReadOnlyDevelopment, message)
-                    }
-                    NotWritten::Failed(message) => refused(
-                        index,
-                        EditFailureReason::DevelopmentNotWritten,
-                        format!("{message}; nothing was applied"),
-                    ),
-                },
-            )?;
-        }
-        if layouts.is_empty() {
-            return Ok(());
-        }
-        let mut loaded: LoadedDevelopments = (**loaded).clone();
-        for (home, layout) in &layouts {
-            loaded.arrange(home, layout);
-        }
-        *definitions = DevelopmentDefinitions::of(Arc::new(loaded));
+    let Arranged { found, staged, .. } = arranged;
+    if found.is_empty() {
+        return Ok(());
     }
+    let mut layouts = Vec::with_capacity(found.len());
+    for arrangement in &found {
+        let layout = match &arrangement.home {
+            DevelopmentHome::Piece(chain) => {
+                let inline = crate::invention::reload::inline_definition_mut(document, chain);
+                // The definitions are the retained document's own (checked
+                // above), so this is found; were it ever absent, the loaded
+                // layout is what is shown.
+                let layout = arrangement.layout(inline.as_deref().map(|d| &d.layout));
+                if let Some(definition) = inline {
+                    definition.layout = layout.clone();
+                }
+                layout
+            }
+            DevelopmentHome::File { .. } => arrangement.layout(None),
+            DevelopmentHome::Package => unreachable!("refused as read-only"),
+        };
+        layouts.push((arrangement.home.clone(), layout));
+    }
+    if let Some((index, staged)) = staged {
+        staged.place().map_err(|why| not_written(index, why))?;
+    }
+    let mut loaded: LoadedDevelopments = (**definitions.loaded()).clone();
+    for (home, layout) in &layouts {
+        loaded.arrange(home, layout);
+    }
+    *definitions = DevelopmentDefinitions::of(Arc::new(loaded));
     Ok(())
 }

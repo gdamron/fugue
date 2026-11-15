@@ -241,3 +241,123 @@ fn a_file_arranged_while_a_timed_reload_waits_keeps_the_move_and_takes_the_next(
     assert_eq!(written.layout.modules["osc"], at(3.0));
     assert_eq!(written.layout.modules["amp"], at(4.0));
 }
+
+#[test]
+fn a_move_made_once_a_timed_reload_landed_starts_from_what_it_brought() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("voice.json");
+    std::fs::write(&file, serde_json::to_vec_pretty(&voice()).unwrap()).unwrap();
+    let path = dir.path().join("piece.json");
+    let declared = json!([{ "name": "voice", "path": "voice.json" }]);
+    std::fs::write(&path, piece(declared.clone()).to_string()).unwrap();
+    let document = Invention::from_file(&path.to_string_lossy()).unwrap();
+    let (runtime, _) = InventionBuilder::new(48_000).build(document).unwrap();
+    let mut running = Settled::start(runtime);
+    // The file is arranged elsewhere, and a timed reload reads it again.
+    let mut arranged = voice();
+    arranged["layout"] = json!({ "modules": { "amp": { "x": 9.0, "y": 1.0 } } });
+    std::fs::write(&file, serde_json::to_vec_pretty(&arranged).unwrap()).unwrap();
+    let mut next = piece(declared);
+    next["developments"][0]["path"] = json!(file.to_string_lossy());
+    next["modules"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "id": "lfo", "type": "lfo" }));
+    let when = crate::rpc::EditWhen::AfterSamples { samples: 2048 };
+    let next = Invention::from_json(&next.to_string()).unwrap();
+    running.reload_at(next, &when, None).expect("queued");
+    // Landed on the audio thread, not yet adopted by anything.
+    running.pump.render(64);
+
+    running
+        .apply_edits(&[move_inside(&["voice"], "osc", 3.0)])
+        .unwrap();
+
+    let written = Invention::from_file(&file.to_string_lossy()).unwrap();
+    assert_eq!(
+        written.layout.modules["amp"],
+        at(9.0),
+        "the other arrangement"
+    );
+    assert_eq!(written.layout.modules["osc"], at(3.0), "the move");
+    let read = layout_of(&running, &["voice"]);
+    assert_eq!((read["amp"], read["osc"]), (at(9.0), at(3.0)));
+}
+
+#[test]
+fn a_timed_edit_batch_landing_keeps_a_nested_move_made_while_it_waits() {
+    let mut outer = voice();
+    outer["developments"] = json!([{ "name": "env", "definition": voice() }]);
+    let declared = json!([{ "name": "voice", "definition": outer }]);
+    let mut running = start(&piece(declared).to_string());
+    let lfo = StructuralEdit::AddModule {
+        name: None,
+        id: "lfo".into(),
+        module_type: "lfo".into(),
+        config: Value::Null,
+    };
+    let when = crate::rpc::EditWhen::AfterSamples { samples: 2048 };
+    running.apply_edits_at(&[lfo], &when, None).expect("queued");
+
+    running
+        .apply_edits(&[move_inside(&["voice", "env"], "osc", 3.0)])
+        .unwrap();
+    running.pump.render(64);
+    running.live.adopt_landed();
+
+    let document = running.document().unwrap();
+    assert!(
+        document.modules.iter().any(|spec| spec.id == "lfo"),
+        "landed"
+    );
+    let chain = names(&["voice", "env"]);
+    let mut retained = document.clone();
+    let inner = crate::invention::reload::inline_definition_mut(&mut retained, &chain).unwrap();
+    assert_eq!(inner.layout.modules["osc"], at(3.0));
+    assert_eq!(layout_of(&running, &["voice", "env"])["osc"], at(3.0));
+}
+
+#[test]
+fn a_batch_with_a_file_that_changed_on_disk_moves_nothing_inline_either() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("pad.json");
+    std::fs::write(&file, serde_json::to_vec_pretty(&voice()).unwrap()).unwrap();
+    let path = dir.path().join("piece.json");
+    let declared = json!([
+        { "name": "voice", "definition": voice() },
+        { "name": "pad", "path": "pad.json" }
+    ]);
+    std::fs::write(&path, piece(declared).to_string()).unwrap();
+    let document = Invention::from_file(&path.to_string_lossy()).unwrap();
+    let (runtime, _) = InventionBuilder::new(48_000).build(document).unwrap();
+    let mut running = Settled::start(runtime);
+    let changed = b"{ \"version\": \"1.0.0\", \"modules\": [], \"connections\": [] }";
+    std::fs::write(&file, changed).unwrap();
+
+    let refused = running.apply_edits(&[
+        move_inside(&["voice"], "osc", 3.0),
+        move_inside(&["pad"], "osc", 4.0),
+    ]);
+
+    assert!(refused.is_err());
+    assert_eq!(std::fs::read(&file).unwrap(), changed);
+    assert!(inline_layout(&running.document().unwrap()).is_empty());
+    assert!(layout_of(&running, &["voice"]).is_empty());
+    let leftovers = std::fs::read_dir(dir.path()).unwrap().count();
+    assert_eq!(leftovers, 2, "nothing staged is left beside the file");
+
+    // Staged, then refused under the lock by a move of no module: the file
+    // is as it was and nothing is left beside it.
+    let original = serde_json::to_vec_pretty(&voice()).unwrap();
+    std::fs::write(&file, &original).unwrap();
+    let nowhere = StructuralEdit::MoveModules {
+        development: None,
+        positions: [("nowhere".to_string(), Some(at(1.0)))]
+            .into_iter()
+            .collect(),
+    };
+    let refused = running.apply_edits(&[move_inside(&["pad"], "osc", 4.0), nowhere]);
+    assert!(refused.is_err());
+    assert_eq!(std::fs::read(&file).unwrap(), original);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+}

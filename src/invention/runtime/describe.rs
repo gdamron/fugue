@@ -69,15 +69,4 @@ impl RunningInvention {
     pub(crate) fn definitions(&self) -> crate::invention::reload::DevelopmentDefinitions {
         self.state.lock().unwrap().developments.clone()
     }
-
-    /// Adopts the development definitions a reload's validation build
-    /// loaded, for the next reload to compare against. The reload's registry
-    /// is adopted by its commit, under the publisher (see
-    /// [`crate::invention::publish::LiveGraph::commit_adopting`]).
-    pub(crate) fn adopt_definitions(
-        &mut self,
-        definitions: crate::invention::reload::DevelopmentDefinitions,
-    ) {
-        self.state.lock().unwrap().developments = definitions;
-    }
 }

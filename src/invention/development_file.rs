@@ -6,8 +6,9 @@
 //! file's text; every other byte stays as it was. The file is refused when
 //! it is never written here (in the package cache, or locked by a frozen
 //! lockfile), cannot be written, or no longer holds what the piece loaded.
-//! The new text replaces the old in one rename, so a reader never sees half
-//! of it. All of it runs on the calling control thread.
+//! The new text is staged beside the file with no lock held, then replaces
+//! the old in one rename, so a reader never sees half of it. All of it runs
+//! on the calling control thread.
 
 use std::fs;
 use std::io::Write;
@@ -53,23 +54,39 @@ pub(crate) fn never_written(path: &Path) -> Option<String> {
     None
 }
 
-/// Writes `layout` as the layout of the definition `within` names (each
-/// name an inline declaration inside the one before it; none, the file's
-/// own) in the development file at `path`. `loaded` is the file's own
-/// definition as the piece loaded it: the file must still hold exactly it.
+/// Writes `layout` as the layout of the definition `within` names in the
+/// development file at `path`, staging and then placing it at once (see
+/// [`stage_layout`]).
+#[cfg(test)]
 pub(crate) fn write_layout(
     path: &Path,
     within: &[String],
     loaded: &Invention,
     layout: &Layout,
 ) -> Result<(), NotWritten> {
+    stage_layout(path, within, loaded, layout)?.place()
+}
+
+/// Stages `layout` as the layout of the definition `within` names (each
+/// name an inline declaration inside the one before it; none, the file's
+/// own) in the development file at `path`: the new text is written and
+/// synced beside the file, ready for [`Staged::place`] to rename over it.
+/// `loaded` is the file's own definition as the piece loaded it: the file
+/// must still hold exactly it. Nothing here holds a lock, so the slow part
+/// of a write (the sync) delays no other control-side writer.
+pub(crate) fn stage_layout(
+    path: &Path,
+    within: &[String],
+    loaded: &Invention,
+    layout: &Layout,
+) -> Result<Staged, NotWritten> {
     let shown = path.display();
     if let Some(reason) = never_written(path) {
         return Err(NotWritten::ReadOnly(format!(
             "the development file '{shown}' is never written here: {reason}"
         )));
     }
-    let failed = |why: String| NotWritten::Failed(format!("the development file '{shown}' {why}"));
+    let failed = |why: String| failed(path, why);
     // Opened for writing, not truncated: a file that refuses writes is
     // refused before anything is made beside it.
     fs::OpenOptions::new()
@@ -78,15 +95,12 @@ pub(crate) fn write_layout(
         .map_err(|error| failed(format!("cannot be written: {error}")))?;
     let text =
         fs::read_to_string(path).map_err(|error| failed(format!("cannot be read: {error}")))?;
-    let changed = || {
-        failed("changed on disk since the piece loaded it; reload the piece to take the change, then arrange it again".to_string())
-    };
-    let on_disk = Invention::from_json(&text).map_err(|_| changed())?;
+    let on_disk = Invention::from_json(&text).map_err(|_| changed(path))?;
     if on_disk != without_source(loaded) {
-        return Err(changed());
+        return Err(changed(path));
     }
     let mut expected = on_disk;
-    let target = inline_definition_mut(&mut expected, within).ok_or_else(changed)?;
+    let target = inline_definition_mut(&mut expected, within).ok_or_else(|| changed(path))?;
     target.layout = layout.clone();
     let written = splice::with_layout(&text, within, layout)
         .ok_or_else(|| failed("could not be read as a development document".to_string()))?;
@@ -96,11 +110,20 @@ pub(crate) fn write_layout(
             "could not be arranged without changing more than its layout".to_string(),
         ));
     }
-    match replace(path, &text, &written) {
-        Ok(true) => Ok(()),
-        Ok(false) => Err(changed()),
-        Err(error) => Err(failed(format!("cannot be written: {error}"))),
-    }
+    Staged::new(path, text, &written).map_err(|error| failed(format!("cannot be written: {error}")))
+}
+
+fn failed(path: &Path, why: String) -> NotWritten {
+    NotWritten::Failed(format!("the development file '{}' {why}", path.display()))
+}
+
+fn changed(path: &Path) -> NotWritten {
+    failed(
+        path,
+        "changed on disk since the piece loaded it; reload the piece to take the change, \
+         then arrange it again"
+            .to_string(),
+    )
 }
 
 /// `document` as parsed from text, which carries no source path.
@@ -110,31 +133,75 @@ fn without_source(document: &Invention) -> Invention {
     document
 }
 
-/// Replaces the file at `path`, which held `was`, with `text` in one
-/// rename in its own directory, keeping its permissions: written beside it
-/// first, then moved over it. `false`, with nothing replaced, when the file
-/// no longer holds `was` just before the rename: another writer saved it
-/// meanwhile. (No portable rename compares first, so a save in the moment
-/// between that read and the rename is still lost.)
-fn replace(path: &Path, was: &str, text: &str) -> std::io::Result<bool> {
-    let permissions = fs::metadata(path)?.permissions();
-    let beside = beside(path);
-    // Made here or not at all, so the file removed below is this one's own.
-    let mut file = (fs::OpenOptions::new().write(true).create_new(true)).open(&beside)?;
-    let written = (|| {
+/// A development file's new text, written and synced beside it in its own
+/// directory with its permissions, waiting to be renamed over it. Dropped
+/// without being placed, the staged file is removed.
+pub(crate) struct Staged {
+    path: PathBuf,
+    beside: PathBuf,
+    /// What the file held when it was staged.
+    was: String,
+    placed: bool,
+}
+
+impl Staged {
+    fn new(path: &Path, was: String, text: &str) -> std::io::Result<Staged> {
+        let permissions = fs::metadata(path)?.permissions();
+        let beside = beside(path);
+        // Made here or not at all, so the file removed on drop is this
+        // one's own.
+        let mut file = (fs::OpenOptions::new().write(true).create_new(true)).open(&beside)?;
+        let staged = Staged {
+            path: path.to_owned(),
+            beside,
+            was,
+            placed: false,
+        };
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
-        fs::set_permissions(&beside, permissions)?;
-        if fs::read_to_string(path)? != was {
+        fs::set_permissions(&staged.beside, permissions)?;
+        Ok(staged)
+    }
+
+    /// Renames the staged text over the file, in one rename, unless the
+    /// file no longer holds what it held when staged: another writer saved
+    /// it meanwhile, and it is refused as changed on disk.
+    pub(crate) fn place(self) -> Result<(), NotWritten> {
+        let path = self.path.clone();
+        match self.rename() {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(changed(&path)),
+            Err(error) => Err(failed(&path, format!("cannot be written: {error}"))),
+        }
+    }
+
+    /// `false`, with nothing replaced, when the file changed since it was
+    /// staged. (No portable rename compares first, so a save in the moment
+    /// between this read and the rename is still lost.)
+    fn rename(mut self) -> std::io::Result<bool> {
+        if fs::read_to_string(&self.path)? != self.was {
             return Ok(false);
         }
-        fs::rename(&beside, path)?;
+        fs::rename(&self.beside, &self.path)?;
+        self.placed = true;
         Ok(true)
-    })();
-    if !matches!(written, Ok(true)) {
-        let _ = fs::remove_file(&beside);
     }
-    written
+}
+
+impl Drop for Staged {
+    fn drop(&mut self) {
+        if !self.placed {
+            let _ = fs::remove_file(&self.beside);
+        }
+    }
+}
+
+/// Replaces the file at `path`, which held `was`, with `text`: staged
+/// beside it, then renamed over it. `false`, with nothing replaced, when it
+/// no longer holds `was` just before the rename.
+#[cfg(test)]
+fn replace(path: &Path, was: &str, text: &str) -> std::io::Result<bool> {
+    Staged::new(path, was.to_string(), text)?.rename()
 }
 
 /// A hidden file name beside `path`, unique to this replacement: the
