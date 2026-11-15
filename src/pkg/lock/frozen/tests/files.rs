@@ -142,6 +142,50 @@ fn a_reload_under_another_policy_rebuilds_what_may_hold_package_content() {
 }
 
 #[test]
+fn a_reload_under_another_policy_rebuilds_a_development_that_expands_an_asset() {
+    // A definition is compared unexpanded, so new bytes behind its `$asset`
+    // reach only a rebuilt instance; one that expands nothing keeps playing.
+    let tmp = tempfile::tempdir().unwrap();
+    let (packs, lock) = playable_kit(tmp.path());
+    let tuning = tmp.path().join("tuning.json");
+    write(&tuning, "220.0");
+    let tone = |assets: serde_json::Value, frequency: serde_json::Value| {
+        json!({
+            "assets": assets,
+            "modules": [{"id": "o", "type": "oscillator", "config": {"frequency": frequency}}],
+            "connections": [],
+            "outputs": [{"name": "audio", "from": "o", "from_port": "audio"}]
+        })
+    };
+    let tuned = tone(
+        json!({"tuning": {"path": tuning}}),
+        json!({"$asset": "tuning"}),
+    );
+    let document: Invention = serde_json::from_value(json!({
+        "developments": [
+            {"name": "tuned", "definition": tuned},
+            {"name": "plain", "definition": tone(json!({}), json!(220.0))}
+        ],
+        "modules": [{"id": "t", "type": "tuned"}, {"id": "p", "type": "plain"}],
+        "connections": []
+    }))
+    .unwrap();
+    with_packs_dir(&packs, || {
+        with_governing(lock, || {
+            let lock = govern(None);
+            let (runtime, _) = InventionBuilder::new(48_000)
+                .build(document.clone())
+                .unwrap();
+            let mut running = Settled::start(runtime);
+
+            write(&tuning, "440.0");
+            let governed = running.reload_governed(document, lock).unwrap();
+            assert_eq!(governed.swapped, ["t"], "{governed:?}");
+        });
+    });
+}
+
+#[test]
 fn a_file_named_through_a_parent_traversal_is_governed() {
     // `packs/../packs/<id>/..` names the packages dir as configured, but
     // where it lies is the filesystem's to say.

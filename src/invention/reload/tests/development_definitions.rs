@@ -196,7 +196,7 @@ fn reload_detects_a_change_to_either_siblings_nested_definition() {
 }
 
 #[test]
-fn developments_instantiating_a_type_are_found_through_nesting_and_inheritance() {
+fn developments_holding_a_loader_are_found_through_nesting_and_inheritance() {
     let tone = |id: &str, kind: &str| {
         format!(
             r#"{{ "modules": [ {{ "id": "{id}", "type": "{kind}" }} ], "connections": [],
@@ -226,10 +226,40 @@ fn developments_instantiating_a_type_are_found_through_nesting_and_inheritance()
     ));
     let definitions = DevelopmentDefinitions::resolve(&document).unwrap();
 
-    let mut found: Vec<String> = (definitions.loaded.instantiating(&["sample_player"]))
+    let mut found: Vec<String> = (definitions.loaded.holding_packages(&["sample_player"]))
         .into_iter()
         .collect();
     found.sort();
     assert_eq!(found, ["holds_nested", "inner", "loader", "uses_loader"]);
-    assert!(definitions.loaded.instantiating(&["sample_kit"]).is_empty());
+    assert!(definitions
+        .loaded
+        .holding_packages(&["sample_kit"])
+        .is_empty());
+}
+
+#[test]
+fn a_development_whose_scope_a_repeated_alias_left_unloaded_may_hold_packages() {
+    // The inner `a` repeats an enclosing alias, so its scope is left empty
+    // and `b` is loaded only by the builder: what `b` holds is unknown here.
+    let document = doc(r#"{
+            "version": "1.0.0",
+            "developments": [ { "name": "a", "definition": {
+                "developments": [ { "name": "a", "definition": {
+                    "developments": [ { "name": "b", "definition": {
+                        "modules": [ { "id": "s", "type": "sample_player" } ], "connections": [],
+                        "outputs": [ { "name": "audio", "from": "s", "from_port": "audio" } ]
+                    } } ],
+                    "modules": [ { "id": "b", "type": "b" } ], "connections": [],
+                    "outputs": [ { "name": "audio", "from": "b", "from_port": "audio" } ]
+                } } ],
+                "modules": [ { "id": "a", "type": "a" } ], "connections": [],
+                "outputs": [ { "name": "audio", "from": "a", "from_port": "audio" } ]
+            } } ],
+            "modules": [ { "id": "dac", "type": "dac" } ],
+            "connections": []
+        }"#);
+    let definitions = DevelopmentDefinitions::resolve(&document).unwrap();
+
+    let found = definitions.loaded.holding_packages(&["sample_kit"]);
+    assert_eq!(found, ["a".to_string()].into_iter().collect());
 }

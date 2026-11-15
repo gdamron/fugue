@@ -319,14 +319,28 @@ impl LoadedDevelopments {
         }
     }
 
-    /// The names of the developments, in any scope, whose definitions
-    /// instantiate one of `types`, directly or through a development they
-    /// use. A name is matched wherever it is declared, so two declarations
-    /// under one alias count as one: it errs toward including a name.
-    pub(crate) fn instantiating(&self, types: &[&str]) -> HashSet<String> {
+    /// The names of the developments, in any scope, that may hold content
+    /// read through a package: their definitions instantiate one of
+    /// `loaders` or a development that does, expand a `$asset` (its config is
+    /// compared unexpanded, so new bytes behind one go unseen), or declare a
+    /// development this tree did not load (a repeated alias leaves its scope
+    /// empty, and the builder then loads what it declares). A name is
+    /// matched wherever it is declared, so two declarations under one alias
+    /// count as one: it errs toward including a name.
+    pub(crate) fn holding_packages(&self, loaders: &[&str]) -> HashSet<String> {
         let mut declared = Vec::new();
         self.named(&mut declared);
-        let mut found: HashSet<String> = HashSet::new();
+        let loaded: HashSet<&str> = declared.iter().map(|(name, _)| *name).collect();
+        let opaque = |entry: &LoadedDevelopment| {
+            !entry.definition.assets.is_empty()
+                || (entry.definition.developments.iter())
+                    .any(|spec| !loaded.contains(spec.name.as_str()))
+        };
+        let mut found: HashSet<String> = (declared.iter())
+            .filter(|(_, entry)| opaque(entry))
+            .map(|(name, _)| name.to_string())
+            .collect();
+        let types = loaders;
         loop {
             let before = found.len();
             for (name, entry) in &declared {

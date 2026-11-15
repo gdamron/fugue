@@ -31,12 +31,12 @@ const PACKAGE_LOADERS: [&str; 4] = [
 /// another lockfile or none), a module that may hold package content is
 /// rebuilt rather than kept: what it holds was loaded under that policy, and
 /// never verified against the candidate's. That is a package loader, or an
-/// instance of a development whose definition instantiates one, directly or
-/// through a development it uses (an alias passes a package ref to a loader
-/// unchanged, so its config does not change with the policy). Everything
-/// else keeps playing, development instances that load nothing included:
-/// their definitions were read again under the candidate's lock, and an
-/// unchanged one built what is running. Runs as a timed or untimed reload
+/// instance of a development that may hold what one loads or a `$asset`
+/// expands (`LoadedDevelopments::holding_packages`): an alias passes a
+/// package ref to a loader unchanged, so its config does not change with the
+/// policy. Everything else keeps playing, development instances that load
+/// nothing included: their definitions were read again under the
+/// candidate's lock, and an unchanged one built what is running. Runs as a timed or untimed reload
 /// plans, under the candidate's lock ([`govern_here`]).
 pub(super) fn rebuild_under_another_policy(
     plan: &mut ReloadPlan,
@@ -46,9 +46,12 @@ pub(super) fn rebuild_under_another_policy(
     if !changes_policy(built_under) {
         return;
     }
-    let loading = validated.definitions.loaded.instantiating(&PACKAGE_LOADERS);
+    let holding = validated
+        .definitions
+        .loaded
+        .holding_packages(&PACKAGE_LOADERS);
     let holds_packages =
-        |module_type: &str| PACKAGE_LOADERS.contains(&module_type) || loading.contains(module_type);
+        |module_type: &str| PACKAGE_LOADERS.contains(&module_type) || holding.contains(module_type);
     let rebuilt: Vec<_> = (validated.resolved.modules.iter())
         .filter(|spec| plan.unchanged.contains(&spec.id) && holds_packages(&spec.module_type))
         .cloned()
