@@ -8,11 +8,15 @@
 //! the author's arrangement wherever it is shown. Removing the overrides is
 //! going back to the original.
 //!
-//! Like the rest of a layout, an override is never heard.
+//! Like the rest of a layout, an override is never heard. When the original
+//! changes (the piece moves to a new package version) and an override names
+//! a development or module that is no longer there, load and reload drop it
+//! and say which, as pins are dropped when the graph changes.
 
 use std::collections::BTreeMap;
 
 use super::layout::{Layout, Position};
+use super::reload::LoadedDevelopments;
 use crate::Invention;
 
 /// The separator between the names of an override's key.
@@ -57,6 +61,15 @@ impl Layout {
     }
 }
 
+/// The module ids inside the development `path` names among `keys`, the
+/// overrides a load dropped.
+pub(crate) fn dropped_in(keys: &[String], path: &[String]) -> Vec<String> {
+    (keys.iter())
+        .filter_map(|key| split(key).filter(|(within, _)| within == path))
+        .map(|(_, id)| id.to_string())
+        .collect()
+}
+
 /// `layout` (the author's) with `overrides` on top: an override moves a
 /// module the definition has; one naming another is not shown.
 pub(crate) fn layered(
@@ -73,6 +86,56 @@ pub(crate) fn layered(
         }
     }
     Some(shown)
+}
+
+/// An override the piece's settling dropped: its key and the warning.
+pub(crate) struct Dropped {
+    pub(crate) key: String,
+    pub(crate) message: String,
+}
+
+impl Invention {
+    /// Drops each override of this document (the piece) that no longer
+    /// places a module of a development it borrows, as `loaded` resolves
+    /// them: its development is gone, is no longer borrowed, or no longer
+    /// has the module, or its position is not finite. The piece loads all
+    /// the same; each drop is returned for the load to report.
+    pub(crate) fn settle_overrides(&mut self, loaded: &LoadedDevelopments) -> Vec<Dropped> {
+        let mut dropped = Vec::new();
+        self.layout.overrides.retain(|key, position| {
+            let why = match split(key) {
+                None => Some("its key names no module inside a development".to_string()),
+                Some((path, id)) => match loaded.find(&path) {
+                    Err(_) => Some(format!(
+                        "the piece no longer uses a development '{}'",
+                        path.join("/")
+                    )),
+                    Ok(entry) if !super::edits::borrowed(&entry.home) => Some(format!(
+                        "development '{}' is no longer borrowed; it is arranged in its own \
+                         document",
+                        path.join("/")
+                    )),
+                    Ok(entry) if !entry.definition.modules.iter().any(|m| m.id == id) => {
+                        Some(format!(
+                            "development '{}' no longer has a module '{id}'",
+                            path.join("/")
+                        ))
+                    }
+                    Ok(_) if !position.is_finite() => Some("its position is not finite".into()),
+                    Ok(_) => None,
+                },
+            };
+            let Some(why) = why else {
+                return true;
+            };
+            dropped.push(Dropped {
+                key: key.clone(),
+                message: format!("layout override '{key}' was dropped: {why}"),
+            });
+            false
+        });
+        dropped
+    }
 }
 
 #[cfg(test)]

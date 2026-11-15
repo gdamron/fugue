@@ -16,8 +16,9 @@
 //!   declared under two names (`file`);
 //! - inside an installed-package development, or a file in the package
 //!   cache, a move is an override in the piece's own layout, never written to
-//!   the package, and null and "back to the original" remove overrides
-//!   (`package`);
+//!   the package; null and "back to the original" remove overrides, a reload
+//!   to a new version drops those naming what is gone, and a piece that is
+//!   itself an installed package's file stays read-only (`package`);
 //! - a file that cannot be written, or that changed on disk, is refused with
 //!   a reason and nothing changes (`refusals`);
 //! - a move inside a development is applied alone and at once: mixed with a

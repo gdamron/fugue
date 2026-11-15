@@ -19,6 +19,10 @@ use crate::invention::builder::load_development_definition;
 #[derive(Debug, Clone, Default)]
 pub struct DevelopmentDefinitions {
     pub(super) loaded: Arc<LoadedDevelopments>,
+    /// The overrides the piece's load or reload dropped, by key (see
+    /// [`Invention::settle_overrides`]): kept until the next one, so a view
+    /// says which.
+    dropped: Arc<Vec<String>>,
 }
 
 impl DevelopmentDefinitions {
@@ -31,7 +35,44 @@ impl DevelopmentDefinitions {
 
     /// The definitions `loaded`, kept for a later reload to compare against.
     pub(crate) fn of(loaded: Arc<LoadedDevelopments>) -> Self {
-        Self { loaded }
+        Self {
+            loaded,
+            dropped: Arc::default(),
+        }
+    }
+
+    /// These definitions with `loaded` in their place, keeping what the
+    /// load dropped.
+    pub(crate) fn with_loaded(&self, loaded: Arc<LoadedDevelopments>) -> Self {
+        Self {
+            loaded,
+            dropped: self.dropped.clone(),
+        }
+    }
+
+    /// These definitions, settling `document` (the piece's, retained): the
+    /// overrides it drops are kept for the view, and returned as warnings.
+    pub(crate) fn settling(mut self, document: &mut Invention) -> (Self, Vec<String>) {
+        let dropped = document.settle_overrides(&self.loaded);
+        let (keys, messages) = dropped.into_iter().map(|d| (d.key, d.message)).unzip();
+        self.dropped = Arc::new(keys);
+        (self, messages)
+    }
+
+    /// These definitions, settling `document` once more as a timed reload
+    /// lands: an override made while it waited may name what it removes.
+    pub(crate) fn settled_again(mut self, document: &mut Invention) -> Self {
+        let dropped = document.settle_overrides(&self.loaded);
+        if !dropped.is_empty() {
+            let keys = Arc::make_mut(&mut self.dropped);
+            keys.extend(dropped.into_iter().map(|d| d.key));
+        }
+        self
+    }
+
+    /// The overrides the latest load or reload dropped, by key.
+    pub(crate) fn dropped(&self) -> &[String] {
+        &self.dropped
     }
 
     /// The developments the running document declares.
@@ -49,10 +90,15 @@ impl DevelopmentDefinitions {
         Ok((found.declared, &found.definition))
     }
 
-    /// Where a move inside the development `path` names is saved.
-    pub fn saved_in(&self, path: &[String]) -> Result<crate::rpc::DevelopmentSavedIn, RpcError> {
+    /// Where a move inside the development `path` names is saved, in a
+    /// piece read from `piece` (its source path, if any).
+    pub fn saved_in(
+        &self,
+        path: &[String],
+        piece: Option<&std::path::Path>,
+    ) -> Result<crate::rpc::DevelopmentSavedIn, RpcError> {
         let found = self.loaded.find(path)?;
-        Ok(crate::invention::edits::saved_in(&found.home))
+        Ok(crate::invention::edits::saved_in(&found.home, piece))
     }
 }
 

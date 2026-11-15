@@ -165,14 +165,18 @@ impl InventionBuilder {
         // clock naming none of its clocks, or a name that cannot name a
         // module, is dropped from it with a warning; the piece loads all the
         // same.
-        let unplaced = invention.settle_presentation();
+        let mut unplaced = invention.settle_presentation();
         // Retain the authored document (before asset resolution) so the
         // runtime can be saved back to disk without inlining `$asset`
         // references or losing developments, title, and the exposed sections.
-        let document = invention.clone();
+        let mut document = invention.clone();
         let (invention, loaded) =
             resolve_invention_assets(invention, self.loaded.clone(), Some(&self.registry))?;
-        let development_definitions = DevelopmentDefinitions::of(loaded.clone());
+        // An override that no longer places a module of a development the
+        // piece borrows is dropped from it with a warning, as above.
+        let (development_definitions, overridden) =
+            DevelopmentDefinitions::of(loaded.clone()).settling(&mut document);
+        unplaced.extend(overridden);
         self.register_developments(&invention, &loaded)?;
         self.validate_invention(&invention)?;
 

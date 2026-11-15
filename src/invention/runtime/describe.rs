@@ -60,19 +60,23 @@ impl RunningInvention {
         use crate::invention::layout_overrides;
         // One read of the state: the definitions and the piece's overrides
         // on them are the same load's.
-        let (definitions, positions) = {
+        let (definitions, piece, positions) = {
             let state = self.state.lock().unwrap();
             let document = state.document.as_ref();
             (
                 state.developments.clone(),
+                document.and_then(|d| d.source_path.clone()),
                 document
                     .map(|d| d.layout.overrides_in(path))
                     .unwrap_or_default(),
             )
         };
         let (declared, definition) = definitions.development(path)?;
-        let saved_in = definitions.saved_in(path)?;
-        let overrides = crate::rpc::DevelopmentOverrides { positions };
+        let saved_in = definitions.saved_in(path, piece.as_deref())?;
+        let overrides = crate::rpc::DevelopmentOverrides {
+            dropped: layout_overrides::dropped_in(definitions.dropped(), path),
+            positions,
+        };
         let shown = layout_overrides::layered(definition, &overrides.positions);
         let definition = shown.as_ref().unwrap_or(definition);
         crate::rpc::DevelopmentSnapshot::bounded(
@@ -85,5 +89,17 @@ impl RunningInvention {
     /// shared, not copied.
     pub(crate) fn definitions(&self) -> crate::invention::reload::DevelopmentDefinitions {
         self.state.lock().unwrap().developments.clone()
+    }
+
+    /// [`Self::definitions`], with the piece's source path, read together.
+    pub(crate) fn definitions_and_source(
+        &self,
+    ) -> (
+        crate::invention::reload::DevelopmentDefinitions,
+        Option<std::path::PathBuf>,
+    ) {
+        let state = self.state.lock().unwrap();
+        let source = (state.document.as_ref()).and_then(|d| d.source_path.clone());
+        (state.developments.clone(), source)
     }
 }

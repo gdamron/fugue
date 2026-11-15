@@ -38,6 +38,8 @@ fn overrides_are_read_for_one_development_by_module_id() {
     assert_eq!(voice["filter"], at(1.0));
     let env = layout.overrides_in(&path(&["voice", "env"]));
     assert_eq!(env["attack"], at(2.0));
+    let dropped = ["voice/env/attack".to_string(), "voice/gone".to_string()];
+    assert_eq!(dropped_in(&dropped, &path(&["voice"])), ["gone"]);
 }
 
 #[test]

@@ -25,7 +25,7 @@
 //! reload is.
 
 mod arrange;
-pub(crate) use arrange::saved_in;
+pub(crate) use arrange::{borrowed, saved_in};
 mod commit;
 mod facts;
 mod plan;

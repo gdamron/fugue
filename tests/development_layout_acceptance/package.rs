@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use crate::*;
-use fugue::rpc::DevelopmentSavedIn;
+use fugue::rpc::{DevelopmentSavedIn, EditFailureReason};
 use fugue::Invention;
 
 /// Installs `test.layout.voice` 1.0.0, whose development declares an inline
@@ -108,6 +108,7 @@ fn a_move_inside_a_package_development_is_an_override_in_the_piece() {
         placed(&inner.definition.layout, "osc_a"),
         Some((30.0, -4.0))
     );
+    assert!(inner.overrides_dropped.is_empty());
 }
 
 #[test]
@@ -196,6 +197,126 @@ fn a_file_in_the_package_cache_declared_by_path_is_arranged_with_overrides() {
         bytes,
         "the cache is never written"
     );
+}
+
+#[test]
+fn a_piece_that_is_an_installed_package_file_stays_read_only_inside() {
+    install();
+    let root = packs_dir().join("test.layout.example").join("1.0.0");
+    let file = root.join("example.json");
+    let doc = piece(
+        json!([
+            { "name": "shared", "ref": { "package": "test.layout.voice", "version": "1.0.0" } },
+            { "name": "own", "definition": voice(110.0, 220.0) },
+        ]),
+        &["shared", "own"],
+    );
+    write_json(&file, &doc);
+    let mut piece = Piece::from_file(&file);
+    for (path, id) in [(&["shared"][..], "body"), (&["own"][..], "osc_a")] {
+        match piece.inside(path).saved_in {
+            DevelopmentSavedIn::ReadOnly { reason } => {
+                assert!(reason.contains("installed package"), "{reason}")
+            }
+            other => panic!("{path:?} is read-only, got {other:?}"),
+        }
+        let error = piece.arrange(path, &[(id, Some((1.0, 2.0)))]).unwrap_err();
+        assert_eq!(
+            refused_edit(&error),
+            (0, EditFailureReason::ReadOnlyDevelopment)
+        );
+    }
+    assert!(piece.document().layout.is_empty());
+}
+
+/// Installs `test.layout.voice` 2.0.0, whose outer module is renamed from
+/// `body` to `core`.
+fn install_renamed() {
+    let root = packs_dir().join("test.layout.voice").join("2.0.0");
+    if root.exists() {
+        return;
+    }
+    write_json(
+        &root.join("fugue.pkg.json"),
+        &json!({ "id": "test.layout.voice", "version": "2.0.0", "kind": "development",
+                 "license": "MIT", "authors": [{ "name": "Test" }],
+                 "targets": ["external-agent"],
+                 "entry": { "development": "voice.json" } }),
+    );
+    write_json(
+        &root.join("voice.json"),
+        &json!({
+            "version": "1.0.0",
+            "developments": [ { "name": "inner", "definition": voice(220.0, 330.0) } ],
+            "modules": [ { "id": "core", "type": "inner" } ],
+            "connections": [],
+            "outputs": [ { "name": "audio", "from": "core", "from_port": "audio" } ],
+        }),
+    );
+}
+
+fn with_overrides(mut doc: Value, overrides: Value) -> Invention {
+    doc["layout"] = json!({ "overrides": overrides });
+    serde_json::from_value(doc).unwrap()
+}
+
+#[test]
+fn a_reload_to_a_new_version_drops_overrides_naming_what_is_gone() {
+    install();
+    install_renamed();
+    let at = json!({ "x": 1, "y": 1 });
+    let mut running = Piece::from_json(&shared_piece());
+    running
+        .arrange(&["shared"], &[("body", Some((1.0, 1.0)))])
+        .unwrap();
+    running
+        .arrange(&["shared", "inner"], &[("mix", Some((2.0, 2.0)))])
+        .unwrap();
+
+    let mut moved_on = serde_json::to_value(running.document()).unwrap();
+    moved_on["developments"][0]["ref"]["version"] = json!("2.0.0");
+    let moved_on: Invention = serde_json::from_value(moved_on).unwrap();
+    let report = running.running.reload(moved_on).expect("reloads");
+    assert!(
+        report.warnings.iter().any(|w| w.contains("'shared/body'")),
+        "{:?}",
+        report.warnings
+    );
+    let outer = running.inside(&["shared"]);
+    assert_eq!(outer.overrides_dropped, ["body"]);
+    assert!(outer.overrides.is_empty());
+    let inner = running.inside(&["shared", "inner"]);
+    assert_eq!(placed(&inner.definition.layout, "mix"), Some((2.0, 2.0)));
+    let keys: Vec<String> = running.document().layout.overrides.into_keys().collect();
+    assert_eq!(keys, ["shared/inner/mix"]);
+
+    // A load drops them too, and an override for a development the piece no
+    // longer uses, or one it owns.
+    let doc = with_overrides(
+        piece(
+            json!([
+                { "name": "shared", "ref": { "package": "test.layout.voice", "version": "2.0.0" } },
+                { "name": "own", "definition": voice(1.0, 2.0) },
+            ]),
+            &["shared", "own"],
+        ),
+        json!({ "shared/body": at, "shared/core": at, "gone/osc": at, "own/osc_a": at }),
+    );
+    let (runtime, _) = fugue::InventionBuilder::new(RATE)
+        .build(doc.clone())
+        .unwrap();
+    let warnings = runtime.load_warnings();
+    for key in ["shared/body", "gone/osc", "own/osc_a"] {
+        assert!(
+            warnings.iter().any(|w| w.contains(key)),
+            "{key}: {warnings:?}"
+        );
+    }
+    drop(runtime);
+    let loaded = Piece::from_json(&serde_json::to_value(doc).unwrap());
+    let kept: Vec<String> = loaded.document().layout.overrides.into_keys().collect();
+    assert_eq!(kept, ["shared/core"]);
+    assert_eq!(loaded.inside(&["shared"]).overrides_dropped, ["body"]);
 }
 
 #[test]
