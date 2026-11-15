@@ -629,7 +629,11 @@ impl StepSequencer {
         // Update cached outputs. An active grace chain owns the mono
         // frequency/gate stream; the principal resumes when it ends.
         let (frequency, gate_high, attack_velocity) = match grace_voice {
-            Some(voice) => (self.note_frequency(voice.offset), voice.gate, voice.velocity),
+            Some(voice) => (
+                self.note_frequency(voice.offset),
+                voice.gate,
+                voice.velocity,
+            ),
             None => (
                 self.active_note
                     .map(|offset| self.note_frequency(offset))
@@ -777,6 +781,8 @@ impl Module for StepSequencer {
 mod pattern_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod velocity_tests;
 
 #[cfg(test)]
 mod retrigger_dip_tests {

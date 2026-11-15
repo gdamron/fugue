@@ -156,3 +156,56 @@ fn a_development_exposing_pattern_hands_it_to_its_sequencer() {
         .is_err());
     assert_eq!(read(&rig, "p", "notes"), r#"[{"note":4}]"#.into());
 }
+
+#[test]
+fn velocities_and_their_grace_notes_play_without_allocating_or_waiting() {
+    let mut rig = Rig::new(
+        r#"{ "version": "1.0.0",
+        "modules": [
+            { "id": "seq", "type": "step_sequencer", "config": { "step_count": 4,
+                "pattern": [{ "note": 0, "velocity": 0.3 }, { "note": 7, "velocity": 0.9, "grace": [2, 4] },
+                    { "held": true }, { "note": 5, "grace": [3] }] } },
+            { "id": "osc", "type": "oscillator" },
+            { "id": "vca", "type": "vca" },
+            { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+        ],
+        "connections": [
+            { "from": "seq", "from_port": "frequency", "to": "osc", "to_port": "frequency" },
+            { "from": "seq", "from_port": "velocity", "to": "vca", "to_port": "level" },
+            { "from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio" },
+            { "from": "vca", "from_port": "audio", "to": "dac", "to_port": "audio" }
+        ] }"#,
+    );
+    rig.render(1);
+    let velocity = |rig: &Rig| {
+        rig.graph.modules["seq"]
+            .module()
+            .get_output("velocity")
+            .unwrap()
+    };
+    let mut heard = Vec::new();
+    for placement in ["before", "on_beat"] {
+        write(&rig, "seq", "grace_placement", placement.into());
+        for edge in 0..12 {
+            rig.live.write_input("seq", "clock", 1.0).unwrap();
+            assert_eq!(
+                block_with_locks_held(&mut rig, &[]),
+                Ok((0, 0)),
+                "{placement} {edge}"
+            );
+            rig.live.write_input("seq", "clock", 0.0).unwrap();
+            assert_eq!(
+                block_with_locks_held(&mut rig, &[]),
+                Ok((0, 0)),
+                "{placement} {edge}"
+            );
+            heard.push(velocity(&rig));
+        }
+    }
+    for want in [0.3, 0.9, 0.8 * 0.9, 1.0, 0.8] {
+        assert!(
+            heard.iter().any(|&v| (v - want).abs() < 1e-6),
+            "{want}: {heard:?}"
+        );
+    }
+}
