@@ -7,14 +7,25 @@
 //! descriptions and key words, widened by one table of musical synonyms
 //! ([`synonyms`]). It is deterministic, needs no model and no network, and
 //! bounds its answer in bytes, saying how many more matched when it stops.
+//!
+//! [`Gather`] reads the daemon's side of the index through the existing
+//! discovery reads, one request at a time, so any client with a daemon
+//! connection can build it; a host adds its own tools and views. See
+//! `FIND.md` beside this file for the contract, including what a card holds
+//! for each kind.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::rpc::{RpcError, RpcErrorCode};
 
+mod entries;
+mod gather;
 mod rank;
 pub mod synonyms;
+
+pub use entries::{content_entries, control_entries, module_type_entries, package_entries};
+pub use gather::Gather;
 
 /// Version of the answer's shape and meaning.
 pub const FIND_SCHEMA_VERSION: u32 = 1;
