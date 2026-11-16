@@ -33,6 +33,13 @@
 //!   realization; if the real clock edge arrives while a chain is still
 //!   sounding (accelerando), the chain is truncated and the principal wins.
 //!
+//! # Held steps
+//!
+//! A note and the held steps after it are one unbroken gate. If the clock
+//! stops, the gate releases two measured steps after the last edge, plus
+//! two samples; a held edge later than that (a slowdown past half) finds
+//! it released and re-attacks the note. See `docs/musical-time.md`.
+//!
 //! # Playback modes
 //!
 //! The `mode` control selects `loop` (default: the active cell repeats until
@@ -143,7 +150,8 @@ pub struct CellSequencer {
     /// When `true`, the output gate stays high regardless of
     /// `gate_samples_remaining`. Set when the active step is part of a held
     /// chain that should sustain across the next clock boundary; cleared as
-    /// soon as the next `start_step` runs.
+    /// soon as the next `start_step` runs, or when no edge comes in time
+    /// (see [`Self::bridge_expired`]).
     gate_continuous: bool,
     step_duration_samples: u32,
     samples_since_gate: u32,
@@ -420,6 +428,19 @@ impl CellSequencer {
     fn next_step_is_held(&self) -> bool {
         let next_step = self.current_step + 1;
         next_step < self.step_count() && self.get_step(self.current_sequence, next_step).held
+    }
+
+    /// A bridged gate whose next clock edge never came (the clock stopped)
+    /// releases two measured steps after the last edge, plus two samples so
+    /// a tempo halving at a fractional step length (an edge up to 2N + 2
+    /// samples later) still finds it high. `samples_since_gate` already
+    /// counts the sample being processed.
+    fn bridge_expired(&self) -> bool {
+        self.samples_since_gate
+            > self
+                .step_duration_samples
+                .saturating_mul(2)
+                .saturating_add(2)
     }
 
     /// Whether the step after the current one starts a new note — i.e. it is a
@@ -889,6 +910,10 @@ impl CellSequencer {
         };
 
         self.samples_since_gate += 1;
+
+        if self.gate_continuous && self.bridge_expired() {
+            self.gate_continuous = false;
+        }
 
         if self.gate_samples_remaining > 0 {
             self.gate_samples_remaining -= 1;

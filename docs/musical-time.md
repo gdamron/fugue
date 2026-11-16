@@ -292,6 +292,16 @@ and its held steps are one unbroken gate and one attack. The
 `step_sequencer` still holds a held step's gate for the full step into a new
 note, and so relies on that backstop.
 
+Both also release a bridged gate when the clock stops. With no further edge,
+the gate goes low two measured steps after the last edge, plus two samples:
+a measured step can be a sample short and a doubled one a sample long, so an
+abrupt halving of the tempo lands the held edge up to 2N + 2 samples later
+and still finds the gate high. A slowdown past half releases the gate first,
+and the held edge then re-attacks the note that was sounding. When the clock
+resumes after a release, the next edge plays as written: a held step
+re-attacks the note it continues (one after a rest stays silent), a rest
+stays low and a note attacks.
+
 The rule generalises: any module that gates or retriggers on musical steps
 must not assume a step is a whole number of samples.
 
