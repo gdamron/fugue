@@ -191,7 +191,7 @@ pub struct StepSequencer {
     first_gate_received: bool,
     /// Frequency for the current active note, retained across held steps.
     active_note: Option<i8>,
-    /// Velocity of the active (or deferred) principal note.
+    /// Velocity of the active principal note.
     active_velocity: f32,
     /// The `velocity` output: the latest attack's velocity, latched as the
     /// gate rises.
@@ -221,8 +221,9 @@ pub struct StepSequencer {
     /// edge came early), which falls back to on-beat realization.
     grace_prescheduled: bool,
     /// Principal note waiting for an on-beat grace chain to finish, with
-    /// its remaining gate samples.
+    /// its velocity and remaining gate samples.
     deferred_note: Option<i8>,
+    deferred_velocity: f32,
     deferred_gate_samples: u32,
     /// Block-rate caches of the grace controls (read once per `process`).
     grace_samples_cfg: u32,
@@ -277,6 +278,7 @@ impl StepSequencer {
             pending_grace_per: 0,
             grace_prescheduled: false,
             deferred_note: None,
+            deferred_velocity: 1.0,
             deferred_gate_samples: 0,
             grace_samples_cfg: 0,
             grace_on_beat_cfg: false,
@@ -426,7 +428,7 @@ impl StepSequencer {
                     self.grace_player
                         .start(step.grace, velocity * GRACE_VELOCITY, per);
                     self.deferred_note = Some(offset);
-                    self.active_velocity = velocity;
+                    self.deferred_velocity = velocity;
                     let chain_total = GracePlayer::chain_samples(&step.grace, per);
                     self.deferred_gate_samples = self
                         .calculate_gate_samples(&step)
@@ -600,6 +602,7 @@ impl StepSequencer {
 
             if self.deferred_note.is_some() && !self.grace_player.is_active() {
                 self.active_note = self.deferred_note.take();
+                self.active_velocity = self.deferred_velocity;
                 let mut gate_samples = self.deferred_gate_samples;
                 if self.grace_countdown > 0 {
                     // A chain for the next step is already counting down;

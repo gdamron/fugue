@@ -46,6 +46,49 @@ fn a_retriggered_note_takes_its_velocity_as_the_gate_rises_not_on_the_dip() {
 }
 
 #[test]
+fn a_cut_short_on_beat_principal_leaves_the_held_note_its_own_velocity() {
+    // The edge into the held step arrives while step 1's on-beat grace is
+    // still in its release gap: the principal never sounds, and the held
+    // step resumes step 0's note, which keeps step 0's velocity.
+    let mut seq = StepSequencer::new(1000)
+        .with_step_count(3)
+        .with_pattern(vec![
+            with_velocity(0, 0.3),
+            Step {
+                velocity: Some(0.9),
+                ..Step::note_with_grace(7, &[2])
+            },
+            Step::held(),
+        ]);
+    seq.set(GRACE_PLACEMENT, RtValue::U32(1));
+    let mut heard = Vec::new();
+    for n in 0..160 {
+        let clock = if [0..10, 100..110, 145..155].iter().any(|r| r.contains(&n)) {
+            1.0
+        } else {
+            0.0
+        };
+        seq.set_input("clock", clock).unwrap();
+        seq.process(1);
+        heard.push((
+            seq.get_output("frequency").unwrap(),
+            seq.get_output("gate").unwrap(),
+            seq.get_output("velocity").unwrap(),
+        ));
+    }
+    let root = Note::new(DEFAULT_ROOT_NOTE).frequency();
+    assert_eq!(heard[0], (root, 1.0, 0.3));
+    assert_eq!(
+        heard[101].2,
+        0.9 * GRACE_VELOCITY,
+        "the grace, past the dip"
+    );
+    assert!(heard[144].1 == 0.0, "the grace's release gap");
+    let resumed = heard[145..].iter().find(|(_, gate, _)| *gate == 1.0);
+    assert_eq!(resumed, Some(&(root, 1.0, 0.3)));
+}
+
+#[test]
 fn reset_and_a_finished_one_shot_keep_the_last_velocity() {
     let mut seq = StepSequencer::new(1000)
         .with_step_count(2)
