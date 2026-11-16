@@ -121,6 +121,11 @@ fn refuses_missing_or_empty_fields_naming_the_field() {
         ("---\nname: \"\"\ndescription: d\n---\n", "name"),
         ("---\nname: a\n---\n", "description"),
         ("---\nname: a\ndescription:   \n---\n", "description"),
+        ("---\nname: null\ndescription: d\n---\n", "name"),
+        (
+            "---\nname: a\ndescription:\n  # a comment\n---\n",
+            "description",
+        ),
     ] {
         let err = check(&[("SKILL.md", text)], serde_json::json!({})).unwrap_err();
         assert_eq!(
@@ -132,6 +137,32 @@ fn refuses_missing_or_empty_fields_naming_the_field() {
                 },
                 field,
             }
+        );
+        assert!(err.to_string().contains(&format!("`{field}`")), "{err}");
+    }
+}
+
+#[test]
+fn refuses_unreadable_or_non_text_frontmatter() {
+    let bad = check(
+        &[("SKILL.md", "---\nname: a\ndescription: [\n---\n")],
+        serde_json::json!({}),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(bad, SkillPackageError::BadFrontmatter { .. }),
+        "{bad}"
+    );
+    assert!(bad.to_string().contains("SKILL.md"), "{bad}");
+
+    for (text, field) in [
+        ("---\nname: 12\ndescription: d\n---\n", "name"),
+        ("---\nname: a\ndescription: [d]\n---\n", "description"),
+    ] {
+        let err = check(&[("SKILL.md", text)], serde_json::json!({})).unwrap_err();
+        assert!(
+            matches!(err, SkillPackageError::FieldNotText { .. }),
+            "{text:?}: {err}"
         );
         assert!(err.to_string().contains(&format!("`{field}`")), "{err}");
     }

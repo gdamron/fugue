@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use super::manifest::{DepRef, EntrySpec, PackageManifest};
 use super::package_file::{self, PackageFileError};
-use super::skill_frontmatter;
+use super::skill_frontmatter::{self, Field, Frontmatter};
 
 /// The longest skill `name` agent hosts accept.
 pub const MAX_SKILL_NAME_LEN: usize = 64;
@@ -30,10 +30,12 @@ pub enum SkillPackageError {
     NotSkillFile(PathBuf),
     /// The entry does not open with a closed YAML frontmatter block.
     NoFrontmatter(PathBuf),
-    /// The frontmatter block cannot be read as `key: value` pairs.
+    /// The frontmatter block is not a YAML mapping.
     BadFrontmatter { path: PathBuf, reason: String },
-    /// A required frontmatter field is absent or empty.
+    /// A required frontmatter field is absent, null or empty.
     MissingField { path: PathBuf, field: &'static str },
+    /// A required frontmatter field is a number, boolean, list or mapping.
+    FieldNotText { path: PathBuf, field: &'static str },
     /// The frontmatter `name` is not lowercase letters, digits and hyphens of
     /// 1 to 64 characters.
     NameNotHostSafe { path: PathBuf, name: String },
@@ -73,6 +75,11 @@ impl fmt::Display for SkillPackageError {
             SkillPackageError::MissingField { path, field } => write!(
                 f,
                 "skill entry `{}` frontmatter field `{field}` is missing or empty",
+                path.display()
+            ),
+            SkillPackageError::FieldNotText { path, field } => write!(
+                f,
+                "skill entry `{}` frontmatter field `{field}` must be text",
                 path.display()
             ),
             SkillPackageError::NameNotHostSafe { path, name } => write!(
@@ -150,21 +157,22 @@ pub fn check_skill_package(
     let text = read_text(&entry)?;
     let split =
         skill_frontmatter::split(&text).ok_or(SkillPackageError::NoFrontmatter(entry.clone()))?;
-    let values = skill_frontmatter::top_level_values(split.frontmatter).map_err(|reason| {
+    let frontmatter = Frontmatter::parse(split.frontmatter).map_err(|reason| {
         SkillPackageError::BadFrontmatter {
             path: entry.clone(),
             reason,
         }
     })?;
-    let field = |field: &'static str| {
-        values
-            .get(field)
-            .filter(|value| !value.is_empty())
-            .cloned()
-            .ok_or(SkillPackageError::MissingField {
-                path: entry.clone(),
-                field,
-            })
+    let field = |field: &'static str| match frontmatter.field(field) {
+        Field::Text(text) => Ok(text),
+        Field::Missing => Err(SkillPackageError::MissingField {
+            path: entry.clone(),
+            field,
+        }),
+        Field::NotText => Err(SkillPackageError::FieldNotText {
+            path: entry.clone(),
+            field,
+        }),
     };
     let name = field("name")?;
     field("description")?;
