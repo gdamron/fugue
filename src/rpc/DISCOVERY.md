@@ -52,6 +52,19 @@ the inspected initial or current values. Unsupported value reads are omitted.
 An empty controls array is valid only after successful inspection of a module
 that exposes no controls.
 
+A value larger than 8,192 serialized bytes (`MAX_DESCRIBED_VALUE_BYTES`), such
+as a cell sequencer's whole bank of cells, is left out of `control_values` and
+of its control's listed `default`, and named in `values_omitted` by control key
+with its size: `{"cells": {"bytes": 33408, "cell_lengths": [1, 2, ...]}}`. For
+a bank of cells, `cell_lengths` gives each cell's length in steps, in order, so
+the bank can be shown without reading it. Read a left-out value with
+`get_control`: whole, or for a bank, one cell at a time as `cells.N`, which a
+cell past the bank's end refuses as a write to it would. If values each under
+the budget still add up past the response limit, the largest are left out too,
+without `cell_lengths`. `values_omitted` is absent when nothing is left out,
+so a description with no large value is unchanged. A control listing applies
+the same rule.
+
 Labels are presentation, listed only where they say more than the id tidied
 into words (`root_note` is "Root note", `bpm` "BPM"), so a surface tidies any id
 that has none. An available entry or module may carry `label` (the type's),

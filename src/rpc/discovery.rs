@@ -323,8 +323,12 @@ impl ModuleTypeList {
     }
 }
 
-/// Detailed inspection of one module, including initial or current control values.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Detailed inspection of one module, including initial or current control
+/// values. A value larger than
+/// [`MAX_DESCRIBED_VALUE_BYTES`](super::MAX_DESCRIBED_VALUE_BYTES) is left
+/// out of `control_values` and of its control's listed `default`, and named
+/// in `values_omitted` (see `DISCOVERY.md`).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct ModuleDescription {
     /// Discovery response schema version.
@@ -347,10 +351,52 @@ pub struct ModuleDescription {
     pub info: ModuleTypeInfo,
     /// Initial values for supplied config/defaults; current values for a running instance.
     pub control_values: BTreeMap<String, ControlValue>,
+    /// The values left out of `control_values` and of their control's
+    /// listed `default` for their size, by control; read one through
+    /// `get_control`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub values_omitted: BTreeMap<String, super::OmittedValue>,
     /// For a running instance in an invention with a clock: the clock a
     /// request timed in beats on it counts on when it names none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeline: Option<crate::TimelineContext>,
+}
+
+/// [`ModuleDescription`] as it serializes before an omitted value's listed
+/// default is dropped.
+#[derive(Serialize)]
+#[serde(remote = "ModuleDescription")]
+struct DescriptionFields {
+    schema_version: u32,
+    registry_scope: RegistryScope,
+    metadata_source: MetadataSource,
+    sample_rate: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    module_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(flatten)]
+    info: ModuleTypeInfo,
+    control_values: BTreeMap<String, ControlValue>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    values_omitted: BTreeMap<String, super::OmittedValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timeline: Option<crate::TimelineContext>,
+}
+
+impl Serialize for ModuleDescription {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.values_omitted.is_empty() {
+            return DescriptionFields::serialize(self, serializer);
+        }
+        use serde::ser::Error;
+        let mut value = DescriptionFields::serialize(self, serde_json::value::Serializer)
+            .map_err(S::Error::custom)?;
+        if let Some(controls) = value.get_mut("controls") {
+            super::leave_out_defaults(controls, &self.values_omitted);
+        }
+        value.serialize(serializer)
+    }
 }
 
 impl ModuleDescription {
@@ -429,10 +475,10 @@ impl ModuleDescription {
             }
             .labeled(registry.labels(name)),
             control_values,
+            values_omitted: BTreeMap::new(),
             timeline: None,
         };
-        check_discovery_size(&response)?;
-        Ok(response)
+        response.leaving_out_large_values()
     }
 
     /// Uses the captured live instance metadata, without rebuilding its type.
@@ -472,10 +518,33 @@ impl ModuleDescription {
             }
             .labeled(labels),
             control_values,
+            values_omitted: BTreeMap::new(),
             timeline: snapshot.timeline,
         };
-        check_discovery_size(&response)?;
-        Ok(response)
+        response.leaving_out_large_values()
+    }
+
+    /// This description with each value too large to describe left out and
+    /// named, and then, while it is still too large, the largest left; so
+    /// it fails for size only when what is not a value is too large.
+    fn leaving_out_large_values(mut self) -> Result<Self, RpcError> {
+        use super::described_values::{leave_out, omit_until_fits};
+        let cells = self.info.stored_notes.as_ref();
+        let cells = cells.and_then(|notes| notes.cells.as_ref());
+        let mut omitted = super::omitted_values(&self.info.controls, &self.control_values, cells);
+        if !omitted.is_empty() || check_discovery_size(&self).is_err() {
+            let (controls, values) = (self.info.controls.clone(), self.control_values.clone());
+            omit_until_fits(&controls, &values, &mut omitted, |omitted| {
+                let mut trial = self.clone();
+                leave_out(&mut trial.info.controls, &mut trial.control_values, omitted);
+                trial.values_omitted = omitted.clone();
+                check_discovery_size(&trial).is_ok()
+            });
+            leave_out(&mut self.info.controls, &mut self.control_values, &omitted);
+            self.values_omitted = omitted;
+        }
+        check_discovery_size(&self)?;
+        Ok(self)
     }
 }
 

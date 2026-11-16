@@ -15,6 +15,7 @@ pub use inspection::{
     InspectionCoverage, InspectionCursor, InspectionEntry, InspectionPage, InspectionQuery,
     InspectionSelection, MAX_INSPECTION_BYTES, MAX_INSPECTION_ENTRIES, MAX_INSPECTION_VALUE_BYTES,
 };
+mod described_values;
 mod discovery;
 mod durability;
 mod edits;
@@ -41,6 +42,9 @@ pub use authored_snapshot::{
     AuthoredSnapshot, SnapshotDelivery, MAX_FILE_SNAPSHOT_BYTES, MAX_INLINE_SNAPSHOT_BYTES,
 };
 pub use control_timing::{ControlRequestSettled, ControlTiming, ControlWhen};
+pub use described_values::{
+    leave_out_defaults, omitted_values, OmittedValue, MAX_DESCRIBED_VALUE_BYTES,
+};
 pub use discovery::{
     check_discovery_size, DescribeModuleQuery, MetadataSource, ModuleDescription, ModuleTypeDetail,
     ModuleTypeIndex, ModuleTypeInfo, ModuleTypeList, ModuleTypeQuery, RegistryScope, TypeDetail,

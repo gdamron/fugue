@@ -184,7 +184,10 @@ pub struct ControlMeta {
     pub key: String,
     /// Human-readable description
     pub description: String,
-    /// Default value
+    /// Default value. A module description or control listing leaves it
+    /// out where the value is too large to carry and names the control in
+    /// `values_omitted`; read without it, it is an empty text.
+    #[serde(default = "left_out_default")]
     pub default: ControlValue,
     /// Value constraints and editor hints
     pub kind: ControlKind,
@@ -212,6 +215,11 @@ pub struct ControlMeta {
     /// and editors choose by its kind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub widget: Option<ControlWidget>,
+}
+
+/// A listed default left out for its size, as read back.
+fn left_out_default() -> ControlValue {
+    ControlValue::String(String::new())
 }
 
 /// Shared runtime control surface for a module.
