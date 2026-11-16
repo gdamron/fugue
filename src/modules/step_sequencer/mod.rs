@@ -183,6 +183,9 @@ pub struct StepSequencer {
     current_step: usize,
     /// Samples remaining for current gate.
     gate_samples_remaining: u32,
+    /// The gate stays high across the next clock edge into a held step,
+    /// rather than counting down (see [`Self::bridge_expired`]).
+    gate_continuous: bool,
     /// Duration of one step in samples (measured from clock).
     step_duration_samples: u32,
     /// Sample count since last clock gate (for measuring step duration).
@@ -225,6 +228,8 @@ pub struct StepSequencer {
     deferred_note: Option<i8>,
     deferred_velocity: f32,
     deferred_gate_samples: u32,
+    /// The deferred principal's gate bridges into a held next step.
+    deferred_gate_continuous: bool,
     /// Block-rate caches of the grace controls (read once per `process`).
     grace_samples_cfg: u32,
     grace_on_beat_cfg: bool,
@@ -262,6 +267,7 @@ impl StepSequencer {
             pattern,
             current_step: 0,
             gate_samples_remaining: 0,
+            gate_continuous: false,
             step_duration_samples: sample_rate / 2, // Default ~120 BPM
             samples_since_gate: 0,
             first_gate_received: false,
@@ -280,6 +286,7 @@ impl StepSequencer {
             deferred_note: None,
             deferred_velocity: 1.0,
             deferred_gate_samples: 0,
+            deferred_gate_continuous: false,
             grace_samples_cfg: 0,
             grace_on_beat_cfg: false,
             last_gate_in: 0.0,
@@ -374,14 +381,39 @@ impl StepSequencer {
         Note::new(midi_note).frequency()
     }
 
+    /// Whether the step after this one is held. Looping wraps the look-ahead
+    /// so a held step 0 continues the pattern's last note; one-shot has no
+    /// step after its last.
     fn next_step_is_held(&self) -> bool {
         let next_step = self.current_step + 1;
-        next_step < self.step_count && self.get_step(next_step).held
+        let next_step = if next_step < self.step_count {
+            next_step
+        } else if self.one_shot {
+            return false;
+        } else {
+            0
+        };
+        self.get_step(next_step).held
+    }
+
+    /// A bridged gate whose next clock edge never came (the clock stopped)
+    /// releases two measured steps after the last edge, plus two samples so
+    /// that a tempo halving at a fractional step length (an edge up to
+    /// 2N + 2 samples later) still finds it high. `samples_since_gate`
+    /// already counts the sample being processed.
+    fn bridge_expired(&self) -> bool {
+        self.samples_since_gate
+            > self
+                .step_duration_samples
+                .saturating_mul(2)
+                .saturating_add(2)
     }
 
     /// Calculates the gate duration in samples for the current step.
     fn calculate_gate_samples(&self, step: &Step) -> u32 {
-        let gate_length = if step.held || self.next_step_is_held() {
+        // A held step sounds its whole step; one bridged into a held step
+        // never counts down (see `sustain`).
+        let gate_length = if step.held {
             1.0
         } else {
             step.gate_length.unwrap_or(self.gate_length)
@@ -392,7 +424,10 @@ impl StepSequencer {
 
     fn start_step(&mut self) {
         let step = self.get_step(self.current_step);
-        let gate_still_high = self.gate_samples_remaining > 0 || self.grace_player.is_active();
+        let gate_still_high = self.gate_continuous
+            || self.gate_samples_remaining > 0
+            || self.grace_player.is_active();
+        let next_held = self.next_step_is_held();
 
         // The edge closes out any grace playback in flight: an overrunning
         // chain is truncated (the principal always wins), and a stale
@@ -403,6 +438,8 @@ impl StepSequencer {
         self.grace_player.cancel();
         // An unsounded deferred principal is musically past; the new step wins.
         self.deferred_note = None;
+        self.deferred_gate_continuous = false;
+        self.gate_continuous = false;
 
         match step.note {
             Some(offset) => {
@@ -429,6 +466,7 @@ impl StepSequencer {
                         .start(step.grace, velocity * GRACE_VELOCITY, per);
                     self.deferred_note = Some(offset);
                     self.deferred_velocity = velocity;
+                    self.deferred_gate_continuous = next_held;
                     let chain_total = GracePlayer::chain_samples(&step.grace, per);
                     self.deferred_gate_samples = self
                         .calculate_gate_samples(&step)
@@ -437,12 +475,10 @@ impl StepSequencer {
                 } else {
                     self.active_note = Some(offset);
                     self.active_velocity = step.velocity.unwrap_or(1.0);
-                    self.gate_samples_remaining = self.calculate_gate_samples(&step);
+                    self.sustain(&step, next_held);
                 }
             }
-            None if step.held && self.active_note.is_some() => {
-                self.gate_samples_remaining = self.calculate_gate_samples(&step);
-            }
+            None if step.held && self.active_note.is_some() => self.sustain(&step, next_held),
             None => {
                 self.active_note = None;
                 self.gate_samples_remaining = 0;
@@ -453,6 +489,18 @@ impl StepSequencer {
         // step's tail so its principal lands on the grid. Runs for every
         // step (a rest can host a chain too).
         self.maybe_preschedule_next();
+    }
+
+    /// Sounds the current step's gate: bridged across the next edge into a
+    /// held step, so the held step never sees a release and re-attacks, or
+    /// counted down otherwise.
+    fn sustain(&mut self, step: &Step, next_held: bool) {
+        self.gate_continuous = next_held;
+        self.gate_samples_remaining = if next_held {
+            0
+        } else {
+            self.calculate_gate_samples(step)
+        };
     }
 
     /// Schedules the next step's grace chain (before-the-beat placement) to
@@ -503,6 +551,7 @@ impl StepSequencer {
         self.grace_countdown = 0;
         self.grace_prescheduled = false;
         self.deferred_note = None;
+        self.deferred_gate_continuous = false;
     }
 
     /// Advances to the next step.
@@ -514,6 +563,7 @@ impl StepSequencer {
     fn reset(&mut self) {
         self.current_step = 0;
         self.gate_samples_remaining = 0;
+        self.gate_continuous = false;
         self.active_note = None;
         self.clear_grace_state();
         self.set_finished(false);
@@ -524,6 +574,7 @@ impl StepSequencer {
         self.set_finished(true);
         self.active_note = None;
         self.gate_samples_remaining = 0;
+        self.gate_continuous = false;
         self.clear_grace_state();
     }
 
@@ -584,11 +635,12 @@ impl StepSequencer {
             if self.grace_countdown > 0 {
                 self.grace_countdown -= 1;
                 if self.grace_countdown == 0 {
-                    if self.gate_samples_remaining > 0 {
+                    if self.gate_continuous || self.gate_samples_remaining > 0 {
                         // The cap in maybe_preschedule_next should have
                         // released already; force the edge the chain's
                         // first onset needs.
                         self.retrigger_dip = true;
+                        self.gate_continuous = false;
                         self.gate_samples_remaining = 0;
                     }
                     self.grace_prescheduled = true;
@@ -603,8 +655,11 @@ impl StepSequencer {
             if self.deferred_note.is_some() && !self.grace_player.is_active() {
                 self.active_note = self.deferred_note.take();
                 self.active_velocity = self.deferred_velocity;
+                self.gate_continuous = std::mem::take(&mut self.deferred_gate_continuous);
                 let mut gate_samples = self.deferred_gate_samples;
-                if self.grace_countdown > 0 {
+                if self.gate_continuous {
+                    gate_samples = 0;
+                } else if self.grace_countdown > 0 {
                     // A chain for the next step is already counting down;
                     // release before its first onset.
                     gate_samples = gate_samples.min(
@@ -628,6 +683,9 @@ impl StepSequencer {
         if self.gate_samples_remaining > 0 {
             self.gate_samples_remaining -= 1;
         }
+        if self.gate_continuous && self.bridge_expired() {
+            self.gate_continuous = false;
+        }
 
         // Update cached outputs. An active grace chain owns the mono
         // frequency/gate stream; the principal resumes when it ends.
@@ -641,7 +699,7 @@ impl StepSequencer {
                 self.active_note
                     .map(|offset| self.note_frequency(offset))
                     .unwrap_or(0.0),
-                self.gate_samples_remaining > 0,
+                self.gate_continuous || self.gate_samples_remaining > 0,
                 self.active_velocity,
             ),
         };
@@ -780,6 +838,8 @@ impl Module for StepSequencer {
     }
 }
 
+#[cfg(test)]
+mod held_gate_tests;
 #[cfg(test)]
 mod pattern_tests;
 #[cfg(test)]
