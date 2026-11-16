@@ -4,6 +4,7 @@
 
 use std::collections::VecDeque;
 
+use super::entries::unread_type_entry;
 use super::{content_entries, control_entries, module_type_entries, package_entries, Index};
 use crate::pkg::content::ContentListQuery;
 use crate::rpc::{ModuleTypeQuery, PackageListQuery, RpcCommand, TypeDetail};
@@ -51,6 +52,16 @@ impl Step {
             Step::Done => "Nothing",
         }
     }
+
+    /// The tool that lists this source in full, with its diagnostics.
+    fn lister(self) -> &'static str {
+        match self {
+            Step::Examples => "list_examples",
+            Step::Developments => "list_developments",
+            Step::Packages => "list_packages",
+            _ => "describe_module_types",
+        }
+    }
 }
 
 /// Builds the daemon's side of an [`Index`]: the loaded piece's controls,
@@ -65,13 +76,17 @@ impl Step {
 /// ```
 ///
 /// A read that fails is noted in the index and skipped, so a search still
-/// answers from everything else.
+/// answers from everything else. A batch of type descriptions that fails is
+/// asked again in halves, so one type that cannot be described costs only
+/// its own description.
 #[derive(Debug, Default)]
 pub struct Gather {
     step: Option<Step>,
     index: Index,
     types: VecDeque<String>,
     asked_types: usize,
+    /// The most types the next description asks for; 0 until the first.
+    batch: usize,
     cursor: Option<String>,
     pages: usize,
 }
@@ -92,7 +107,10 @@ impl Gather {
             Step::Snapshot => return Some(RpcRequestPayload::GetSnapshot),
             Step::TypeNames => RpcCommand::DescribeModuleTypes(ModuleTypeQuery::default()),
             Step::TypeDetails => {
-                self.asked_types = self.types.len().min(TYPES_PER_REQUEST);
+                if self.batch == 0 {
+                    self.batch = TYPES_PER_REQUEST;
+                }
+                self.asked_types = self.types.len().min(self.batch);
                 RpcCommand::DescribeModuleTypes(ModuleTypeQuery {
                     types: Some(self.types.iter().take(self.asked_types).cloned().collect()),
                     detail: TypeDetail::Full,
@@ -128,6 +146,9 @@ impl Gather {
     pub fn answer(&mut self, reply: Result<RpcResponsePayload, String>) {
         let step = self.step();
         let next_cursor = match (step, reply) {
+            (Step::TypeDetails, Ok(RpcResponsePayload::Error(error))) => {
+                return self.retry_types(&error.message)
+            }
             (_, Err(error)) => return self.skip(step, &error),
             (_, Ok(RpcResponsePayload::Error(error))) => return self.skip(step, &error.message),
             (_, Ok(RpcResponsePayload::ContentError { error })) => {
@@ -160,10 +181,16 @@ impl Gather {
             (Step::Examples, Ok(RpcResponsePayload::Examples { catalog }))
             | (Step::Developments, Ok(RpcResponsePayload::Developments { catalog })) => {
                 self.index.extend(content_entries(&catalog));
+                self.note_left_out(
+                    step,
+                    catalog.diagnostics.len(),
+                    catalog.diagnostics_truncated,
+                );
                 catalog.next_cursor
             }
             (Step::Packages, Ok(RpcResponsePayload::Packages(list))) => {
                 self.index.extend(package_entries(&list));
+                self.note_left_out(step, list.diagnostics.len(), list.diagnostics_truncated);
                 list.next_cursor
             }
             (_, Ok(other)) => {
@@ -183,6 +210,42 @@ impl Gather {
             }
             None => self.advance(step),
         }
+    }
+
+    /// Asks again for half of a batch of types the daemon refused (a batch
+    /// can outgrow its response cap), or, for a type refused alone, gives it
+    /// a card by name and goes on. A failed connection skips them all.
+    fn retry_types(&mut self, error: &str) {
+        if self.asked_types > 1 {
+            self.batch = self.asked_types / 2;
+            return;
+        }
+        self.batch = TYPES_PER_REQUEST;
+        if let Some(name) = self.types.pop_front() {
+            self.index.add(unread_type_entry(
+                &name,
+                &format!("Could not be described: {error}"),
+            ));
+        }
+        if self.types.is_empty() {
+            self.advance(Step::TypeDetails);
+        }
+    }
+
+    /// Notes the entries a page reports it left out as unreadable.
+    fn note_left_out(&mut self, step: Step, count: usize, truncated: bool) {
+        if count == 0 && !truncated {
+            return;
+        }
+        let count = match truncated {
+            true => format!("more than {count}"),
+            false => count.to_string(),
+        };
+        self.index.note(format!(
+            "{}: {count} could not be read and were not searched; {} shows why.",
+            step.source(),
+            step.lister()
+        ));
     }
 
     fn skip(&mut self, step: Step, error: &str) {

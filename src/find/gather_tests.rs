@@ -96,6 +96,10 @@ struct Daemon {
     registry: ModuleRegistry,
     piece: RuntimeFullSnapshot,
     requests: Vec<Value>,
+    /// Refuses a type description of more types than this, as a reply over
+    /// the response cap is refused, and any naming `refused_type`.
+    max_described: usize,
+    refused_type: &'static str,
 }
 
 impl Daemon {
@@ -109,14 +113,22 @@ impl Daemon {
             other => panic!("unexpected request {other:?}"),
         };
         Ok(match command {
-            RpcCommand::DescribeModuleTypes(query) => RpcResponsePayload::ModuleTypes {
-                discovery: ModuleTypeList::from_registry(
-                    &self.registry,
-                    SAMPLE_RATE,
-                    RegistryScope::Builtins,
-                    &query,
-                )
-                .map_err(|error| error.message)?,
+            RpcCommand::DescribeModuleTypes(query)
+                if (query.types.iter()).any(|types| {
+                    types.len() > self.max_described
+                        || types.iter().any(|name| name == self.refused_type)
+                }) =>
+            {
+                RpcResponsePayload::Error(RpcError::new(RpcErrorCode::Internal, "too large"))
+            }
+            RpcCommand::DescribeModuleTypes(query) => match ModuleTypeList::from_registry(
+                &self.registry,
+                SAMPLE_RATE,
+                RegistryScope::Builtins,
+                &query,
+            ) {
+                Ok(discovery) => RpcResponsePayload::ModuleTypes { discovery },
+                Err(error) => RpcResponsePayload::Error(error),
             },
             RpcCommand::ListExamples { query } => RpcResponsePayload::Examples {
                 catalog: match query.cursor.as_deref() {
@@ -152,7 +164,10 @@ impl Daemon {
                     .unwrap(),
                 ],
                 next_cursor: None,
-                diagnostics: Vec::new(),
+                diagnostics: vec![serde_json::from_value(
+                    json!({"code": "invalid_manifest", "message": "bad manifest"}),
+                )
+                .unwrap()],
                 diagnostics_truncated: false,
             }),
             other => panic!("unexpected command {other:?}"),
@@ -161,10 +176,20 @@ impl Daemon {
 }
 
 fn gather(piece: RuntimeFullSnapshot) -> (Index, Vec<Value>) {
+    gather_refusing(piece, usize::MAX, "")
+}
+
+fn gather_refusing(
+    piece: RuntimeFullSnapshot,
+    max_described: usize,
+    refused_type: &'static str,
+) -> (Index, Vec<Value>) {
     let mut daemon = Daemon {
         registry: ModuleRegistry::default(),
         piece,
         requests: Vec::new(),
+        max_described,
+        refused_type,
     };
     let mut gather = Gather::new();
     while let Some(request) = gather.next_request() {
@@ -242,6 +267,27 @@ fn a_loaded_piece_lists_each_control_with_the_call_that_reaches_it() {
 }
 
 #[test]
+fn a_value_too_long_to_show_is_read_never_overwritten() {
+    let registry = ModuleRegistry::default();
+    let mut voice = module(&registry, "voice", "filter", None);
+    let mut prompt = voice.controls[0].clone();
+    prompt.meta.key = "prompt".into();
+    prompt.meta.kind = crate::ControlKind::String { options: None };
+    prompt.meta.read_only = false;
+    prompt.meta.event = false;
+    prompt.value = Some(crate::ControlValue::String("a long prompt ".repeat(20)));
+    voice.controls.push(prompt);
+    let entries = control_entries(&snapshot(true, vec![voice]));
+    let card = &(entries.iter())
+        .find(|entry| entry.card.name == "voice.prompt")
+        .unwrap()
+        .card;
+    assert_eq!(card.how["call"]["tool"], "get_control");
+    assert!(card.how["call"]["arguments"].get("value").is_none());
+    assert!(card.when.contains("too long to show"), "{}", card.when);
+}
+
+#[test]
 fn idle_daemon_reads_no_controls_and_the_answer_says_why() {
     let (index, _) = gather(snapshot(false, Vec::new()));
     assert!(!index.piece_loaded());
@@ -273,6 +319,34 @@ fn every_page_of_a_catalog_is_read_and_a_failed_read_is_noted() {
     assert!(answer
         .notes
         .contains(&"Developments could not be read: disk unreadable".to_string()));
+}
+
+#[test]
+fn a_refused_type_batch_is_asked_in_halves_and_a_refused_type_keeps_its_name() {
+    let (index, requests) = gather_refusing(snapshot(false, Vec::new()), 5, "reverb");
+    for name in ModuleRegistry::default().types() {
+        assert!(index.contains(FindKind::ModuleType, name), "{name}");
+    }
+    let reverb = card(&index, FindKind::ModuleType, "reverb");
+    assert_eq!(reverb.when, "Could not be described: too large");
+    assert_eq!(reverb.how["detail"]["tool"], "describe_module");
+    let delay = card(&index, FindKind::ModuleType, "delay");
+    assert!(delay.when.contains("Controls:"), "{}", delay.when);
+    // The catalogs after the types are still read.
+    assert!(index.contains(FindKind::Example, "fugue.demo.drone"));
+    assert!(requests.len() < 200, "{} requests", requests.len());
+}
+
+#[test]
+fn a_page_that_left_entries_out_says_so() {
+    let (index, _) = gather(snapshot(false, Vec::new()));
+    let answer = index.find(&FindQuery::words("tape")).unwrap();
+    let note = "Packages: 1 could not be read and were not searched; list_packages shows why.";
+    assert!(
+        answer.notes.iter().any(|seen| seen == note),
+        "{:?}",
+        answer.notes
+    );
 }
 
 #[test]

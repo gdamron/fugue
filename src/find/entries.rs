@@ -13,7 +13,8 @@ use crate::{tidy_key, ControlKind, ControlMeta, ControlValue, RuntimeFullSnapsho
 const FRAGMENT_CONTROLS: usize = 6;
 /// The most control keys a module type's card names in its `when`.
 const NAMED_CONTROLS: usize = 8;
-/// The longest control value a card repeats; a longer one is a placeholder.
+/// The longest control value a card repeats; a control holding a longer one
+/// gets the call that reads it.
 const MAX_SHOWN_VALUE_CHARS: usize = 64;
 
 /// A card per module type a full type listing describes. A type that
@@ -22,21 +23,29 @@ pub fn module_type_entries(list: &ModuleTypeList) -> Vec<Entry> {
     (list.details.iter().flatten())
         .map(|detail| match detail {
             ModuleTypeDetail::Available { info } => module_type_entry(info),
-            ModuleTypeDetail::Unavailable { type_name, error } => Entry::new(Card {
-                kind: FindKind::ModuleType,
-                name: type_name.clone(),
-                what: format!("{} module", tidy_key(type_name)),
-                when: format!(
+            ModuleTypeDetail::Unavailable { type_name, error } => unread_type_entry(
+                type_name,
+                &format!(
                     "Needs a config to describe; with its defaults: {}",
                     error.message
                 ),
-                how: json!({
-                    "module": {"id": type_name, "type": type_name, "config": {}},
-                    "detail": {"tool": "describe_module", "arguments": {"type": type_name, "config": {}}},
-                }),
-            }),
+            ),
         })
         .collect()
+}
+
+/// A card for a module type known only by name, saying why.
+pub(super) fn unread_type_entry(type_name: &str, why: &str) -> Entry {
+    Entry::new(Card {
+        kind: FindKind::ModuleType,
+        name: type_name.to_string(),
+        what: format!("{} module", tidy_key(type_name)),
+        when: why.to_string(),
+        how: json!({
+            "module": {"id": type_name, "type": type_name, "config": {}},
+            "detail": {"tool": "describe_module", "arguments": {"type": type_name, "config": {}}},
+        }),
+    })
 }
 
 fn module_type_entry(info: &ModuleTypeInfo) -> Entry {
@@ -173,20 +182,29 @@ pub fn control_entries(snapshot: &RuntimeFullSnapshot) -> Vec<Entry> {
             let label = meta.label.clone().unwrap_or_else(|| tidy_key(&meta.key));
             let value = control.value.as_ref().unwrap_or(&meta.default);
             let mut arguments = json!({"module_id": info.id, "key": meta.key});
-            let tool = if meta.read_only {
-                "get_control"
-            } else {
-                arguments["value"] = match meta.event {
-                    true => Value::Bool(true),
-                    false => shown_value(value).unwrap_or_else(|| json!("<value>")),
-                };
-                "set_control"
+            let now = shown_value(value);
+            // A value too long to repeat is read, never overwritten with a
+            // stand-in.
+            let tool = match (meta.read_only, meta.event, &now) {
+                (false, true, _) => {
+                    arguments["value"] = Value::Bool(true);
+                    "set_control"
+                }
+                (false, false, Some(now)) => {
+                    arguments["value"] = now.clone();
+                    "set_control"
+                }
+                _ => "get_control",
             };
             let mut when = meta.description.clone();
-            if let Some(now) = shown_value(value) {
+            if let Some(now) = &now {
                 when.push_str(&format!(" Now {now}"));
                 when.push_str(&range_of(&meta.kind));
                 when.push('.');
+            } else if !meta.read_only && !meta.event {
+                when.push_str(
+                    " Its value is too long to show: read it with this call, then set it with set_control.",
+                );
             }
             let mut terms = control_terms(meta);
             terms.extend([info.id.clone(), info.module_type.clone()]);
