@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use yaml_rust2::parser::{Event, Parser};
+use yaml_rust2::parser::{Event, Parser, Tag};
 use yaml_rust2::scanner::TScalarStyle;
 use yaml_rust2::Yaml;
 
@@ -95,12 +95,12 @@ impl Frontmatter {
                 Event::Alias(_) => {
                     return Err("it uses a YAML alias (`*name`); write the value out".to_string())
                 }
-                Event::Scalar(value, style, _, _) => match depth {
+                Event::Scalar(value, style, _, tag) => match depth {
                     0 if style == TScalarStyle::Plain
                         && matches!(Yaml::from_str(&value), Yaml::Null) => {}
                     0 => return Err(NOT_A_MAPPING.to_string()),
                     1 if key.is_none() => key = Some(value),
-                    1 => record(&mut key, scalar_field(value, style))?,
+                    1 => record(&mut key, scalar_field(value, style, tag.as_ref()))?,
                     _ => {}
                 },
                 Event::SequenceStart(..) | Event::MappingStart(..) => {
@@ -131,18 +131,28 @@ impl Frontmatter {
 
 const NOT_A_MAPPING: &str = "it is not a mapping of `key: value` pairs";
 
-/// A scalar value as a field: plain scalars resolve like YAML's core schema
-/// (`null`, numbers and booleans are not text), quoted and block scalars are
-/// always strings.
-fn scalar_field(value: String, style: TScalarStyle) -> Field {
-    let text = if style == TScalarStyle::Plain {
+/// A scalar value as a field, resolved as YAML's loader resolves it: quoted
+/// and block scalars are strings; a plain scalar with a core-schema tag
+/// (`!!int`, `!!null`) takes that type and with any other tag is a string;
+/// an untagged plain scalar resolves by its text (`null`, numbers and
+/// booleans are not text).
+fn scalar_field(value: String, style: TScalarStyle, tag: Option<&Tag>) -> Field {
+    let text = if style != TScalarStyle::Plain {
+        value
+    } else if let Some(tag) = tag {
+        match (tag.handle.as_str(), tag.suffix.as_str()) {
+            ("tag:yaml.org,2002:", "null") if matches!(value.as_str(), "~" | "null" | "") => {
+                return Field::Missing
+            }
+            ("tag:yaml.org,2002:", "null" | "bool" | "int" | "float") => return Field::NotText,
+            _ => value,
+        }
+    } else {
         match Yaml::from_str(&value) {
             Yaml::Null => return Field::Missing,
             Yaml::String(text) => text,
             _ => return Field::NotText,
         }
-    } else {
-        value
     };
     match text.trim() {
         "" => Field::Missing,
@@ -187,6 +197,22 @@ mod tests {
             field("d: starts\n  continues\n", "d"),
             text("starts continues")
         );
+    }
+
+    #[test]
+    fn explicit_tags_set_the_type() {
+        assert_eq!(
+            field("name: !!str 123\n", "name"),
+            Field::Text("123".to_string())
+        );
+        assert_eq!(
+            field("d: !!str null\n", "d"),
+            Field::Text("null".to_string())
+        );
+        assert_eq!(field("d: !!null ~\n", "d"), Field::Missing);
+        for frontmatter in ["d: !!int words\n", "d: !!bool yes\n", "d: !!float 1.5\n"] {
+            assert_eq!(field(frontmatter, "d"), Field::NotText, "{frontmatter:?}");
+        }
     }
 
     #[test]
