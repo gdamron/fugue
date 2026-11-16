@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use super::manifest::{Capability, DepRef, PackageManifest};
+use super::manifest::{Capability, DepRef, PackageKind, PackageManifest};
 
 /// Reasons a manifest can fail to load.
 #[derive(Debug)]
@@ -72,6 +72,17 @@ pub enum ValidationError {
     },
     UnknownCapability(String),
     InvalidDepRef(String),
+    /// A `policies` entry is not of the form `id@requirement`.
+    InvalidPolicyRef(String),
+    /// `policies` declared on a kind other than `skill` or `agent`.
+    PoliciesNotAllowed {
+        kind: &'static str,
+    },
+    /// A `policy` package declares a requirement field (`deps` or
+    /// `policies`); policy packages require no other package.
+    PolicyPackageRequires {
+        field: &'static str,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -100,6 +111,17 @@ impl fmt::Display for ValidationError {
             ValidationError::InvalidDepRef(d) => {
                 write!(f, "invalid dep ref `{d}`: expected `id@requirement`")
             }
+            ValidationError::InvalidPolicyRef(p) => {
+                write!(f, "invalid policies entry `{p}`: expected `id@requirement`")
+            }
+            ValidationError::PoliciesNotAllowed { kind } => write!(
+                f,
+                "`policies` is allowed only on skill and agent packages, not on a `{kind}`"
+            ),
+            ValidationError::PolicyPackageRequires { field } => write!(
+                f,
+                "a policy package cannot declare `{field}`: policies require no other package"
+            ),
         }
     }
 }
@@ -143,6 +165,32 @@ pub fn validate(manifest: &PackageManifest) -> Result<(), ValidationError> {
     for dep in &manifest.deps {
         if DepRef::parse(dep).is_none() {
             return Err(ValidationError::InvalidDepRef(dep.clone()));
+        }
+    }
+    validate_policy_fields(manifest)
+}
+
+/// The `policies` field and the flat-policy rule: only skills and agents
+/// declare `policies`, each entry is `id@requirement`, and a policy package
+/// itself requires nothing.
+fn validate_policy_fields(manifest: &PackageManifest) -> Result<(), ValidationError> {
+    if manifest.kind == PackageKind::Policy {
+        if !manifest.deps.is_empty() {
+            return Err(ValidationError::PolicyPackageRequires { field: "deps" });
+        }
+        if !manifest.policy_requirements().is_empty() {
+            return Err(ValidationError::PolicyPackageRequires { field: "policies" });
+        }
+        return Ok(());
+    }
+    if manifest.policies.is_some() && !manifest.kind.accepts_policies() {
+        return Err(ValidationError::PoliciesNotAllowed {
+            kind: manifest.kind.as_str(),
+        });
+    }
+    for policy in manifest.policy_requirements() {
+        if DepRef::parse(policy).is_none() {
+            return Err(ValidationError::InvalidPolicyRef(policy.clone()));
         }
     }
     Ok(())

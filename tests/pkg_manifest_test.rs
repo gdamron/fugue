@@ -14,6 +14,7 @@ const KINDS: &[(&str, PackageKind)] = &[
     ("skill.json", PackageKind::Skill),
     ("agent.json", PackageKind::Agent),
     ("sample-pack.json", PackageKind::SamplePack),
+    ("policy.json", PackageKind::Policy),
 ];
 
 #[test]

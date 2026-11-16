@@ -11,6 +11,8 @@ pub mod content;
 pub(crate) mod layout;
 pub mod lock;
 pub mod manifest;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod policy_entry;
 pub mod read_limit;
 pub mod resolve;
 pub mod sample_pack;
@@ -22,7 +24,8 @@ pub use manifest::{
     Author, Capability, DepRef, EntrySpec, PackageKind, PackageManifest, Requires, Signing, Target,
 };
 pub use resolve::{
-    dependency_edges, resolve_transitive, select_version, PackageProvider, Resolved,
+    dependency_edges, locked_edges, resolve_package, resolve_transitive, select_version,
+    PackageProvider, Resolved,
 };
 pub use sample_pack::{
     parse_str as parse_sample_pack_str, validate as validate_sample_pack, SampleFile,
@@ -39,6 +42,8 @@ pub use audio_asset::{default_packages_dir, resolve_package_asset, ResolvedPacka
 pub use layout::is_source_checkout;
 #[cfg(not(target_arch = "wasm32"))]
 pub use lock::compute_integrity;
+#[cfg(not(target_arch = "wasm32"))]
+pub use policy_entry::{check_policy_entry, PolicyEntryError};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use sample_pack::parse_path as parse_sample_pack_path;

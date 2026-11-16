@@ -9,5 +9,6 @@
   "requires": {
     "mcp-tools": ["fugue"]
   },
+  "policies": ["fugue.example.mixing-policy@^0.1.0"],
   "entry": { "skill": "SKILL.md" }
 }

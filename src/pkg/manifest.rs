@@ -47,6 +47,12 @@ pub struct PackageManifest {
     #[serde(default)]
     pub deps: Vec<String>,
 
+    /// Policy packages this skill or agent requires (`id@req` strings).
+    /// Allowed only on `skill` and `agent` packages; resolved and locked like
+    /// `deps`, but each must resolve to a `policy` package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policies: Option<Vec<String>>,
+
     /// Kind-specific entry point.
     pub entry: EntrySpec,
 
@@ -66,6 +72,8 @@ pub enum PackageKind {
     Skill,
     Agent,
     SamplePack,
+    /// One Markdown file of shared rules that skills and agents require.
+    Policy,
 }
 
 impl PackageKind {
@@ -77,7 +85,13 @@ impl PackageKind {
             PackageKind::Skill => "skill",
             PackageKind::Agent => "agent",
             PackageKind::SamplePack => "sample-pack",
+            PackageKind::Policy => "policy",
         }
+    }
+
+    /// Whether a package of this kind may declare `policies`.
+    pub fn accepts_policies(self) -> bool {
+        matches!(self, PackageKind::Skill | PackageKind::Agent)
     }
 }
 
@@ -124,6 +138,7 @@ pub enum EntrySpec {
     Skill { skill: String },
     Agent { definition: String },
     SamplePack { samples: String },
+    Policy { policy: String },
 }
 
 impl EntrySpec {
@@ -136,7 +151,28 @@ impl EntrySpec {
             EntrySpec::Skill { .. } => PackageKind::Skill,
             EntrySpec::Agent { .. } => PackageKind::Agent,
             EntrySpec::SamplePack { .. } => PackageKind::SamplePack,
+            EntrySpec::Policy { .. } => PackageKind::Policy,
         }
+    }
+
+    /// The entry path, relative to the package root.
+    pub fn path(&self) -> &str {
+        match self {
+            EntrySpec::Module { wasm } => wasm,
+            EntrySpec::Invention { invention } => invention,
+            EntrySpec::Development { development } => development,
+            EntrySpec::Skill { skill } => skill,
+            EntrySpec::Agent { definition } => definition,
+            EntrySpec::SamplePack { samples } => samples,
+            EntrySpec::Policy { policy } => policy,
+        }
+    }
+}
+
+impl PackageManifest {
+    /// The declared policy requirements, empty when the field is absent.
+    pub fn policy_requirements(&self) -> &[String] {
+        self.policies.as_deref().unwrap_or_default()
     }
 }
 

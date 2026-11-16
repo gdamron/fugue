@@ -1,7 +1,7 @@
 # `fugue.pkg.json` manifest
 
 Every Fugue extension — `module`, `development`, `invention`, `skill`,
-`agent`, `sample-pack` — ships with a `fugue.pkg.json` at its
+`agent`, `sample-pack`, `policy` — ships with a `fugue.pkg.json` at its
 root. This file is the shared manifest format that the `fugue install`
 pipeline, the daemon, and the MCP server all read.
 
@@ -18,7 +18,7 @@ content, see [Musical content identity and resolution](CONTENT_IDENTITY.md).
 | ------------- | ------------------------- | -------- | ----------------------------------------------------------------------------- |
 | `id`          | string                    | yes      | Reverse-DNS, ≥3 lowercase segments (`fugue.ns.name`).                         |
 | `version`     | string                    | yes      | Semver.                                                                       |
-| `kind`        | string enum               | yes      | One of `module`, `development`, `invention`, `skill`, `agent`, `sample-pack`. |
+| `kind`        | string enum               | yes      | One of `module`, `development`, `invention`, `skill`, `agent`, `sample-pack`, `policy`. |
 | `license`     | string                    | yes      | SPDX identifier. Phase 1 does not look it up against the SPDX list.           |
 | `authors`     | array of `{name, url?}`   | yes      | At least one entry; `name` must be non-empty.                                 |
 | `description` | string                    | no       | One-line summary.                                                             |
@@ -26,6 +26,7 @@ content, see [Musical content identity and resolution](CONTENT_IDENTITY.md).
 | `targets`     | array of string enum      | yes      | At least one of `external-agent`, `in-graph-agent`.                           |
 | `requires`    | object                    | no       | Declared runtime requirements (see below).                                    |
 | `deps`        | array of `id@req` strings | no       | Other Fugue packages this one depends on. Phase 1 shape-checks only.          |
+| `policies`    | array of `id@req` strings | no       | Policy packages a `skill` or `agent` requires (see [Policies](#policies)).    |
 | `entry`       | object                    | yes      | Kind-specific entry point (see below).                                        |
 | `signing`     | `{key, signature}`        | no       | Reserved for Phase 2; accepted but not enforced.                              |
 
@@ -55,10 +56,34 @@ rejects manifests whose `entry` shape doesn't match `kind`.
 | `skill`       | `{ "skill": "<path>" }`       |
 | `agent`       | `{ "definition": "<path>" }`  |
 | `sample-pack` | `{ "samples": "<path>" }`     |
+| `policy`      | `{ "policy": "<path>" }`      |
 
 A `sample-pack`'s entry file (conventionally `samples.json`) has its own
 kind-specific schema — licensing, attribution, sample rates, tags, and
 slice points. See [SAMPLE_PACK.md](SAMPLE_PACK.md).
+
+## Policies
+
+A `policy` package is one Markdown file of shared rules or reference knowledge
+with no triggers. Skills and agents list the policies they need in `policies`
+instead of restating the rules:
+
+```json
+{ "kind": "skill", "policies": ["fugue.example.mixing-policy@^0.1.0"], "entry": { "skill": "SKILL.md" } }
+```
+
+- Only `skill` and `agent` packages may declare `policies`; on any other kind
+  the field is a validation error, even when empty.
+- Policies are flat: a policy package declares no `deps` and no `policies`.
+- A policy is pinned, not live. The resolver walks `policies` alongside
+  `deps` (`resolve_package`), chooses one version per policy id however many
+  packages require it, and locks it like any dependency: one lockfile entry
+  of kind `policy`, with its integrity hash, and an `id@version` edge in each
+  requirer's `dependencies`. A requirement that resolves to a package of
+  another kind fails resolution, naming the id and that kind.
+- The entry must be a `.md` file inside the package that does not open with a
+  YAML frontmatter block, which an agent host would discover as a skill.
+  `check_policy_entry` checks this once the package is on disk.
 
 ## Examples
 
@@ -70,6 +95,7 @@ One per kind lives in [`examples/`](examples/):
 - [`skill.json`](examples/skill.json)
 - [`agent.json`](examples/agent.json)
 - [`sample-pack.json`](examples/sample-pack.json)
+- [`policy.json`](examples/policy.json)
 
 These files are exercised by `tests/pkg_manifest_test.rs`, so they stay
 in sync with the validator. The sample-pack entry file has its own
