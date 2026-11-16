@@ -99,7 +99,11 @@ impl Frontmatter {
                     0 if style == TScalarStyle::Plain
                         && matches!(Yaml::from_str(&value), Yaml::Null) => {}
                     0 => return Err(NOT_A_MAPPING.to_string()),
-                    1 if key.is_none() => key = Some(value),
+                    1 if key.is_none() => {
+                        let text = resolve_string(value, style, tag.as_ref())
+                            .map_err(|_| KEYS_MUST_BE_TEXT.to_string())?;
+                        key = Some(text);
+                    }
                     1 => record(&mut key, scalar_field(value, style, tag.as_ref()))?,
                     _ => {}
                 },
@@ -107,7 +111,7 @@ impl Frontmatter {
                     let mapping = matches!(event, Event::MappingStart(..));
                     match depth {
                         0 if !mapping => return Err(NOT_A_MAPPING.to_string()),
-                        1 if key.is_none() => return Err("its keys must be plain text".to_string()),
+                        1 if key.is_none() => return Err(KEYS_MUST_BE_TEXT.to_string()),
                         1 => record(&mut key, Field::NotText)?,
                         _ => {}
                     }
@@ -130,6 +134,7 @@ impl Frontmatter {
 }
 
 const NOT_A_MAPPING: &str = "it is not a mapping of `key: value` pairs";
+const KEYS_MUST_BE_TEXT: &str = "its keys must be text";
 
 /// A scalar value as a field, resolved as YAML's loader resolves it: quoted
 /// and block scalars are strings; a plain scalar with a core-schema tag
@@ -137,26 +142,32 @@ const NOT_A_MAPPING: &str = "it is not a mapping of `key: value` pairs";
 /// an untagged plain scalar resolves by its text (`null`, numbers and
 /// booleans are not text).
 fn scalar_field(value: String, style: TScalarStyle, tag: Option<&Tag>) -> Field {
-    let text = if style != TScalarStyle::Plain {
-        value
-    } else if let Some(tag) = tag {
-        match (tag.handle.as_str(), tag.suffix.as_str()) {
+    match resolve_string(value, style, tag) {
+        Ok(text) if text.trim().is_empty() => Field::Missing,
+        Ok(text) => Field::Text(text.trim().to_string()),
+        Err(field) => field,
+    }
+}
+
+/// The scalar's string, or the field it is when YAML reads it as null
+/// ([`Field::Missing`]) or another type ([`Field::NotText`]).
+fn resolve_string(value: String, style: TScalarStyle, tag: Option<&Tag>) -> Result<String, Field> {
+    if style != TScalarStyle::Plain {
+        return Ok(value);
+    }
+    if let Some(tag) = tag {
+        return match (tag.handle.as_str(), tag.suffix.as_str()) {
             ("tag:yaml.org,2002:", "null") if matches!(value.as_str(), "~" | "null" | "") => {
-                return Field::Missing
+                Err(Field::Missing)
             }
-            ("tag:yaml.org,2002:", "null" | "bool" | "int" | "float") => return Field::NotText,
-            _ => value,
-        }
-    } else {
-        match Yaml::from_str(&value) {
-            Yaml::Null => return Field::Missing,
-            Yaml::String(text) => text,
-            _ => return Field::NotText,
-        }
-    };
-    match text.trim() {
-        "" => Field::Missing,
-        trimmed => Field::Text(trimmed.to_string()),
+            ("tag:yaml.org,2002:", "null" | "bool" | "int" | "float") => Err(Field::NotText),
+            _ => Ok(value),
+        };
+    }
+    match Yaml::from_str(&value) {
+        Yaml::Null => Err(Field::Missing),
+        Yaml::String(text) => Ok(text),
+        _ => Err(Field::NotText),
     }
 }
 
@@ -212,6 +223,13 @@ mod tests {
         assert_eq!(field("d: !!null ~\n", "d"), Field::Missing);
         for frontmatter in ["d: !!int words\n", "d: !!bool yes\n", "d: !!float 1.5\n"] {
             assert_eq!(field(frontmatter, "d"), Field::NotText, "{frontmatter:?}");
+        }
+        assert_eq!(
+            field("!!str name: a\n", "name"),
+            Field::Text("a".to_string())
+        );
+        for frontmatter in ["!!int name: a\n", "12: a\n", "~: a\n"] {
+            assert!(Frontmatter::parse(frontmatter).is_err(), "{frontmatter:?}");
         }
     }
 
