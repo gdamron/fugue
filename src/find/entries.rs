@@ -196,7 +196,10 @@ pub fn control_entries(snapshot: &RuntimeFullSnapshot) -> Vec<Entry> {
                 }
                 _ => "get_control",
             };
-            let mut when = meta.description.clone();
+            let mut when = meta.description.trim_end().to_string();
+            if !when.is_empty() && !when.ends_with(['.', '!', '?']) {
+                when.push('.');
+            }
             if let Some(now) = &now {
                 when.push_str(&format!(" Now {now}"));
                 when.push_str(&range_of(&meta.kind));

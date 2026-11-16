@@ -254,6 +254,7 @@ fn a_loaded_piece_lists_each_control_with_the_call_that_reaches_it() {
     assert_eq!(cutoff.how["call"]["arguments"]["key"], "cutoff");
     assert!(cutoff.how["call"]["arguments"]["value"].is_number());
     assert!(cutoff.what.contains("Lead filter"));
+    assert!(cutoff.when.contains(". Now "), "{}", cutoff.when);
 
     let answer = index.find(&FindQuery::words("make it brighter")).unwrap();
     assert_eq!(answer.cards[0].name, "lead_filter.cutoff");
