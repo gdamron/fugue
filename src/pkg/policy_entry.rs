@@ -99,7 +99,8 @@ pub fn check_policy_entry(
     let path = package_root.join(relative);
     if relative.as_os_str().is_empty()
         || relative.components().any(|component| match component {
-            Component::Normal(name) => name == ".git",
+            // Any case: on a case-insensitive filesystem `.GIT` is `.git`.
+            Component::Normal(name) => name.eq_ignore_ascii_case(".git"),
             Component::CurDir => false,
             _ => true,
         })
@@ -229,8 +230,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join(".git")).unwrap();
         std::fs::write(dir.path().join(".git/POLICY.md"), "# Rules\n").unwrap();
-        let err = check_policy_entry(dir.path(), &policy_manifest(".git/POLICY.md")).unwrap_err();
-        assert!(matches!(err, PolicyEntryError::OutsidePackage(_)), "{err}");
+        for entry in [".git/POLICY.md", ".GIT/POLICY.md", "rules/.Git/POLICY.md"] {
+            let err = check_policy_entry(dir.path(), &policy_manifest(entry)).unwrap_err();
+            assert!(
+                matches!(err, PolicyEntryError::OutsidePackage(_)),
+                "{entry}: {err}"
+            );
+        }
     }
 
     #[cfg(unix)]
