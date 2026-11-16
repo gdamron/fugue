@@ -75,8 +75,11 @@ pub struct Step {
     /// last held step sounds its whole step. When looping, a held step 0
     /// continues the note that ends the pattern across the loop point (on
     /// the first pass, with no note sounding, it is silent like a rest);
-    /// a one-shot pattern never wraps. If the clock stops before a held
-    /// step's edge, the gate releases two measured steps after the last edge.
+    /// a one-shot pattern never wraps. If no clock edge comes (the clock
+    /// stopped), the gate into a held step releases two measured steps
+    /// after the last edge, plus up to two samples for fractional step
+    /// lengths, so a tempo halving still holds; a held edge later than
+    /// that (a slowdown past half) re-attacks the note.
     pub held: bool,
     /// Optional velocity for this step (0.0-1.0), from the score's
     /// dynamics. The sequencer's `velocity` output carries it as the note
