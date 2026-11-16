@@ -287,8 +287,10 @@ fully into a rest, the end of the cell, or another held step. Both it and the
 [`step_sequencer`](../src/modules/step_sequencer/mod.rs) also force a
 one-sample release when a new note arrives while the gate is still high (the
 first step, before a step length is measured, or a sudden accelerando), as a
-backstop. The `step_sequencer` still holds a held step's gate for the full
-step into a new note, and so relies on that backstop.
+backstop. Both bridge the gate across the edge into a held step, so a note
+and its held steps are one unbroken gate and one attack. The
+`step_sequencer` still holds a held step's gate for the full step into a new
+note, and so relies on that backstop.
 
 The rule generalises: any module that gates or retriggers on musical steps
 must not assume a step is a whole number of samples.

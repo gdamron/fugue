@@ -70,7 +70,13 @@ pub struct Step {
     /// Gate length for this step as ratio of step duration (0.0-1.0).
     /// If None, uses the sequencer's default gate_length.
     pub gate_length: Option<f32>,
-    /// Continue the previous active note without retriggering.
+    /// Continue the previous active note without retriggering: the gate
+    /// stays high from the note's attack through its held steps, and the
+    /// last held step sounds its whole step. When looping, a held step 0
+    /// continues the note that ends the pattern across the loop point (on
+    /// the first pass, with no note sounding, it is silent like a rest);
+    /// a one-shot pattern never wraps. If the clock stops before a held
+    /// step's edge, the gate releases two measured steps after the last edge.
     pub held: bool,
     /// Optional velocity for this step (0.0-1.0), from the score's
     /// dynamics. The sequencer's `velocity` output carries it as the note
