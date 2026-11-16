@@ -22,9 +22,9 @@ pub fn render(json: &str, frames: usize) -> (Vec<f32>, Vec<f32>) {
     let (mut left, mut right) = (Vec::with_capacity(frames), Vec::with_capacity(frames));
     while left.len() < frames {
         engine.render_interleaved(&mut block).unwrap();
-        for pair in block.chunks_exact(2) {
-            left.push(pair[0]);
-            right.push(pair[1]);
+        for &[l, r] in block.as_chunks::<2>().0 {
+            left.push(l);
+            right.push(r);
         }
     }
     left.truncate(frames);
