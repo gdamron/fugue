@@ -1,4 +1,5 @@
-//! The gate bridged into a held step: its release when no edge comes.
+//! The gate bridged into a held step holds through a late held edge. (Its
+//! release on a stopped clock is in `tests/step_sequencer_held_gate`.)
 
 use super::*;
 
@@ -40,15 +41,6 @@ fn a_bridge_survives_an_edge_two_steps_later() {
             "the gate stays high into a held edge {late} samples later"
         );
     }
-}
-
-/// With no further edge, the bridged gate releases rather than sticking.
-#[test]
-fn a_bridge_releases_when_the_clock_stops() {
-    let mut seq = note_then_held();
-    let gate = drive(&mut seq, &[0, 100], 600);
-    assert!(gate[100..=301].iter().all(|&g| g));
-    assert!(gate[302..].iter().all(|&g| !g));
 }
 
 /// A clock at 97 BPM (sixteenths of 7,422.68 samples at 48 kHz) halves its
