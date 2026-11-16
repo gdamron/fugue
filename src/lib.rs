@@ -9,6 +9,7 @@ mod example_catalog;
 pub mod factory;
 #[cfg(feature = "ffi")]
 pub mod ffi;
+pub mod find;
 mod flush_to_zero;
 #[cfg(not(target_arch = "wasm32"))]
 mod hex;
