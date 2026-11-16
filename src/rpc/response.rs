@@ -131,6 +131,14 @@ pub enum RpcResponsePayload {
     ModuleDescription {
         description: ModuleDescription,
     },
+    /// The value of one control, answering [`RpcCommand::GetControl`].
+    ///
+    /// [`RpcCommand::GetControl`]: super::RpcCommand::GetControl
+    Control {
+        module_id: String,
+        key: String,
+        value: crate::ControlValue,
+    },
     Reload(ReloadOutcome),
     /// A committed [`RpcCommand::ApplyEdits`] batch. The envelope's
     /// `revision` is the revision it committed at.

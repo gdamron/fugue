@@ -6,7 +6,8 @@
 //! a document records the whole as a write of the whole would.
 //!
 //! A part is never listed: the whole lists the value, and the module's
-//! description says how its parts are spelled.
+//! description says how its parts are spelled. A part reads as what it is
+//! of the whole the module reads back now, built on the reading thread.
 
 use super::{ControlDecl, ControlTable};
 use crate::ControlValue;
@@ -19,11 +20,16 @@ pub(crate) struct WholePart {
     /// The whole's new value from its value now, the part's index and
     /// the value written to the part, or why the part refuses it.
     pub(crate) assemble: fn(&ControlValue, u16, &ControlValue) -> Result<ControlValue, String>,
+    /// The part's value from the whole's value now and the part's index,
+    /// or why there is no such part.
+    pub(crate) read: fn(&ControlValue, u16) -> Result<ControlValue, String>,
 }
 
 impl PartialEq for WholePart {
     fn eq(&self, other: &Self) -> bool {
-        self.whole == other.whole && std::ptr::fn_addr_eq(self.assemble, other.assemble)
+        self.whole == other.whole
+            && std::ptr::fn_addr_eq(self.assemble, other.assemble)
+            && std::ptr::fn_addr_eq(self.read, other.read)
     }
 }
 
@@ -35,13 +41,19 @@ impl std::fmt::Debug for WholePart {
 
 impl ControlDecl {
     /// Makes each index a part of control `whole`, written as `assemble`
-    /// builds the whole (see [`WholePart`]).
+    /// builds the whole and read as `read` takes it from the whole (see
+    /// [`WholePart`]).
     pub(crate) const fn part_of(
         mut self,
         whole: &'static str,
         assemble: fn(&ControlValue, u16, &ControlValue) -> Result<ControlValue, String>,
+        read: fn(&ControlValue, u16) -> Result<ControlValue, String>,
     ) -> Self {
-        self.part = Some(WholePart { whole, assemble });
+        self.part = Some(WholePart {
+            whole,
+            assemble,
+            read,
+        });
         self
     }
 }
@@ -76,6 +88,22 @@ impl ControlTable {
         let built = (part.assemble)(&now, position, value);
         Some(built.map(|whole| (part.whole.to_string(), whole)))
     }
+
+    /// Part `key` as read from `current`, the whole's value now: `None`
+    /// when `key` names no part. Control thread.
+    pub(crate) fn part_read(
+        &self,
+        key: &str,
+        current: impl FnOnce(&str) -> Option<ControlValue>,
+    ) -> Option<Result<ControlValue, String>> {
+        let index = self.resolve(key)?;
+        let (decl, position) = self.decl(index)?;
+        let part = decl.part?;
+        let Some(now) = current(part.whole) else {
+            return Some(Err(format!("'{}' holds no value yet", part.whole)));
+        };
+        Some((part.read)(&now, position))
+    }
 }
 
 #[cfg(test)]
@@ -100,12 +128,19 @@ mod tests {
         )))
     }
 
+    /// The whole's text from the part's index on.
+    fn tail(whole: &ControlValue, position: u16) -> Result<ControlValue, String> {
+        let text = whole.as_string()?;
+        let tail = text.get(usize::from(position)..).ok_or("past the end")?;
+        Ok(ControlValue::String(tail.to_string()))
+    }
+
     fn table() -> ControlTable {
         ControlTable::built(vec![
             ControlDecl::new("text", DeclKind::Payload, RtValue::Bool(false), "Whole"),
             ControlDecl::new("text", DeclKind::Payload, RtValue::Bool(false), "Part")
                 .indexed(4)
-                .part_of("text", append),
+                .part_of("text", append, tail),
         ])
         .unwrap()
     }
@@ -133,6 +168,18 @@ mod tests {
         );
         let none = table.whole_write("text.0", &ControlValue::String("c".into()), |_| None);
         assert!(none.unwrap().unwrap_err().contains("holds no value"));
+    }
+
+    #[test]
+    fn a_part_reads_from_the_whole_now_and_refuses_as_its_whole_says() {
+        let table = table();
+        let now = |_: &str| Some(ControlValue::String("abc".into()));
+        let read = table.part_read("text.1", now);
+        assert_eq!(read, Some(Ok(ControlValue::String("bc".into()))));
+        let past = table.part_read("text.3", |_| Some(ControlValue::String("ab".into())));
+        assert_eq!(past, Some(Err("past the end".into())));
+        assert!(table.part_read("text.0", |_| None).unwrap().is_err());
+        assert!(table.part_read("text", now).is_none());
     }
 
     #[test]

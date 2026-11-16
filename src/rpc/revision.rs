@@ -250,6 +250,7 @@ impl RpcCommand {
             | Self::DescribeExample { .. }
             | Self::DescribeModuleTypes(_)
             | Self::DescribeModule(_)
+            | Self::GetControl { .. }
             | Self::ExportRequestLog { .. }
             | Self::FlushSession { .. }
             | Self::GetRequest { .. }

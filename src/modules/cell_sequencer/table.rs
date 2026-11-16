@@ -169,8 +169,8 @@ const DECLS: &[ControlDecl] = &[
         "Read-only: a one_shot bank playthrough has completed",
     )
     .telemetry(),
-    // One cell of `cells`, written as the whole bank it makes (see
-    // `part`). Last, so no other control's index moves.
+    // One cell of `cells`, written as the whole bank it makes and read
+    // from the bank as it reads back (see `part`). Last, so no other control's index moves.
     ControlDecl::new(
         "cells",
         DeclKind::Payload,
@@ -178,7 +178,7 @@ const DECLS: &[ControlDecl] = &[
         "One cell as JSON, the same length as the cell it replaces",
     )
     .indexed(MAX_SEQUENCES as u16)
-    .part_of("cells", super::part::assemble_cell),
+    .part_of("cells", super::part::assemble_cell, super::part::read_cell),
 ];
 
 pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);

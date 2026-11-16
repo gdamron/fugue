@@ -7,6 +7,9 @@
 //! lines up with the piece (a cell played for its own length, a conductor
 //! that sets the step count from it), and changing that is choosing how
 //! cells repeat, which a note edit never does. Its trailing rests are kept.
+//!
+//! `cells.N` reads as cell N of the bank the sequencer reads back now, so
+//! a reader can take one cell of a bank too large to read whole.
 
 use super::parse::parse_sequence_bank_json;
 use super::parse_pattern as parse_cell;
@@ -54,16 +57,8 @@ pub(super) fn assemble_cell(
 ) -> Result<ControlValue, String> {
     let index = usize::from(position);
     let mut bank = parse_sequence_bank_json(whole.as_string()?)?;
-    let count = bank.len();
     let Some(current) = bank.get(index) else {
-        return Err(match count {
-            0 => format!("cells.{index}: the bank holds no cells"),
-            1 => format!("cells.{index}: the bank holds 1 cell, cells.0"),
-            _ => format!(
-                "cells.{index}: the bank holds {count} cells, cells.0 to cells.{}",
-                count - 1
-            ),
-        });
+        return Err(past_bank(index, bank.len()));
     };
     let value: serde_json::Value = serde_json::from_str(cell.as_string()?)
         .map_err(|error| format!("cells.{index}: {error}"))?;
@@ -80,6 +75,30 @@ pub(super) fn assemble_cell(
     }
     bank[index] = replaced;
     Ok(ControlValue::String(bank_json(&bank)))
+}
+
+/// Cell `position` of the bank `whole` reads back as, as JSON text; or,
+/// as a write to it would be, refused when the bank holds no such cell.
+pub(super) fn read_cell(whole: &ControlValue, position: u16) -> Result<ControlValue, String> {
+    let index = usize::from(position);
+    let bank = parse_sequence_bank_json(whole.as_string()?)?;
+    let cell = bank
+        .get(index)
+        .ok_or_else(|| past_bank(index, bank.len()))?;
+    let text = serde_json::to_string(cell).map_err(|error| error.to_string())?;
+    Ok(ControlValue::String(text))
+}
+
+/// Why `cells.{index}` names no cell of a bank of `count`.
+fn past_bank(index: usize, count: usize) -> String {
+    match count {
+        0 => format!("cells.{index}: the bank holds no cells"),
+        1 => format!("cells.{index}: the bank holds 1 cell, cells.0"),
+        _ => format!(
+            "cells.{index}: the bank holds {count} cells, cells.0 to cells.{}",
+            count - 1
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -115,6 +134,20 @@ mod tests {
         );
         let shorter = assemble_cell(&text(BANK), 0, &text(r#"[{"note":0}]"#));
         assert!(shorter.unwrap_err().contains("4 steps long"));
+    }
+
+    #[test]
+    fn a_cell_reads_as_its_place_in_the_bank_and_past_the_bank_is_refused() {
+        let read = read_cell(&text(BANK), 0).unwrap();
+        let cell: serde_json::Value = serde_json::from_str(read.as_string().unwrap()).unwrap();
+        assert_eq!(
+            cell,
+            bank(&text(&bank_json(&parse_sequence_bank_json(BANK).unwrap())))[0]
+        );
+        let past = read_cell(&text(BANK), 2).unwrap_err();
+        let written = assemble_cell(&text(BANK), 2, &text("[null]")).unwrap_err();
+        assert_eq!(past, written, "the read refuses as the write does");
+        assert!(read_cell(&ControlValue::Number(1.0), 0).is_err());
     }
 
     #[test]

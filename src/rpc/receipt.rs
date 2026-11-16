@@ -189,6 +189,7 @@ impl super::RpcCommand {
             | Self::ExportRequestLog { .. }
             | Self::DescribeModuleTypes(_)
             | Self::DescribeModule(_)
+            | Self::GetControl { .. }
             | Self::FlushSession { .. }
             | Self::GetRequest { .. }
             | Self::ListPendingRequests { .. }

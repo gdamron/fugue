@@ -237,6 +237,13 @@ impl DeclaredSurface {
         self.table.whole_write(key, value, current)
     }
 
+    /// Part `key` as read from the whole the module reads back now; `None`
+    /// when `key` is no part. Control thread.
+    pub(crate) fn part_read(&self, key: &str) -> Option<Result<ControlValue, String>> {
+        let current = |whole: &str| self.index(whole).ok().and_then(|index| self.shown(index));
+        self.table.part_read(key, current)
+    }
+
     /// [`Self::whole_write`] for a write made now: a part builds on the
     /// whole as written so far, so a part written at a later time is refused.
     fn whole_write_now(
