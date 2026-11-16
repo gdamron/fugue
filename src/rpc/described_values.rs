@@ -117,10 +117,25 @@ pub fn leave_out_defaults(
     }
 }
 
+/// The bytes a description saves by leaving out control `key`: its entry
+/// in `control_values` when a value was read, of `value` bytes, and its
+/// listed `"default"` of `default` bytes, less its entry in
+/// `values_omitted` naming `bytes`.
+fn saved_bytes(key: &str, value: Option<usize>, default: usize, bytes: usize) -> usize {
+    let key = json_bytes(&key);
+    let entry = |value: usize| key + 1 + value + 1; // "key":value,
+    let removed = value.map_or(0, entry) + r#","default":"#.len() + default;
+    let named = OmittedValue {
+        bytes: bytes as u64,
+        cell_lengths: None,
+    };
+    removed.saturating_sub(entry(json_bytes(&named)))
+}
+
 /// Also leaves out the largest values left until `fits` says the response
 /// fits [`MAX_DISCOVERY_RESPONSE_BYTES`](super::MAX_DISCOVERY_RESPONSE_BYTES):
 /// values each under the budget can still add up past it. Leaves out as few
-/// as fit, found by halving, so a large control surface costs a few trials;
+/// as fit, the largest savings first, found by halving, so a large control surface costs a few trials;
 /// when the response does not fit with every value left out, leaves
 /// `omitted` as it is.
 pub(crate) fn omit_until_fits(
@@ -132,17 +147,22 @@ pub(crate) fn omit_until_fits(
     if fits(omitted) {
         return;
     }
-    let mut sized: Vec<(usize, &String)> = (controls.iter())
+    // Each control by the bytes leaving it out saves, largest first; one
+    // that saves none (a small default with no value read) stays.
+    let mut sized: Vec<(usize, usize, &String)> = (controls.iter())
         .filter(|meta| !omitted.contains_key(&meta.key))
-        .map(|meta| {
-            let value = values.get(&meta.key).map_or(0, json_bytes);
-            (json_bytes(&meta.default).max(value), &meta.key)
+        .filter_map(|meta| {
+            let value = values.get(&meta.key).map(json_bytes);
+            let default = json_bytes(&meta.default);
+            let bytes = default.max(value.unwrap_or(0));
+            let saved = saved_bytes(&meta.key, value, default, bytes);
+            (saved > 0).then_some((saved, bytes, &meta.key))
         })
         .collect();
     sized.sort_unstable_by(|a, b| b.cmp(a));
     let leaving = |count: usize| {
         let mut leaving = omitted.clone();
-        for &(bytes, key) in &sized[..count] {
+        for &(_, bytes, key) in &sized[..count] {
             let value = OmittedValue {
                 bytes: bytes as u64,
                 cell_lengths: None,
@@ -282,7 +302,7 @@ mod tests {
     #[test]
     fn a_response_that_cannot_fit_is_left_as_it_is_after_a_few_trials() {
         let controls: Vec<_> = (0..65_536)
-            .map(|n| meta(&format!("slot.{n}"), ControlValue::Number(0.0)))
+            .map(|n| meta(&format!("slot.{n}"), "x".repeat(40).as_str().into()))
             .collect();
         let named = BTreeMap::from([(
             "cells".to_string(),
@@ -328,5 +348,28 @@ mod tests {
             listed,
             serde_json::json!([{"key": "cells"}, {"key": "mode", "default": "loop"}])
         );
+    }
+
+    #[test]
+    fn a_control_whose_leaving_out_saves_nothing_stays_listed() {
+        // A large value and many controls with no value read: leaving those
+        // out would only add their names, so the search leaves the large one.
+        let mut controls = vec![meta("bank", "x".repeat(7000).as_str().into())];
+        controls.extend((0..200).map(|n| meta(&format!("unread.{n}"), "".into())));
+        let values = BTreeMap::from([("bank".to_string(), "x".repeat(7000).as_str().into())]);
+        let size = |omitted: &BTreeMap<String, OmittedValue>| {
+            let mut listed = controls.clone();
+            let mut shown = values.clone();
+            leave_out(&mut listed, &mut shown, omitted);
+            let mut wire = serde_json::json!({"controls": listed, "control_values": shown});
+            leave_out_defaults(&mut wire["controls"], omitted);
+            wire["values_omitted"] = serde_json::to_value(omitted).unwrap();
+            json_bytes(&wire)
+        };
+        let whole = size(&BTreeMap::new());
+        let mut omitted = BTreeMap::new();
+        omit_until_fits(&controls, &values, &mut omitted, |o| size(o) < whole - 7000);
+        let keys: Vec<&str> = omitted.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["bank"]);
     }
 }
