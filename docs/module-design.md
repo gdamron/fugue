@@ -260,7 +260,10 @@ It is data only: the controls that hold the pattern, the root note, the step
 count and the default gate, the step object's fields, and the ranges a step
 can store. `pattern` holds the steps as JSON text, one per clock step, so a
 note's start and length count in steps. A note sounds for its gate length, a
-ratio of one step, or through the held steps after it.
+ratio of one step, or through the held steps after it. A step's
+`velocity` (0 to 1, full when absent) is heard only where the module's
+`velocity` output is connected; the step sequencer's grace notes sound at
+0.8 times their step's velocity.
 
 An editor changes the notes by writing the whole pattern with one
 `apply_edits` `set_control` (see [apply-edits.md](apply-edits.md)). The

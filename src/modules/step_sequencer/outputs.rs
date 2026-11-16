@@ -2,11 +2,12 @@
 
 use crate::MAX_BLOCK;
 
-pub const OUTPUTS: [&str; 4] = ["frequency", "gate", "step", "ended"];
+pub const OUTPUTS: [&str; 5] = ["frequency", "gate", "velocity", "step", "ended"];
 
 pub struct StepSequencerOutputs {
     frequency: [f32; MAX_BLOCK],
     gate: [f32; MAX_BLOCK],
+    velocity: [f32; MAX_BLOCK],
     step: [f32; MAX_BLOCK],
     ended: [f32; MAX_BLOCK],
 }
@@ -16,15 +17,25 @@ impl StepSequencerOutputs {
         Self {
             frequency: [0.0; MAX_BLOCK],
             gate: [0.0; MAX_BLOCK],
+            velocity: [1.0; MAX_BLOCK],
             step: [0.0; MAX_BLOCK],
             ended: [0.0; MAX_BLOCK],
         }
     }
 
     #[inline]
-    pub fn set(&mut self, i: usize, frequency: f32, gate: f32, step: f32, ended: f32) {
+    pub fn set(
+        &mut self,
+        i: usize,
+        frequency: f32,
+        gate: f32,
+        velocity: f32,
+        step: f32,
+        ended: f32,
+    ) {
         self.frequency[i] = frequency;
         self.gate[i] = gate;
+        self.velocity[i] = velocity;
         self.step[i] = step;
         self.ended[i] = ended;
     }
@@ -35,7 +46,8 @@ impl StepSequencerOutputs {
         match index {
             0 => &self.frequency,
             1 => &self.gate,
-            2 => &self.step,
+            2 => &self.velocity,
+            3 => &self.step,
             _ => &self.ended,
         }
     }
@@ -44,6 +56,7 @@ impl StepSequencerOutputs {
         match port {
             "frequency" => Ok(self.frequency[0]),
             "gate" => Ok(self.gate[0]),
+            "velocity" => Ok(self.velocity[0]),
             "step" => Ok(self.step[0]),
             "ended" => Ok(self.ended[0]),
             _ => Err(format!("Unknown output port: {}", port)),

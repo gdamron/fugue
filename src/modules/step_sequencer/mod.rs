@@ -10,6 +10,8 @@
 //! - Per-step note values with base note offset
 //! - Per-step gate length control
 //! - Support for rests (null notes)
+//! - Per-step velocity on a `velocity` output, heard only where it is
+//!   connected (a voice's `velocity` input, say)
 //! - Reset input for pattern restart
 //! - Step output for visualization/sync
 //!
@@ -79,8 +81,8 @@ mod step;
 
 pub use factory::StepSequencerFactory;
 use grace::{
-    clamp_per_grace, release_gap, GracePlayer, DEFAULT_GRACE_DURATION, MAX_GRACE_DURATION,
-    MIN_GRACE_DURATION,
+    clamp_per_grace, release_gap, GracePlayer, DEFAULT_GRACE_DURATION, DEFAULT_GRACE_VELOCITY,
+    MAX_GRACE_DURATION, MIN_GRACE_DURATION,
 };
 pub(crate) use parse::{parse_pattern, parse_step, StepError};
 pub use step::{GraceChain, Step, MAX_GRACE_NOTES, STEP_KEYS};
@@ -93,6 +95,10 @@ pub const DEFAULT_GATE_LENGTH: f32 = 0.5;
 
 /// Default base MIDI note (C3).
 pub const DEFAULT_ROOT_NOTE: u8 = 48;
+
+/// A grace note's velocity as a share of its step's: the cell sequencer's
+/// default `grace_velocity`, fixed here.
+const GRACE_VELOCITY: f32 = DEFAULT_GRACE_VELOCITY;
 
 /// A deterministic step sequencer for pattern playback.
 ///
@@ -108,6 +114,11 @@ pub const DEFAULT_ROOT_NOTE: u8 = 48;
 ///
 /// - `frequency` - Current note frequency in Hz (0.0 during rest)
 /// - `gate` - Output gate signal (high during note, low during rest)
+/// - `velocity` - The latest attack's velocity: a step's `velocity` (1.0
+///   when it declares none), or a grace note's. It changes on the sample
+///   the gate rises and holds through the note, its release, rests and held
+///   steps, so a ringing tail never sees it jump; 1.0 before any note. The
+///   stored velocity is heard only where this output is connected.
 /// - `step` - Current step number (0 to steps-1)
 /// - `ended` - End-of-sequence gate: 0.0 while playing; latches to 1.0 when a
 ///   one-shot pattern completes (exactly one rising edge per playthrough) and
@@ -124,7 +135,8 @@ pub const DEFAULT_ROOT_NOTE: u8 = 48;
 /// (chain starts at the edge and delays the principal). A decorated step
 /// with no previous step to steal from falls back to on-beat realization;
 /// a chain overrun by the next clock edge is truncated — the principal
-/// always wins.
+/// always wins. Each grace sounds at 0.8 times its step's velocity, under
+/// either placement; the principal at the step's own.
 ///
 /// # Playback modes
 ///
@@ -179,6 +191,13 @@ pub struct StepSequencer {
     first_gate_received: bool,
     /// Frequency for the current active note, retained across held steps.
     active_note: Option<i8>,
+    /// Velocity of the active principal note.
+    active_velocity: f32,
+    /// The `velocity` output: the latest attack's velocity, latched as the
+    /// gate rises.
+    velocity: f32,
+    /// The gate output was high on the previous sample.
+    gate_was_high: bool,
     /// One-shot playback has completed; the `ended` output latches high and
     /// clock edges are ignored until reset (or a switch back to loop mode).
     finished: bool,
@@ -194,6 +213,7 @@ pub struct StepSequencer {
     /// upcoming step, in samples from the current step's edge; 0 = none.
     grace_countdown: u32,
     pending_grace: GraceChain,
+    pending_grace_velocity: f32,
     pending_grace_per: u32,
     /// The upcoming step's chain actually started sounding off the previous
     /// step's tail (before placement), so `start_step` must not replay it on
@@ -201,8 +221,9 @@ pub struct StepSequencer {
     /// edge came early), which falls back to on-beat realization.
     grace_prescheduled: bool,
     /// Principal note waiting for an on-beat grace chain to finish, with
-    /// its remaining gate samples.
+    /// its velocity and remaining gate samples.
     deferred_note: Option<i8>,
+    deferred_velocity: f32,
     deferred_gate_samples: u32,
     /// Block-rate caches of the grace controls (read once per `process`).
     grace_samples_cfg: u32,
@@ -245,14 +266,19 @@ impl StepSequencer {
             samples_since_gate: 0,
             first_gate_received: false,
             active_note: None,
+            active_velocity: 1.0,
+            velocity: 1.0,
+            gate_was_high: false,
             finished: false,
             retrigger_dip: false,
             grace_player: GracePlayer::idle(),
             grace_countdown: 0,
             pending_grace: GraceChain::default(),
+            pending_grace_velocity: 1.0,
             pending_grace_per: 0,
             grace_prescheduled: false,
             deferred_note: None,
+            deferred_velocity: 1.0,
             deferred_gate_samples: 0,
             grace_samples_cfg: 0,
             grace_on_beat_cfg: false,
@@ -398,8 +424,11 @@ impl StepSequencer {
                         self.grace_samples_cfg,
                         self.step_duration_samples / 2,
                     );
-                    self.grace_player.start(step.grace, 1.0, per);
+                    let velocity = step.velocity.unwrap_or(1.0);
+                    self.grace_player
+                        .start(step.grace, velocity * GRACE_VELOCITY, per);
                     self.deferred_note = Some(offset);
+                    self.deferred_velocity = velocity;
                     let chain_total = GracePlayer::chain_samples(&step.grace, per);
                     self.deferred_gate_samples = self
                         .calculate_gate_samples(&step)
@@ -407,6 +436,7 @@ impl StepSequencer {
                     self.gate_samples_remaining = 0;
                 } else {
                     self.active_note = Some(offset);
+                    self.active_velocity = step.velocity.unwrap_or(1.0);
                     self.gate_samples_remaining = self.calculate_gate_samples(&step);
                 }
             }
@@ -456,6 +486,7 @@ impl StepSequencer {
         }
 
         self.pending_grace = next.grace;
+        self.pending_grace_velocity = next.velocity.unwrap_or(1.0) * GRACE_VELOCITY;
         self.pending_grace_per = per;
         self.grace_countdown = start_at;
 
@@ -561,13 +592,17 @@ impl StepSequencer {
                         self.gate_samples_remaining = 0;
                     }
                     self.grace_prescheduled = true;
-                    self.grace_player
-                        .start(self.pending_grace, 1.0, self.pending_grace_per);
+                    self.grace_player.start(
+                        self.pending_grace,
+                        self.pending_grace_velocity,
+                        self.pending_grace_per,
+                    );
                 }
             }
 
             if self.deferred_note.is_some() && !self.grace_player.is_active() {
                 self.active_note = self.deferred_note.take();
+                self.active_velocity = self.deferred_velocity;
                 let mut gate_samples = self.deferred_gate_samples;
                 if self.grace_countdown > 0 {
                     // A chain for the next step is already counting down;
@@ -596,26 +631,33 @@ impl StepSequencer {
 
         // Update cached outputs. An active grace chain owns the mono
         // frequency/gate stream; the principal resumes when it ends.
-        let (frequency, gate_high) = match grace_voice {
-            Some(voice) => (self.note_frequency(voice.offset), voice.gate),
+        let (frequency, gate_high, attack_velocity) = match grace_voice {
+            Some(voice) => (
+                self.note_frequency(voice.offset),
+                voice.gate,
+                voice.velocity,
+            ),
             None => (
                 self.active_note
                     .map(|offset| self.note_frequency(offset))
                     .unwrap_or(0.0),
                 self.gate_samples_remaining > 0,
+                self.active_velocity,
             ),
         };
+        // One-sample forced release so the incoming note retriggers.
+        let gate_high = gate_high && !self.retrigger_dip;
+        // Velocity moves only as an attack starts: the sample the gate
+        // rises, never under a sounding note or its release.
+        if gate_high && !self.gate_was_high {
+            self.velocity = attack_velocity;
+        }
+        self.gate_was_high = gate_high;
         self.outputs.set(
             i,
             frequency,
-            if self.retrigger_dip {
-                // One-sample forced release so the incoming note retriggers.
-                0.0
-            } else if gate_high {
-                1.0
-            } else {
-                0.0
-            },
+            if gate_high { 1.0 } else { 0.0 },
+            self.velocity,
             self.current_step as f32,
             if self.finished { 1.0 } else { 0.0 },
         );
@@ -742,6 +784,8 @@ impl Module for StepSequencer {
 mod pattern_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod velocity_tests;
 
 #[cfg(test)]
 mod retrigger_dip_tests {

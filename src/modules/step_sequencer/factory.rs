@@ -20,6 +20,7 @@ use crate::ControlSurface;
 ///
 /// ```json
 /// { "note": 0, "gate_length": 0.8 }  // Note with custom gate length
+/// { "note": 7, "velocity": 0.5 }      // Velocity on the `velocity` output
 /// { "note": 7 }               // Note with default gate length
 /// { "note": null }            // Rest (no note)
 /// ```
