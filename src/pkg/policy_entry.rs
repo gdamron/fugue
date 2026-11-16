@@ -18,8 +18,13 @@ use super::manifest::{EntrySpec, PackageManifest};
 pub enum PolicyEntryError {
     /// The manifest is not a `policy` package.
     NotPolicyPackage { id: String, kind: &'static str },
-    /// The entry is absolute or climbs out of the package directory.
+    /// The entry is absolute, climbs out of the package directory, or lies
+    /// under `.git`, which the lock's content hash skips.
     OutsidePackage(PathBuf),
+    /// The entry, or a directory on its path, is a symbolic link. Installs
+    /// never copy links and the content hash skips them, so the text must be
+    /// a regular file in the package.
+    Linked(PathBuf),
     /// The entry does not exist or is not a regular file.
     Missing(PathBuf),
     /// The entry does not end in `.md`.
@@ -38,7 +43,13 @@ impl fmt::Display for PolicyEntryError {
             }
             PolicyEntryError::OutsidePackage(path) => write!(
                 f,
-                "policy entry `{}` must be a relative path inside the package",
+                "policy entry `{}` must be a relative path inside the package, outside `.git`",
+                path.display()
+            ),
+            PolicyEntryError::Linked(path) => write!(
+                f,
+                "policy entry `{}` is or passes through a symbolic link; it must be a regular \
+                 file in the package",
                 path.display()
             ),
             PolicyEntryError::Missing(path) => {
@@ -87,14 +98,32 @@ pub fn check_policy_entry(
     let relative = Path::new(policy);
     let path = package_root.join(relative);
     if relative.as_os_str().is_empty()
-        || relative
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_) | Component::CurDir))
+        || relative.components().any(|component| match component {
+            Component::Normal(name) => name == ".git",
+            Component::CurDir => false,
+            _ => true,
+        })
     {
         return Err(PolicyEntryError::OutsidePackage(relative.to_path_buf()));
     }
     if relative.extension().and_then(|ext| ext.to_str()) != Some("md") {
         return Err(PolicyEntryError::NotMarkdown(path));
+    }
+    // Walk the path without following links: the lock's content hash covers
+    // only regular files reached through real directories.
+    let mut current = package_root.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(name) = component else {
+            continue;
+        };
+        current.push(name);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(PolicyEntryError::Linked(path));
+            }
+            Ok(_) => {}
+            Err(_) => return Err(PolicyEntryError::Missing(path)),
+        }
     }
     if !path.is_file() {
         return Err(PolicyEntryError::Missing(path));
@@ -193,6 +222,37 @@ mod tests {
         let err = check_policy_entry(dir.path(), &policy_manifest("../POLICY.md")).unwrap_err();
         assert!(matches!(err, PolicyEntryError::OutsidePackage(_)));
         assert!(err.to_string().contains("../POLICY.md"), "{err}");
+    }
+
+    #[test]
+    fn refuses_an_entry_under_git() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        std::fs::write(dir.path().join(".git/POLICY.md"), "# Rules\n").unwrap();
+        let err = check_policy_entry(dir.path(), &policy_manifest(".git/POLICY.md")).unwrap_err();
+        assert!(matches!(err, PolicyEntryError::OutsidePackage(_)), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_linked_entry_or_directory() {
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("POLICY.md"), "# Rules\n").unwrap();
+
+        let file_link = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("POLICY.md"),
+            file_link.path().join("POLICY.md"),
+        )
+        .unwrap();
+        let err = check_policy_entry(file_link.path(), &policy_manifest("POLICY.md")).unwrap_err();
+        assert!(matches!(err, PolicyEntryError::Linked(_)), "{err}");
+
+        let dir_link = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir_link.path().join("rules")).unwrap();
+        let err =
+            check_policy_entry(dir_link.path(), &policy_manifest("rules/POLICY.md")).unwrap_err();
+        assert!(matches!(err, PolicyEntryError::Linked(_)), "{err}");
     }
 
     #[test]

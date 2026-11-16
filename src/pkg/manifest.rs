@@ -72,7 +72,9 @@ pub enum PackageKind {
     Skill,
     Agent,
     SamplePack,
-    /// One Markdown file of shared rules that skills and agents require.
+    // One Markdown file of shared rules that skills and agents require. (Kept
+    // out of the doc comments, which would describe this one variant in the
+    // RPC schema and turn the kind enum into a longer `oneOf`.)
     Policy,
 }
 
