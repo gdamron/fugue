@@ -1,6 +1,6 @@
 //! Pure transitive dependency resolution.
 //!
-//! Given a package's declared `deps` (`id@requirement`), this walks the
+//! Given a package's declared `deps` and `policies` (`id@requirement`), this walks the
 //! transitive graph, picks a concrete version for each id, and records the
 //! resolved edges. All I/O — fetching candidate versions and package contents
 //! from a registry, git, or local path — lives behind the [`PackageProvider`]
@@ -18,7 +18,7 @@ use std::error::Error;
 
 use semver::{Version, VersionReq};
 
-use crate::pkg::{DepRef, LockSource, PackageManifest};
+use crate::pkg::{DepRef, LockSource, PackageKind, PackageManifest};
 
 /// Supplies candidate versions and package contents during resolution.
 ///
@@ -77,43 +77,136 @@ pub fn dependency_edges(deps: &[String], versions: &BTreeMap<String, String>) ->
         .collect()
 }
 
+/// Resolve `id@version` edges for everything a package requires — its `deps`
+/// then its `policies` — from the chosen-version map, without duplicates. This
+/// is the `dependencies` list a lockfile entry records.
+pub fn locked_edges(
+    manifest: &PackageManifest,
+    versions: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let mut edges = dependency_edges(&manifest.deps, versions);
+    for edge in dependency_edges(manifest.policy_requirements(), versions) {
+        if !edges.contains(&edge) {
+            edges.push(edge);
+        }
+    }
+    edges
+}
+
 /// Resolve the transitive closure of `root_deps` (excluding the root package),
-/// returning resolved packages in discovery order.
+/// returning resolved packages in discovery order. Policies the resolved
+/// packages require are resolved too; use [`resolve_package`] when the root
+/// itself may require policies.
 pub fn resolve_transitive<P: PackageProvider>(
     root_deps: &[String],
+    provider: &P,
+) -> Result<Vec<Resolved<P::Acquired>>, Box<dyn Error>> {
+    resolve_requirements(root_deps, &[], provider)
+}
+
+/// Resolve everything `root` requires, its `deps` and its `policies`, and
+/// their transitive requirements (excluding the root package itself).
+///
+/// A policy is chosen and locked exactly like a dependency, once per id
+/// however many packages require it, and must resolve to a `policy` package.
+/// Every failure names the id it is about, and comes before anything is
+/// staged or loaded.
+pub fn resolve_package<P: PackageProvider>(
+    root: &PackageManifest,
+    provider: &P,
+) -> Result<Vec<Resolved<P::Acquired>>, Box<dyn Error>> {
+    resolve_requirements(&root.deps, root.policy_requirements(), provider)
+}
+
+/// Whether a requirement came from `deps` (any kind) or `policies` (must be a
+/// `policy` package).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequiredAs {
+    Dependency,
+    Policy,
+}
+
+struct Requirement {
+    dep: DepRef,
+    required_as: RequiredAs,
+}
+
+fn requirements<'a>(
+    deps: &'a [String],
+    policies: &'a [String],
+) -> impl Iterator<Item = Result<Requirement, Box<dyn Error>>> + 'a {
+    let deps = deps.iter().map(|raw| {
+        Ok(Requirement {
+            dep: parse_dep(raw)?,
+            required_as: RequiredAs::Dependency,
+        })
+    });
+    let policies = policies.iter().map(|raw| {
+        let dep = DepRef::parse(raw).ok_or_else(|| format!("invalid policy reference '{raw}'"))?;
+        Ok(Requirement {
+            dep,
+            required_as: RequiredAs::Policy,
+        })
+    });
+    deps.chain(policies)
+}
+
+fn resolve_requirements<P: PackageProvider>(
+    root_deps: &[String],
+    root_policies: &[String],
     provider: &P,
 ) -> Result<Vec<Resolved<P::Acquired>>, Box<dyn Error>> {
     let mut chosen: BTreeMap<String, Version> = BTreeMap::new();
     let mut acquired: BTreeMap<String, (PackageManifest, P::Acquired)> = BTreeMap::new();
     let mut order: Vec<String> = Vec::new();
-    let mut queue: VecDeque<DepRef> = VecDeque::new();
-    for raw in root_deps {
-        queue.push_back(parse_dep(raw)?);
+    let mut queue: VecDeque<Requirement> = VecDeque::new();
+    for requirement in requirements(root_deps, root_policies) {
+        queue.push_back(requirement?);
     }
 
-    while let Some(dep) = queue.pop_front() {
-        let req = VersionReq::parse(&dep.requirement)
-            .map_err(|err| format!("invalid version requirement '{}': {err}", dep.requirement))?;
+    while let Some(Requirement { dep, required_as }) = queue.pop_front() {
+        let policy = required_as == RequiredAs::Policy;
+        let label = if policy { "policy " } else { "" };
+        let req = VersionReq::parse(&dep.requirement).map_err(|err| {
+            format!(
+                "invalid version requirement '{}' for {label}{}: {err}",
+                dep.requirement, dep.id
+            )
+        })?;
         if let Some(version) = chosen.get(&dep.id) {
             if !req.matches(version) {
+                let conflict = if policy { "policy" } else { "dependency" };
                 return Err(format!(
-                    "dependency conflict: {} is pinned to {version} but a requirement needs {}",
+                    "{conflict} conflict: {} is pinned to {version} but a requirement needs {}",
                     dep.id, dep.requirement
                 )
                 .into());
             }
+            if policy {
+                ensure_policy_kind(&dep.id, &acquired[&dep.id].0)?;
+            }
             continue;
         }
-        let available = provider.available_versions(&dep.id)?;
+        let available = provider
+            .available_versions(&dep.id)
+            .map_err(|err| with_policy_context(policy, &dep.id, err))?;
+        if policy && available.is_empty() {
+            return Err(format!("no package provides policy {}", dep.id).into());
+        }
         let version = select_version(&available, &req).ok_or_else(|| {
             format!(
-                "no available version of {} satisfies {}",
+                "no available version of {label}{} satisfies {}",
                 dep.id, dep.requirement
             )
         })?;
-        let (manifest, contents) = provider.acquire(&dep.id, &version)?;
-        for raw in &manifest.deps {
-            queue.push_back(parse_dep(raw)?);
+        let (manifest, contents) = provider
+            .acquire(&dep.id, &version)
+            .map_err(|err| with_policy_context(policy, &dep.id, err))?;
+        if policy {
+            ensure_policy_kind(&dep.id, &manifest)?;
+        }
+        for requirement in requirements(&manifest.deps, manifest.policy_requirements()) {
+            queue.push_back(requirement?);
         }
         chosen.insert(dep.id.clone(), version);
         order.push(dep.id.clone());
@@ -129,7 +222,7 @@ pub fn resolve_transitive<P: PackageProvider>(
     for id in order {
         let (manifest, contents) = acquired.remove(&id).expect("resolved id present");
         let version = chosen[&id].to_string();
-        let dependencies = dependency_edges(&manifest.deps, &versions);
+        let dependencies = locked_edges(&manifest, &versions);
         out.push(Resolved {
             source: LockSource::Registry {
                 id: id.clone(),
@@ -145,161 +238,28 @@ pub fn resolve_transitive<P: PackageProvider>(
     Ok(out)
 }
 
+fn ensure_policy_kind(id: &str, manifest: &PackageManifest) -> Result<(), Box<dyn Error>> {
+    if manifest.kind == PackageKind::Policy {
+        return Ok(());
+    }
+    Err(format!(
+        "{id} is required as a policy but is a `{}` package",
+        manifest.kind.as_str()
+    )
+    .into())
+}
+
+fn with_policy_context(policy: bool, id: &str, err: Box<dyn Error>) -> Box<dyn Error> {
+    if policy {
+        format!("policy {id}: {err}").into()
+    } else {
+        err
+    }
+}
+
 fn parse_dep(raw: &str) -> Result<DepRef, Box<dyn Error>> {
     DepRef::parse(raw).ok_or_else(|| format!("invalid dependency reference '{raw}'").into())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::cell::RefCell;
-    use std::collections::HashMap;
-
-    fn ver(v: &str) -> Version {
-        Version::parse(v).unwrap()
-    }
-
-    #[test]
-    fn select_version_picks_highest_satisfying() {
-        let available = vec![ver("1.0.0"), ver("1.4.0"), ver("2.0.0")];
-        assert_eq!(
-            select_version(&available, &VersionReq::parse("^1.0").unwrap()),
-            Some(ver("1.4.0"))
-        );
-        assert_eq!(
-            select_version(&available, &VersionReq::parse(">=3.0").unwrap()),
-            None
-        );
-    }
-
-    #[test]
-    fn dependency_edges_maps_declared_deps_to_resolved_versions() {
-        let versions = BTreeMap::from([
-            ("a".to_string(), "1.2.0".to_string()),
-            ("b".to_string(), "0.3.0".to_string()),
-        ]);
-        let edges = dependency_edges(&["a@^1.0".into(), "b@~0.3".into()], &versions);
-        assert_eq!(edges, vec!["a@1.2.0".to_string(), "b@0.3.0".to_string()]);
-    }
-
-    /// A provider with in-memory fixtures: id -> (version, manifest deps).
-    struct FakeProvider {
-        packages: HashMap<String, Vec<(Version, Vec<String>)>>,
-        acquired: RefCell<Vec<String>>,
-    }
-
-    impl FakeProvider {
-        fn new() -> Self {
-            Self {
-                packages: HashMap::new(),
-                acquired: RefCell::new(Vec::new()),
-            }
-        }
-
-        fn add(mut self, id: &str, version: &str, deps: &[&str]) -> Self {
-            self.packages
-                .entry(id.to_string())
-                .or_default()
-                .push((ver(version), deps.iter().map(|d| d.to_string()).collect()));
-            self
-        }
-
-        fn deps_of(&self, id: &str, version: &Version) -> Vec<String> {
-            self.packages[id]
-                .iter()
-                .find(|(v, _)| v == version)
-                .map(|(_, deps)| deps.clone())
-                .unwrap_or_default()
-        }
-    }
-
-    fn manifest_with_deps(id: &str, version: &str, deps: &[String]) -> PackageManifest {
-        serde_json::from_value(serde_json::json!({
-            "id": id,
-            "version": version,
-            "kind": "development",
-            "license": "MIT",
-            "authors": [{"name": "Test"}],
-            "targets": ["in-graph-agent"],
-            "deps": deps,
-            "entry": {"development": "voice.json"},
-        }))
-        .unwrap()
-    }
-
-    impl PackageProvider for FakeProvider {
-        type Acquired = ();
-
-        fn available_versions(&self, id: &str) -> Result<Vec<Version>, Box<dyn Error>> {
-            Ok(self
-                .packages
-                .get(id)
-                .map(|entries| entries.iter().map(|(v, _)| v.clone()).collect())
-                .unwrap_or_default())
-        }
-
-        fn acquire(
-            &self,
-            id: &str,
-            version: &Version,
-        ) -> Result<(PackageManifest, ()), Box<dyn Error>> {
-            self.acquired.borrow_mut().push(format!("{id}@{version}"));
-            let deps = self.deps_of(id, version);
-            Ok((manifest_with_deps(id, &version.to_string(), &deps), ()))
-        }
-    }
-
-    #[test]
-    fn resolves_transitive_graph() {
-        let provider = FakeProvider::new()
-            .add("a", "1.0.0", &["b@^0.3"])
-            .add("b", "0.3.1", &[]);
-        let resolved = resolve_transitive(&["a@^1.0".into()], &provider).unwrap();
-        let ids: Vec<_> = resolved.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(ids, vec!["a", "b"]);
-        assert_eq!(resolved[0].version, "1.0.0");
-        assert_eq!(resolved[0].dependencies, vec!["b@0.3.1".to_string()]);
-        assert_eq!(resolved[1].version, "0.3.1");
-    }
-
-    #[test]
-    fn satisfied_repeat_requirement_is_not_reacquired() {
-        let provider = FakeProvider::new()
-            .add("a", "1.0.0", &["c@^1.0"])
-            .add("b", "1.0.0", &["c@>=1.0"])
-            .add("c", "1.5.0", &[]);
-        let resolved = resolve_transitive(&["a@^1.0".into(), "b@^1.0".into()], &provider).unwrap();
-        assert_eq!(
-            provider
-                .acquired
-                .borrow()
-                .iter()
-                .filter(|s| s.starts_with("c@"))
-                .count(),
-            1
-        );
-        assert!(resolved.iter().any(|r| r.id == "c" && r.version == "1.5.0"));
-    }
-
-    #[test]
-    fn incompatible_requirements_conflict() {
-        let provider = FakeProvider::new()
-            .add("a", "1.0.0", &[])
-            .add("a", "2.0.0", &[]);
-        let err = match resolve_transitive(&["a@^1.0".into(), "a@^2.0".into()], &provider) {
-            Err(err) => err,
-            Ok(_) => panic!("expected a dependency conflict"),
-        };
-        assert!(err.to_string().contains("dependency conflict"));
-    }
-
-    #[test]
-    fn missing_satisfying_version_errors() {
-        let provider = FakeProvider::new().add("a", "1.0.0", &[]);
-        let err = match resolve_transitive(&["a@^2.0".into()], &provider) {
-            Err(err) => err,
-            Ok(_) => panic!("expected a missing-version error"),
-        };
-        assert!(err.to_string().contains("no available version"));
-    }
-}
+mod tests;

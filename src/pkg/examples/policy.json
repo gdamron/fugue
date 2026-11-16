@@ -1,0 +1,10 @@
+{
+  "id": "fugue.example.mixing-policy",
+  "version": "0.1.0",
+  "kind": "policy",
+  "license": "Apache-2.0",
+  "authors": [{ "name": "Example Engineer" }],
+  "description": "Shared mixing rules that skills and agents require instead of restating.",
+  "targets": ["external-agent", "in-graph-agent"],
+  "entry": { "policy": "POLICY.md" }
+}
