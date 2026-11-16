@@ -4,6 +4,7 @@
 //! frontmatter, which they read as YAML. The block must parse as a YAML
 //! mapping; a field is text only when YAML reads it as a string.
 
+use yaml_rust2::parser::{Event, Parser};
 use yaml_rust2::{Yaml, YamlLoader};
 
 /// A `SKILL.md` split at its frontmatter block.
@@ -36,6 +37,22 @@ pub(crate) fn split(text: &str) -> Option<Split<'_>> {
     None
 }
 
+/// Refuse YAML aliases (`*name`) before building the tree: the loader copies
+/// each alias's target, so nested aliases grow exponentially from a small
+/// file. Skill metadata never needs them.
+fn refuse_aliases(frontmatter: &str) -> Result<(), String> {
+    let mut parser = Parser::new_from_str(frontmatter);
+    loop {
+        match parser.next_token().map_err(|err| err.to_string())? {
+            (Event::StreamEnd, _) => return Ok(()),
+            (Event::Alias(_), _) => {
+                return Err("it uses a YAML alias (`*name`); write the value out".to_string())
+            }
+            _ => {}
+        }
+    }
+}
+
 /// A frontmatter field's value.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Field {
@@ -52,8 +69,10 @@ pub(crate) enum Field {
 pub(crate) struct Frontmatter(Yaml);
 
 impl Frontmatter {
-    /// Parse `frontmatter` as YAML; it must be a mapping (or empty).
+    /// Parse `frontmatter` as YAML; it must be a mapping (or empty) with no
+    /// aliases.
     pub(crate) fn parse(frontmatter: &str) -> Result<Self, String> {
+        refuse_aliases(frontmatter)?;
         let mut documents =
             YamlLoader::load_from_str(frontmatter).map_err(|err| err.to_string())?;
         match documents.len() {
@@ -139,6 +158,24 @@ mod tests {
         for frontmatter in ["d: 12\n", "d: true\n", "d: [a]\n", "d:\n  inner: 1\n"] {
             assert_eq!(field(frontmatter, "d"), Field::NotText, "{frontmatter:?}");
         }
+    }
+
+    #[test]
+    fn refuses_aliases_before_expanding_them() {
+        let mut frontmatter = String::from("name: a\ndescription: d\nl0: &l0 [x]\n");
+        for level in 1..40 {
+            let previous = level - 1;
+            frontmatter.push_str(&format!(
+                "l{level}: &l{level} [{}]\n",
+                vec![format!("*l{previous}"); 10].join(", ")
+            ));
+        }
+        let error = Frontmatter::parse(&frontmatter).err().unwrap();
+        assert!(error.contains("alias"), "{error}");
+        assert!(
+            Frontmatter::parse("name: &n a\n").is_ok(),
+            "an anchor alone is fine"
+        );
     }
 
     #[test]
