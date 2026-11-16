@@ -270,6 +270,15 @@ pub trait ControlSurface: Send + Sync {
         None
     }
 
+    /// The turn a writer of a part of another control takes from reading
+    /// the whole to writing it (see [`Self::whole_write`]), so two part
+    /// writes never build on the same whole. `None` for a surface with no
+    /// parts. Taken before the surface's other locks. Control thread.
+    #[doc(hidden)]
+    fn part_turn(&self) -> Option<std::sync::MutexGuard<'_, ()>> {
+        None
+    }
+
     /// Binds a declared module's surface to the `route` its writes take
     /// from now on, applying to `module` (the instance behind this surface,
     /// not yet running) the controls written while it was building.

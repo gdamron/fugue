@@ -42,10 +42,11 @@
 //! it reach the module that replaced it.
 
 use std::any::Any;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use super::graph::SignalGraph;
 use super::publish::{PendingLog, Publisher, Reclaimer, Retarget, Settler};
+use crate::audio_thread::ControlLock;
 use crate::control_request::{
     ControlCells, ControlContext, ControlDecl, ControlIndex, ControlTable, Rank, RequestSender,
     RtValue,
@@ -138,6 +139,10 @@ pub(crate) struct DeclaredSurface {
     /// What its codecs build with, attached by its module at build (see
     /// [`Self::with_context`]).
     context: Vec<Arc<dyn Any + Send + Sync>>,
+    /// Held from reading a whole to writing it, for a write to one of its
+    /// parts, so two part writes never build on the same whole and undo
+    /// each other (see [`Self::part_turn`]). Taken before any other lock.
+    parts: ControlLock<()>,
 }
 
 /// A payload control's last write: what reads report, and while its module
@@ -178,6 +183,7 @@ impl DeclaredSurface {
             clamps: true,
             payloads: Mutex::new(Vec::new()),
             context: Vec::new(),
+            parts: ControlLock::new(()),
         }
     }
 
@@ -203,8 +209,9 @@ impl DeclaredSurface {
         value: ControlValue,
         options: &WriteOptions,
     ) -> Result<Queued, String> {
-        if let Some(whole) = self.whole_write(key, &value) {
-            let (key, value) = whole?;
+        if self.table.is_part(key) {
+            let _turn = self.part_turn();
+            let (key, value) = self.whole_write_now(key, &value, options)?;
             return self.set_control_queued(&key, value, options);
         }
         if let Some(prepared) = self.prepare(key, &value) {
@@ -228,6 +235,34 @@ impl DeclaredSurface {
     ) -> Option<Result<(String, ControlValue), String>> {
         let current = |whole: &str| self.index(whole).ok().and_then(|index| self.shown(index));
         self.table.whole_write(key, value, current)
+    }
+
+    /// [`Self::whole_write`] for a write made now: a part builds on the
+    /// whole as written so far, so a part written at a later time is refused.
+    fn whole_write_now(
+        &self,
+        key: &str,
+        value: &ControlValue,
+        options: &WriteOptions,
+    ) -> Result<(String, ControlValue), String> {
+        if options.time.is_some() {
+            return Err(format!(
+                "'{key}' is written now; a timed write to it is refused"
+            ));
+        }
+        self.whole_write(key, value)
+            .unwrap_or_else(|| Err(format!("'{key}' is no part")))
+    }
+
+    /// The turn a writer of a part takes, from reading the whole to writing
+    /// it; `None` when no control is a part of another. Control thread.
+    pub(crate) fn part_turn(&self) -> Option<MutexGuard<'_, ()>> {
+        let any = self.table.has_parts();
+        any.then(|| {
+            self.parts
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        })
     }
 
     /// The live graph's publisher generation, read under its lock (so

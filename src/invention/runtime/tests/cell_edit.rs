@@ -1,11 +1,12 @@
-//! One cell of a cell sequencer written in an `apply_edits` batch with other
-//! writes to the same bank: each cell write builds on the bank as the batch
-//! has it so far, so none undoes another, and the batch reports and records
-//! the whole bank.
+//! One cell of a cell sequencer written alongside other writes to the same
+//! bank: in an `apply_edits` batch each cell write builds on the bank as the
+//! batch has it so far, and the batch reports and records the whole bank;
+//! performed cell writes made at once from several threads all land; and a
+//! cell write is made now, so one asked for at a later time is refused.
 
 use crate::invention::manual_backend::start_manual;
-use crate::rpc::StructuralEdit;
-use crate::{ControlValue, Invention, InventionBuilder};
+use crate::rpc::{ControlTiming, ControlWhen, StructuralEdit};
+use crate::{ControlValue, ControlWrite, ControlWriteIntent, Invention, InventionBuilder};
 use serde_json::{json, Value};
 
 const BANK: &str = r#"[[{"note":0},{"note":2},null,null],[{"note":7},null]]"#;
@@ -105,4 +106,77 @@ fn a_cell_of_a_sequencer_added_in_the_batch_is_written() {
     assert_eq!(shown[1][0]["note"], 11, "{shown}");
     assert_eq!(shown[0][1]["note"], 2, "cell 0 kept: {shown}");
     assert_eq!(recorded, shown);
+}
+
+/// A bank of `count` one-step cells, each a rest.
+fn rests(count: usize) -> Value {
+    Value::Array(vec![json!([null]); count])
+}
+
+#[test]
+fn performed_cell_writes_made_at_once_all_land() {
+    let mut document: Value = serde_json::from_str(&doc()).unwrap();
+    document["modules"][1]["config"]["cells"] = rests(16);
+    let invention = Invention::from_json(&document.to_string()).unwrap();
+    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let (running, pump) = start_manual(runtime);
+    std::thread::scope(|scope| {
+        for cell in 0..16 {
+            let snapshot = running.snapshot();
+            scope.spawn(move || {
+                let value = ControlValue::String(json!([{ "note": cell }]).to_string());
+                let key = format!("cells.{cell}");
+                let written = snapshot.set_control_with_intent(
+                    "seq",
+                    &key,
+                    value,
+                    ControlWriteIntent::Perform,
+                );
+                written.expect("the cell write applies");
+            });
+        }
+    });
+    pump.render(2);
+    let ControlValue::String(text) = running.get_control("seq", "cells").unwrap() else {
+        panic!("cells reads back as text");
+    };
+    let bank: Value = serde_json::from_str(&text).unwrap();
+    for cell in 0..16 {
+        assert_eq!(
+            bank[cell][0]["note"], cell,
+            "cell {cell} kept its write: {bank}"
+        );
+    }
+    running.stop();
+}
+
+#[test]
+fn a_cell_write_at_a_later_time_is_refused() {
+    let invention = Invention::from_json(&doc()).unwrap();
+    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let (running, pump) = start_manual(runtime);
+    pump.render(10);
+    for intent in [ControlWriteIntent::Perform, ControlWriteIntent::Author] {
+        let value = ControlValue::String(json!([{ "note": 5 }, null]).to_string());
+        let write = ControlWrite {
+            intent,
+            timing: ControlTiming {
+                when: Some(ControlWhen::NextBar {
+                    beats_per_bar: Some(4.0),
+                    clock: None,
+                }),
+                ttl_ms: None,
+            },
+            ..ControlWrite::new("seq", "cells.1", value)
+        };
+        let acks = running.write_controls(&[write]);
+        let error = acks.error.expect("refused").to_string();
+        assert!(error.contains("timed"), "{intent:?}: {error}");
+    }
+    let ControlValue::String(text) = running.get_control("seq", "cells").unwrap() else {
+        panic!("cells reads back as text");
+    };
+    let bank: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(bank[1][0]["note"], 7, "unchanged: {bank}");
+    running.stop();
 }

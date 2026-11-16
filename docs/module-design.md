@@ -308,7 +308,9 @@ from an asset becomes this module's own copy on its first edit, and other
 sequencers reading the same asset keep playing it unchanged. A cell keeps its
 length, trailing rests included: a write of another length, or to a cell past
 the bank's end, is refused with the cell's length or the bank's size, and
-nothing changes. `cells.N` is not listed among the controls; `cells` is.
+nothing changes. A cell write is made now: one asked for at a later time
+is refused. Cell writes take turns on the module, so several made at once
+each land. `cells.N` is not listed among the controls; `cells` is.
 
 ## Modules see only their ports and controls
 

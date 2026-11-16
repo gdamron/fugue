@@ -47,6 +47,17 @@ impl ControlDecl {
 }
 
 impl ControlTable {
+    /// Whether `key` names a part of another control.
+    pub(crate) fn is_part(&self, key: &str) -> bool {
+        let decl = self.resolve(key).and_then(|index| self.decl(index));
+        decl.is_some_and(|(decl, _)| decl.part.is_some())
+    }
+
+    /// Whether any control is a part of another.
+    pub(crate) fn has_parts(&self) -> bool {
+        self.0.iter().any(|decl| decl.part.is_some())
+    }
+
     /// The write of the whole that a write of `value` to part `key` is,
     /// built from `current`, the whole's value now: `None` when `key` names
     /// no part. Control thread.
