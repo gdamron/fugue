@@ -397,9 +397,12 @@ impl StepSequencer {
     }
 
     /// A bridged gate whose next clock edge never came (the clock stopped)
-    /// releases after two measured steps rather than sticking high.
+    /// releases after two measured steps rather than sticking high. An edge
+    /// up to a sample past that (the tempo halving at a fractional step
+    /// length) still finds the gate high. `samples_since_gate` already
+    /// counts the sample being processed.
     fn bridge_expired(&self) -> bool {
-        self.samples_since_gate >= self.step_duration_samples.saturating_mul(2)
+        self.samples_since_gate > self.step_duration_samples.saturating_mul(2) + 1
     }
 
     /// Calculates the gate duration in samples for the current step.
@@ -831,6 +834,8 @@ impl Module for StepSequencer {
     }
 }
 
+#[cfg(test)]
+mod held_gate_tests;
 #[cfg(test)]
 mod pattern_tests;
 #[cfg(test)]
