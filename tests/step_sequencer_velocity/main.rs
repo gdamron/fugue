@@ -7,7 +7,8 @@
 //!   and `held` steps; 1.0 before any note and for a step that declares none.
 //! - Each grace note sounds at 0.8 times its step's velocity, the principal
 //!   at the step's own, under either `grace_placement`.
-//! - Unconnected, stored velocities change nothing that is heard.
+//! - Unconnected, stored velocities change nothing that is heard, and every
+//!   first-party example that plays a step sequencer still sounds.
 //! - Connected to a voice's `velocity` input, a quieter step is quieter,
 //!   without a click at the change.
 //! - Played-note reports carry the step's velocity.

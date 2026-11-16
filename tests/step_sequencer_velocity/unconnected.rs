@@ -1,7 +1,12 @@
 //! A step sequencer's velocities stay unheard while its `velocity` output is
 //! unconnected: the line it plays, and its gate, are bit for bit the same
-//! with or without stored velocities.
+//! with or without stored velocities; and every first-party example that
+//! plays one still sounds.
 
+use std::path::{Path, PathBuf};
+use std::thread;
+
+use fugue::{Invention, RenderEngine};
 use serde_json::json;
 
 use super::rig::*;
@@ -70,4 +75,78 @@ fn stored_velocities_change_nothing_while_the_output_is_unconnected() {
     for (i, (got, want)) in heard.1.iter().zip(&before.1).enumerate() {
         assert_eq!(got.to_bits(), want.to_bits(), "gate sample {i}");
     }
+}
+
+/// Long enough for every example's pattern to play through at least once.
+const EXAMPLE_SECONDS: usize = 8;
+
+/// Every example document under `examples/` that contains a step sequencer.
+fn examples_with_a_step_sequencer() -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut dirs = vec![Path::new("examples").to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "json") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                if text.contains("\"step_sequencer\"") {
+                    found.push(path);
+                }
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// The peak of a seeded render of the example at `path`.
+fn example_peak(path: &Path) -> f32 {
+    let name = path.display();
+    let invention =
+        Invention::from_file(path.to_str().unwrap()).unwrap_or_else(|err| panic!("{name}: {err}"));
+    let mut engine = RenderEngine::new(RATE);
+    engine.set_seed(Some(1));
+    engine.stub_agent_backends(true);
+    engine
+        .load_invention(invention)
+        .unwrap_or_else(|err| panic!("{name}: {err}"));
+    let mut block = vec![0.0f32; 1024];
+    let mut peak = 0.0f32;
+    for _ in 0..(RATE as usize * EXAMPLE_SECONDS).div_ceil(512) {
+        engine.render_interleaved(&mut block).unwrap();
+        for sample in &block {
+            peak = peak.max(sample.abs());
+        }
+    }
+    peak
+}
+
+#[test]
+fn every_example_with_a_step_sequencer_still_sounds() {
+    let examples = examples_with_a_step_sequencer();
+    assert!(!examples.is_empty(), "examples use a step sequencer");
+    let peaks: Vec<(String, f32)> = thread::scope(|scope| {
+        let workers: Vec<_> = examples
+            .chunks(examples.len().div_ceil(4))
+            .map(|part| {
+                scope.spawn(move || {
+                    part.iter()
+                        .map(|path| (path.display().to_string(), example_peak(path)))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect()
+    });
+    let silent: Vec<String> = peaks
+        .iter()
+        .filter(|(_, peak)| *peak <= 0.01)
+        .map(|(name, peak)| format!("{name}: peak {peak}"))
+        .collect();
+    assert!(silent.is_empty(), "silent renders:\n{}", silent.join("\n"));
 }
