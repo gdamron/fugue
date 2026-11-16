@@ -18,6 +18,10 @@ pub mod policy_entry;
 pub mod read_limit;
 pub mod resolve;
 pub mod sample_pack;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod skill_entry;
+#[cfg(not(target_arch = "wasm32"))]
+mod skill_frontmatter;
 pub mod validate;
 
 pub use audio_asset::{AudioAssetRef, PackageAudioRef};
@@ -48,6 +52,10 @@ pub use lock::compute_integrity;
 pub use package_file::PackageFileError;
 #[cfg(not(target_arch = "wasm32"))]
 pub use policy_entry::{check_policy_entry, PolicyEntryError};
+#[cfg(not(target_arch = "wasm32"))]
+pub use skill_entry::{
+    check_skill_package, is_host_safe_name, SkillCheck, SkillPackageError, SkillWarning,
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use sample_pack::parse_path as parse_sample_pack_path;
