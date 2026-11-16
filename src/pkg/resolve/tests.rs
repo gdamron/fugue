@@ -311,19 +311,98 @@ fn incompatible_policy_ranges_conflict_naming_the_id() {
 
 #[test]
 fn a_policy_requirement_on_another_kind_names_the_id_and_kind() {
-    let provider = FakeProvider::new().add("fugue.test.voice", "1.0.0", &[]);
+    for kind in ["development", "skill", "sample-pack"] {
+        let provider = FakeProvider::new().add_manifest(manifest(
+            "fugue.test.voice",
+            "1.0.0",
+            kind,
+            &[],
+            None,
+        ));
+        let root = manifest(
+            "fugue.test.skill",
+            "1.0.0",
+            "skill",
+            &[],
+            Some(&["fugue.test.voice@^1.0.0"]),
+        );
+        let err = resolve_err(&root, &provider);
+        assert!(
+            err.contains("fugue.test.voice") && err.contains(&format!("`{kind}`")),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn a_root_with_deps_and_policies_locks_both_and_shares_the_policy() {
+    let provider = FakeProvider::new()
+        .add_manifest(policy("fugue.test.rules", "0.1.0"))
+        .add_manifest(policy("fugue.test.rules", "0.1.3"))
+        .add_manifest(manifest(
+            "fugue.test.skill",
+            "1.0.0",
+            "skill",
+            &[],
+            Some(&["fugue.test.rules@^0.1.0"]),
+        ));
     let root = manifest(
-        "fugue.test.skill",
+        "fugue.test.agent",
         "1.0.0",
-        "skill",
-        &[],
-        Some(&["fugue.test.voice@^1.0.0"]),
+        "agent",
+        &["fugue.test.skill@^1.0"],
+        Some(&["fugue.test.rules@^0.1.0"]),
     );
-    let err = resolve_err(&root, &provider);
-    assert!(
-        err.contains("fugue.test.voice") && err.contains("`development`"),
-        "{err}"
+    let resolved = resolve_package(&root, &provider).unwrap();
+    let ids: Vec<_> = resolved.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids.iter().filter(|id| **id == "fugue.test.rules").count(),
+        1,
+        "{ids:?}"
     );
+    assert!(ids.contains(&"fugue.test.skill"), "{ids:?}");
+
+    let versions: BTreeMap<_, _> = resolved
+        .iter()
+        .map(|r| (r.id.clone(), r.version.clone()))
+        .collect();
+    assert_eq!(versions["fugue.test.rules"], "0.1.3");
+    assert_eq!(
+        locked_edges(&root, &versions),
+        ["fugue.test.skill@1.0.0", "fugue.test.rules@0.1.3"]
+    );
+}
+
+#[test]
+fn two_packages_with_disjoint_policy_ranges_conflict_naming_the_id() {
+    let provider = FakeProvider::new()
+        .add_manifest(policy("fugue.test.rules", "0.1.0"))
+        .add_manifest(policy("fugue.test.rules", "0.2.0"))
+        .add_manifest(manifest(
+            "fugue.test.skill",
+            "1.0.0",
+            "skill",
+            &[],
+            Some(&["fugue.test.rules@^0.1.0"]),
+        ))
+        .add_manifest(manifest(
+            "fugue.test.agent",
+            "1.0.0",
+            "agent",
+            &[],
+            Some(&["fugue.test.rules@^0.2.0"]),
+        ));
+    let err = match resolve_transitive(
+        &[
+            "fugue.test.skill@^1.0".into(),
+            "fugue.test.agent@^1.0".into(),
+        ],
+        &provider,
+    ) {
+        Err(err) => err.to_string(),
+        Ok(_) => panic!("expected a policy conflict"),
+    };
+    assert!(err.contains("fugue.test.rules"), "{err}");
 }
 
 #[test]

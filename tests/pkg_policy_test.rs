@@ -5,6 +5,7 @@ use fugue::{ManifestError, PkgValidationError as ValidationError};
 
 const POLICY: &str = include_str!("../src/pkg/examples/policy.json");
 const SKILL: &str = include_str!("../src/pkg/examples/skill.json");
+const AGENT: &str = include_str!("../src/pkg/examples/agent.json");
 const MODULE: &str = include_str!("../src/pkg/examples/module.json");
 
 fn with(json: &str, field: &str, value: serde_json::Value) -> String {
@@ -24,23 +25,43 @@ fn invalid(json: &str) -> ValidationError {
 fn a_policy_entry_must_match_the_policy_kind() {
     parse_str(POLICY).expect("policy example validates");
 
-    let other_entry = with(POLICY, "entry", serde_json::json!({"skill": "SKILL.md"}));
-    assert!(matches!(
-        invalid(&other_entry),
-        ValidationError::KindEntryMismatch {
-            kind: "policy",
-            entry_kind: "skill"
-        }
-    ));
+    for (entry_kind, entry) in [
+        ("skill", serde_json::json!({"skill": "SKILL.md"})),
+        ("agent", serde_json::json!({"definition": "agent.json"})),
+        ("module", serde_json::json!({"wasm": "module.wasm"})),
+        (
+            "development",
+            serde_json::json!({"development": "voice.json"}),
+        ),
+        ("invention", serde_json::json!({"invention": "song.json"})),
+        (
+            "sample-pack",
+            serde_json::json!({"samples": "samples.json"}),
+        ),
+    ] {
+        let other_entry = with(POLICY, "entry", entry);
+        let err = invalid(&other_entry);
+        assert!(
+            matches!(err, ValidationError::KindEntryMismatch { kind: "policy", entry_kind: e } if e == entry_kind),
+            "{entry_kind}: {err:?}"
+        );
+    }
 
-    let policy_entry_on_skill = with(SKILL, "entry", serde_json::json!({"policy": "POLICY.md"}));
-    assert!(matches!(
-        invalid(&policy_entry_on_skill),
-        ValidationError::KindEntryMismatch {
-            kind: "skill",
-            entry_kind: "policy"
-        }
-    ));
+    for kind in [
+        "module",
+        "development",
+        "invention",
+        "skill",
+        "agent",
+        "sample-pack",
+    ] {
+        let policy_entry_elsewhere = with(POLICY, "kind", serde_json::json!(kind));
+        let err = invalid(&policy_entry_elsewhere);
+        assert!(
+            matches!(err, ValidationError::KindEntryMismatch { kind: k, entry_kind: "policy" } if k == kind),
+            "{kind}: {err:?}"
+        );
+    }
 }
 
 #[test]
@@ -81,10 +102,12 @@ fn a_malformed_policy_entry_is_quoted() {
         "@^0.1.0",
         "fugue.example.mixing-policy@",
     ] {
-        let json = with(SKILL, "policies", serde_json::json!([bad]));
-        let err = invalid(&json);
-        assert_eq!(err, ValidationError::InvalidPolicyRef(bad.to_string()));
-        assert!(err.to_string().contains(&format!("`{bad}`")), "{err}");
+        for requirer in [SKILL, AGENT] {
+            let json = with(requirer, "policies", serde_json::json!([bad]));
+            let err = invalid(&json);
+            assert_eq!(err, ValidationError::InvalidPolicyRef(bad.to_string()));
+            assert!(err.to_string().contains(&format!("`{bad}`")), "{err}");
+        }
     }
 }
 

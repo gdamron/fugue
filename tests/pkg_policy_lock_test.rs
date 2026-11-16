@@ -87,6 +87,7 @@ fn existing_lockfiles_stay_valid() {
 }"#;
     let lock = Lockfile::from_slice(v2).expect("a v2 lockfile still parses");
     assert_eq!(lock.packages.len(), 2);
+    assert_eq!(lock.packages["fugue.demo.top-skill"].kind, "skill");
     assert_eq!(
         lock.packages["fugue.demo.top-skill"].dependencies,
         ["fugue.demo.helper-skill@0.3.1"]
