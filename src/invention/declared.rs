@@ -226,7 +226,7 @@ impl DeclaredSurface {
 
     /// The write of a whole that a write of `value` to part `key` is,
     /// built from what the whole reads back now (see
-    /// [`crate::control_request::WholePart`]); `None` when `key` names no
+    /// `WholePart`); `None` when `key` names no
     /// part. Control thread.
     pub(crate) fn whole_write(
         &self,
