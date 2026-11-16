@@ -104,3 +104,61 @@ fn a_running_step_sequencer_keeps_its_declaration() {
         ("pattern", "root_note")
     );
 }
+
+/// A cell sequencer whose type defaults hold a bank too large to describe.
+struct LargeBank;
+
+impl crate::ModuleFactory for LargeBank {
+    fn type_id(&self) -> &'static str {
+        "large_bank"
+    }
+    fn stored_notes(&self) -> Option<crate::StoredNotes> {
+        ModuleRegistry::default().stored_notes("cell_sequencer")
+    }
+    fn build(
+        &self,
+        sample_rate: u32,
+        _: &serde_json::Value,
+    ) -> Result<crate::ModuleBuildResult, Box<dyn std::error::Error>> {
+        let note = |n: i32| serde_json::json!({"note": n % 12, "velocity": 0.5});
+        let cell: Vec<_> = (0..1024).map(note).collect();
+        let config = serde_json::json!({"cells": [cell], "step_count": 1024});
+        ModuleRegistry::default().build("cell_sequencer", sample_rate, &config)
+    }
+}
+
+#[test]
+fn a_type_described_leaves_a_large_default_out_and_a_catalog_keeps_it() {
+    let mut registry = ModuleRegistry::default();
+    registry.register(LargeBank);
+    let query = DescribeModuleQuery {
+        module_type: Some("large_bank".to_string()),
+        ..Default::default()
+    };
+    let described =
+        ModuleDescription::from_registry(&registry, 48_000, RegistryScope::Running, &query)
+            .unwrap();
+    assert_eq!(
+        described.values_omitted["cells"].cell_lengths,
+        Some(vec![1024])
+    );
+    let catalog = ModuleTypeList::from_registry(
+        &registry,
+        48_000,
+        RegistryScope::Running,
+        &ModuleTypeQuery {
+            types: Some(vec!["large_bank".to_string()]),
+            detail: TypeDetail::Full,
+        },
+    )
+    .unwrap();
+    let Some([ModuleTypeDetail::Available { info }]) = catalog.details.as_deref() else {
+        panic!("{catalog:?}");
+    };
+    let cells = info.controls.iter().find(|c| c.key == "cells").unwrap();
+    let bank = cells.default.as_string().unwrap();
+    assert!(
+        bank.len() > super::super::MAX_DESCRIBED_VALUE_BYTES,
+        "kept whole"
+    );
+}

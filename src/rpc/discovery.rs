@@ -297,7 +297,9 @@ impl ModuleTypeList {
         };
         if full {
             for name in response.index.types.clone() {
-                let entry = match ModuleDescription::from_registry(
+                // A catalog lists each type's controls as declared, large
+                // defaults and all; only a description leaves values out.
+                let entry = match ModuleDescription::inspected(
                     registry,
                     sample_rate,
                     scope,
@@ -362,47 +364,20 @@ pub struct ModuleDescription {
     pub timeline: Option<crate::TimelineContext>,
 }
 
-/// [`ModuleDescription`] as it serializes before an omitted value's listed
-/// default is dropped.
-#[derive(Serialize)]
-#[serde(remote = "ModuleDescription")]
-struct DescriptionFields {
-    schema_version: u32,
-    registry_scope: RegistryScope,
-    metadata_source: MetadataSource,
-    sample_rate: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    module_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-    #[serde(flatten)]
-    info: ModuleTypeInfo,
-    control_values: BTreeMap<String, ControlValue>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    values_omitted: BTreeMap<String, super::OmittedValue>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    timeline: Option<crate::TimelineContext>,
-}
-
-impl Serialize for ModuleDescription {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if self.values_omitted.is_empty() {
-            return DescriptionFields::serialize(self, serializer);
-        }
-        use serde::ser::Error;
-        let mut value = DescriptionFields::serialize(self, serde_json::value::Serializer)
-            .map_err(S::Error::custom)?;
-        if let Some(controls) = value.get_mut("controls") {
-            super::leave_out_defaults(controls, &self.values_omitted);
-        }
-        value.serialize(serializer)
-    }
-}
-
 impl ModuleDescription {
     /// Inspects a supplied config or defaults without activating output backends.
     /// Factory validation/defaults apply; external output readiness is not tested.
     pub fn from_registry(
+        registry: &ModuleRegistry,
+        sample_rate: u32,
+        scope: RegistryScope,
+        query: &DescribeModuleQuery,
+    ) -> Result<Self, RpcError> {
+        Self::inspected(registry, sample_rate, scope, query)?.leaving_out_large_values()
+    }
+
+    /// [`Self::from_registry`] with every value kept.
+    fn inspected(
         registry: &ModuleRegistry,
         sample_rate: u32,
         scope: RegistryScope,
@@ -478,7 +453,7 @@ impl ModuleDescription {
             values_omitted: BTreeMap::new(),
             timeline: None,
         };
-        response.leaving_out_large_values()
+        Ok(response)
     }
 
     /// Uses the captured live instance metadata, without rebuilding its type.
@@ -522,29 +497,6 @@ impl ModuleDescription {
             timeline: snapshot.timeline,
         };
         response.leaving_out_large_values()
-    }
-
-    /// This description with each value too large to describe left out and
-    /// named, and then, while it is still too large, the largest left; so
-    /// it fails for size only when what is not a value is too large.
-    fn leaving_out_large_values(mut self) -> Result<Self, RpcError> {
-        use super::described_values::{leave_out, omit_until_fits};
-        let cells = self.info.stored_notes.as_ref();
-        let cells = cells.and_then(|notes| notes.cells.as_ref());
-        let mut omitted = super::omitted_values(&self.info.controls, &self.control_values, cells);
-        if !omitted.is_empty() || check_discovery_size(&self).is_err() {
-            let (controls, values) = (self.info.controls.clone(), self.control_values.clone());
-            omit_until_fits(&controls, &values, &mut omitted, |omitted| {
-                let mut trial = self.clone();
-                leave_out(&mut trial.info.controls, &mut trial.control_values, omitted);
-                trial.values_omitted = omitted.clone();
-                check_discovery_size(&trial).is_ok()
-            });
-            leave_out(&mut self.info.controls, &mut self.control_values, &omitted);
-            self.values_omitted = omitted;
-        }
-        check_discovery_size(&self)?;
-        Ok(self)
     }
 }
 
