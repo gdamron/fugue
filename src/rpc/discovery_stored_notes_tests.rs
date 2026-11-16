@@ -106,11 +106,12 @@ fn a_running_step_sequencer_keeps_its_declaration() {
 }
 
 /// A cell sequencer whose type defaults hold a bank too large to describe.
-struct LargeBank;
+/// A cell sequencer type whose default bank holds `.1` cells of 1024 steps.
+struct LargeBank(&'static str, usize);
 
 impl crate::ModuleFactory for LargeBank {
     fn type_id(&self) -> &'static str {
-        "large_bank"
+        self.0
     }
     fn stored_notes(&self) -> Option<crate::StoredNotes> {
         ModuleRegistry::default().stored_notes("cell_sequencer")
@@ -122,7 +123,7 @@ impl crate::ModuleFactory for LargeBank {
     ) -> Result<crate::ModuleBuildResult, Box<dyn std::error::Error>> {
         let note = |n: i32| serde_json::json!({"note": n % 12, "velocity": 0.5});
         let cell: Vec<_> = (0..1024).map(note).collect();
-        let config = serde_json::json!({"cells": [cell], "step_count": 1024});
+        let config = serde_json::json!({"cells": vec![cell; self.1], "step_count": 1024});
         ModuleRegistry::default().build("cell_sequencer", sample_rate, &config)
     }
 }
@@ -130,7 +131,7 @@ impl crate::ModuleFactory for LargeBank {
 #[test]
 fn a_type_described_leaves_a_large_default_out_and_a_catalog_keeps_it() {
     let mut registry = ModuleRegistry::default();
-    registry.register(LargeBank);
+    registry.register(LargeBank("large_bank", 1));
     let query = DescribeModuleQuery {
         module_type: Some("large_bank".to_string()),
         ..Default::default()
@@ -161,4 +162,27 @@ fn a_type_described_leaves_a_large_default_out_and_a_catalog_keeps_it() {
         bank.len() > super::super::MAX_DESCRIBED_VALUE_BYTES,
         "kept whole"
     );
+}
+
+#[test]
+fn a_type_too_large_to_list_whole_is_unavailable_and_the_catalog_lists_the_rest() {
+    let mut registry = ModuleRegistry::default();
+    registry.register(LargeBank("huge_bank", 3));
+    let catalog = ModuleTypeList::from_registry(
+        &registry,
+        48_000,
+        RegistryScope::Running,
+        &ModuleTypeQuery {
+            types: Some(vec!["huge_bank".to_string(), "oscillator".to_string()]),
+            detail: TypeDetail::Full,
+        },
+    )
+    .unwrap();
+    let details = catalog.details.as_deref().unwrap();
+    assert!(matches!(
+        &details[0],
+        ModuleTypeDetail::Unavailable { type_name, error }
+            if type_name == "huge_bank" && error.code == RpcErrorCode::ResponseTooLarge
+    ));
+    assert!(matches!(&details[1], ModuleTypeDetail::Available { .. }));
 }

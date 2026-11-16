@@ -298,16 +298,18 @@ impl ModuleTypeList {
         if full {
             for name in response.index.types.clone() {
                 // A catalog lists each type's controls as declared, large
-                // defaults and all; only a description leaves values out.
-                let entry = match ModuleDescription::inspected(
-                    registry,
-                    sample_rate,
-                    scope,
-                    &DescribeModuleQuery {
-                        module_type: Some(name.clone()),
-                        ..Default::default()
-                    },
-                ) {
+                // defaults and all; only a description leaves values out. A
+                // type too large to list whole is unavailable, as before.
+                let query = DescribeModuleQuery {
+                    module_type: Some(name.clone()),
+                    ..Default::default()
+                };
+                let described = ModuleDescription::inspected(registry, sample_rate, scope, &query)
+                    .and_then(|description| {
+                        check_discovery_size(&description)?;
+                        Ok(description)
+                    });
+                let entry = match described {
                     Ok(description) => ModuleTypeDetail::Available {
                         info: description.info,
                     },
