@@ -310,7 +310,9 @@ length, trailing rests included: a write of another length, or to a cell past
 the bank's end, is refused with the cell's length or the bank's size, and
 nothing changes. A cell write is made now: one asked for at a later time
 is refused. Cell writes take turns on the module, so several made at once
-each land. `cells.N` is not listed among the controls; `cells` is.
+each land. A cell builds on the bank as last written, which is a bank
+written for a later time when one waits: write cells, not banks, while one
+is pending. `cells.N` is not listed among the controls; `cells` is.
 
 ## Modules see only their ports and controls
 
