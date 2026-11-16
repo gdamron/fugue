@@ -90,6 +90,24 @@ fn stop_words_are_sorted_for_lookup() {
 }
 
 #[test]
+fn every_synonym_names_words_a_search_can_reach() {
+    for (heard, meant) in synonyms::SYNONYMS {
+        assert!(!heard.is_empty() && !meant.is_empty());
+        for word in heard.iter().chain(meant.iter()) {
+            assert!(!all_words(word).is_empty(), "{word} has no words");
+        }
+    }
+}
+
+#[test]
+fn a_musical_word_reaches_what_fugue_calls_it() {
+    let answer = index().find(&FindQuery::words("make it brighter")).unwrap();
+    assert_eq!(names(&answer)[..2], ["lead_filter.cutoff", "filter"]);
+    let answer = index().find(&FindQuery::words("echo")).unwrap();
+    assert_eq!(names(&answer), ["delay"]);
+}
+
+#[test]
 fn naming_a_thing_ranks_it_first() {
     let answer = index().find(&FindQuery::words("filter")).unwrap();
     assert_eq!(names(&answer)[0], "filter");
@@ -247,6 +265,24 @@ fn a_kind_left_out_is_named_when_asked_for_or_when_nothing_matched() {
         ..FindQuery::words("zzzz")
     };
     assert!(!notes(query).contains(&why.to_string()));
+}
+
+#[test]
+fn a_card_holding_the_word_and_what_it_means_ranks_first() {
+    let mut index = Index::new();
+    for key in ["bpm", "division", "feedback"] {
+        index.add(
+            card(
+                FindKind::Control,
+                &format!("echo.{key}"),
+                &format!("{key} of echo (delay)"),
+                "",
+            )
+            .with_terms(["echo", "delay"]),
+        );
+    }
+    let answer = index.find(&FindQuery::words("more echo")).unwrap();
+    assert_eq!(names(&answer)[0], "echo.feedback");
 }
 
 #[test]

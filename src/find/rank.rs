@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use super::Entry;
+use super::{synonyms, Entry};
 
 /// How much a word counts by where an entry holds it: its name most, then
 /// what it is, its key words, and the prose of when to use it.
@@ -14,6 +14,7 @@ const WHEN_WEIGHT: f64 = 1.0;
 
 /// How much a match counts by how it matched the query's word.
 const EXACT: f64 = 1.0;
+const SYNONYM: f64 = 0.7;
 const PREFIX: f64 = 0.5;
 
 /// What each further word a query word reaches in an entry adds, beyond the
@@ -136,9 +137,15 @@ fn best_match(
     best + FURTHER_MATCH * (held - best).max(0.0)
 }
 
-/// A query word and the words it searches for.
+/// A query word and the words the synonym table widens it to.
 fn expand(word: &str) -> Vec<(String, f64)> {
-    vec![(word.to_string(), EXACT)]
+    let mut candidates = vec![(word.to_string(), EXACT)];
+    for synonym in synonyms::of(word) {
+        if !candidates.iter().any(|(known, _)| known == synonym) {
+            candidates.push((synonym.to_string(), SYNONYM));
+        }
+    }
+    candidates
 }
 
 /// Each word an entry holds, with the weight of the most telling field

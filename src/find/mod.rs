@@ -4,9 +4,9 @@
 //! and views, the module types, developments, examples and packages the
 //! daemon knows, and the loaded piece's controls. [`Index::find`] ranks the
 //! cards for a query by plain lexical matching over their names, labels,
-//! descriptions and key words. It is deterministic, needs no model and no
-//! network, and bounds its answer in bytes, saying how many more matched
-//! when it stops.
+//! descriptions and key words, widened by one table of musical synonyms
+//! ([`synonyms`]). It is deterministic, needs no model and no network, and
+//! bounds its answer in bytes, saying how many more matched when it stops.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,6 +14,7 @@ use serde_json::Value;
 use crate::rpc::{RpcError, RpcErrorCode};
 
 mod rank;
+pub mod synonyms;
 
 /// Version of the answer's shape and meaning.
 pub const FIND_SCHEMA_VERSION: u32 = 1;
