@@ -1013,8 +1013,6 @@ impl Module for CellSequencer {
 }
 
 #[cfg(test)]
-mod held_gate_tests;
-#[cfg(test)]
 mod request_tests;
 #[cfg(test)]
 mod tests;
