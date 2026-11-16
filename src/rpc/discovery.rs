@@ -297,15 +297,19 @@ impl ModuleTypeList {
         };
         if full {
             for name in response.index.types.clone() {
-                let entry = match ModuleDescription::from_registry(
-                    registry,
-                    sample_rate,
-                    scope,
-                    &DescribeModuleQuery {
-                        module_type: Some(name.clone()),
-                        ..Default::default()
-                    },
-                ) {
+                // A catalog lists each type's controls as declared, large
+                // defaults and all; only a description leaves values out. A
+                // type too large to list whole is unavailable, as before.
+                let query = DescribeModuleQuery {
+                    module_type: Some(name.clone()),
+                    ..Default::default()
+                };
+                let described = ModuleDescription::inspected(registry, sample_rate, scope, &query)
+                    .and_then(|description| {
+                        check_discovery_size(&description)?;
+                        Ok(description)
+                    });
+                let entry = match described {
                     Ok(description) => ModuleTypeDetail::Available {
                         info: description.info,
                     },
@@ -323,8 +327,12 @@ impl ModuleTypeList {
     }
 }
 
-/// Detailed inspection of one module, including initial or current control values.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Detailed inspection of one module, including initial or current control
+/// values. A value larger than
+/// [`MAX_DESCRIBED_VALUE_BYTES`](super::MAX_DESCRIBED_VALUE_BYTES) is left
+/// out of `control_values` and of its control's listed `default`, and named
+/// in `values_omitted` (see `DISCOVERY.md`).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct ModuleDescription {
     /// Discovery response schema version.
@@ -347,6 +355,11 @@ pub struct ModuleDescription {
     pub info: ModuleTypeInfo,
     /// Initial values for supplied config/defaults; current values for a running instance.
     pub control_values: BTreeMap<String, ControlValue>,
+    /// The values left out of `control_values` and of their control's
+    /// listed `default` for their size, by control; read one through
+    /// `get_control`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub values_omitted: BTreeMap<String, super::OmittedValue>,
     /// For a running instance in an invention with a clock: the clock a
     /// request timed in beats on it counts on when it names none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -357,6 +370,16 @@ impl ModuleDescription {
     /// Inspects a supplied config or defaults without activating output backends.
     /// Factory validation/defaults apply; external output readiness is not tested.
     pub fn from_registry(
+        registry: &ModuleRegistry,
+        sample_rate: u32,
+        scope: RegistryScope,
+        query: &DescribeModuleQuery,
+    ) -> Result<Self, RpcError> {
+        Self::inspected(registry, sample_rate, scope, query)?.leaving_out_large_values()
+    }
+
+    /// [`Self::from_registry`] with every value kept.
+    fn inspected(
         registry: &ModuleRegistry,
         sample_rate: u32,
         scope: RegistryScope,
@@ -429,9 +452,9 @@ impl ModuleDescription {
             }
             .labeled(registry.labels(name)),
             control_values,
+            values_omitted: BTreeMap::new(),
             timeline: None,
         };
-        check_discovery_size(&response)?;
         Ok(response)
     }
 
@@ -472,10 +495,10 @@ impl ModuleDescription {
             }
             .labeled(labels),
             control_values,
+            values_omitted: BTreeMap::new(),
             timeline: snapshot.timeline,
         };
-        check_discovery_size(&response)?;
-        Ok(response)
+        response.leaving_out_large_values()
     }
 }
 
