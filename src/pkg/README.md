@@ -27,6 +27,7 @@ content, see [Musical content identity and resolution](CONTENT_IDENTITY.md).
 | `requires`    | object                    | no       | Declared runtime requirements (see below).                                    |
 | `deps`        | array of `id@req` strings | no       | Other Fugue packages this one depends on. Phase 1 shape-checks only.          |
 | `policies`    | array of `id@req` strings | no       | Policy packages a `skill` or `agent` requires (see [Policies](#policies)).    |
+| `examples`    | array of paths            | no       | Example invention or development documents in a `skill` (see [Skills](#skills)). |
 | `entry`       | object                    | yes      | Kind-specific entry point (see below).                                        |
 | `signing`     | `{key, signature}`        | no       | Reserved for Phase 2; accepted but not enforced.                              |
 
@@ -84,6 +85,30 @@ instead of restating the rules:
 - The entry must be a `.md` file inside the package that does not open with a
   YAML frontmatter block, which an agent host would discover as a skill.
   `check_policy_entry` checks this once the package is on disk.
+
+## Skills
+
+A `skill` package's entry is a `SKILL.md` that opens with a YAML frontmatter
+block giving the skill's `name` and `description`, which agent hosts use to
+discover it. Its `examples` list example invention or development documents
+the skill points to:
+
+```json
+{ "kind": "skill", "policies": ["fugue.example.mixing-policy@^0.1.0"], "examples": ["examples/groove.invention.json"], "entry": { "skill": "SKILL.md" } }
+```
+
+- Only `skill` packages may declare `examples`; on any other kind the field is
+  a validation error, even when empty.
+- `check_skill_package` checks the files once the package is on disk. The
+  entry must be a regular file named `SKILL.md` inside the package, reached
+  without symbolic links and outside `.git`. Its frontmatter `name` and
+  `description` must be present and non-empty, and `name` must be host-safe:
+  1 to 64 lowercase letters, digits and hyphens. Each `examples` path must be
+  a regular file in the package that parses as an invention or development
+  document (a schema check, not a build).
+- A body link to `policies/<package-id>.md` for a policy the manifest's
+  `policies` does not list is returned as a warning, not a failure. That link
+  is how a skill body points at a policy it requires.
 
 ## Examples
 

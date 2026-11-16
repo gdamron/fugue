@@ -83,6 +83,10 @@ pub enum ValidationError {
     PolicyPackageRequires {
         field: &'static str,
     },
+    /// `examples` declared on a kind other than `skill`.
+    ExamplesNotAllowed {
+        kind: &'static str,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -121,6 +125,10 @@ impl fmt::Display for ValidationError {
             ValidationError::PolicyPackageRequires { field } => write!(
                 f,
                 "a policy package cannot declare `{field}`: policies require no other package"
+            ),
+            ValidationError::ExamplesNotAllowed { kind } => write!(
+                f,
+                "`examples` is allowed only on skill packages, not on a `{kind}`"
             ),
         }
     }
@@ -166,6 +174,11 @@ pub fn validate(manifest: &PackageManifest) -> Result<(), ValidationError> {
         if DepRef::parse(dep).is_none() {
             return Err(ValidationError::InvalidDepRef(dep.clone()));
         }
+    }
+    if manifest.examples.is_some() && manifest.kind != PackageKind::Skill {
+        return Err(ValidationError::ExamplesNotAllowed {
+            kind: manifest.kind.as_str(),
+        });
     }
     validate_policy_fields(manifest)
 }
@@ -220,7 +233,7 @@ pub fn parse_path(path: impl AsRef<std::path::Path>) -> Result<PackageManifest, 
 
 /// Reverse-DNS id check: lowercase ASCII, ≥3 dot-segments, each segment
 /// non-empty and made of `[a-z0-9_-]`, leading char alphanumeric.
-fn is_valid_id(id: &str) -> bool {
+pub(crate) fn is_valid_id(id: &str) -> bool {
     if id.is_empty() {
         return false;
     }
