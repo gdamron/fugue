@@ -118,14 +118,20 @@ pub fn leave_out_defaults(
 }
 
 /// Also leaves out the largest values left until `fits` says the response
-/// fits [`MAX_DISCOVERY_RESPONSE_BYTES`](super::MAX_DISCOVERY_RESPONSE_BYTES): values each under the budget can
-/// still add up past it.
+/// fits [`MAX_DISCOVERY_RESPONSE_BYTES`](super::MAX_DISCOVERY_RESPONSE_BYTES):
+/// values each under the budget can still add up past it. Leaves out as few
+/// as fit, found by halving, so a large control surface costs a few trials;
+/// when the response does not fit with every value left out, leaves
+/// `omitted` as it is.
 pub(crate) fn omit_until_fits(
     controls: &[ControlMeta],
     values: &BTreeMap<String, ControlValue>,
     omitted: &mut BTreeMap<String, OmittedValue>,
     mut fits: impl FnMut(&BTreeMap<String, OmittedValue>) -> bool,
 ) {
+    if fits(omitted) {
+        return;
+    }
     let mut sized: Vec<(usize, &String)> = (controls.iter())
         .filter(|meta| !omitted.contains_key(&meta.key))
         .map(|meta| {
@@ -134,16 +140,32 @@ pub(crate) fn omit_until_fits(
         })
         .collect();
     sized.sort_unstable_by(|a, b| b.cmp(a));
-    for (bytes, key) in sized {
-        if fits(omitted) {
-            return;
+    let leaving = |count: usize| {
+        let mut leaving = omitted.clone();
+        for &(bytes, key) in &sized[..count] {
+            let value = OmittedValue {
+                bytes: bytes as u64,
+                cell_lengths: None,
+            };
+            leaving.insert(key.clone(), value);
         }
-        let value = OmittedValue {
-            bytes: bytes as u64,
-            cell_lengths: None,
-        };
-        omitted.insert(key.clone(), value);
+        leaving
+    };
+    // The fewest largest values whose leaving out fits; every one, checked
+    // first, is the most there is to leave.
+    let (mut low, mut high) = (1, sized.len());
+    if high == 0 || !fits(&leaving(high)) {
+        return;
     }
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if fits(&leaving(middle)) {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    *omitted = leaving(high);
 }
 
 /// [`ModuleDescription`] as it serializes before an omitted value's listed
@@ -255,6 +277,37 @@ mod tests {
         let keys: Vec<&str> = omitted.keys().map(String::as_str).collect();
         assert_eq!(keys, ["a", "b"]);
         assert_eq!(omitted["a"].bytes, 7002);
+    }
+
+    #[test]
+    fn a_response_that_cannot_fit_is_left_as_it_is_after_a_few_trials() {
+        let controls: Vec<_> = (0..65_536)
+            .map(|n| meta(&format!("slot.{n}"), ControlValue::Number(0.0)))
+            .collect();
+        let named = BTreeMap::from([(
+            "cells".to_string(),
+            OmittedValue {
+                bytes: 9000,
+                cell_lengths: None,
+            },
+        )]);
+        let mut omitted = named.clone();
+        let mut trials = 0;
+        omit_until_fits(&controls, &BTreeMap::new(), &mut omitted, |_| {
+            trials += 1;
+            false
+        });
+        assert_eq!((trials, omitted), (2, named));
+
+        // One that fits only with nearly all left out takes a trial per halving.
+        let mut omitted = BTreeMap::new();
+        let mut trials = 0;
+        omit_until_fits(&controls, &BTreeMap::new(), &mut omitted, |o| {
+            trials += 1;
+            o.len() >= 60_000
+        });
+        assert_eq!(omitted.len(), 60_000);
+        assert!(trials <= 20, "{trials}");
     }
 
     #[test]
