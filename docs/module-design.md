@@ -313,6 +313,9 @@ is refused. Cell writes take turns on the module, so several made at once
 each land. A cell builds on the bank as last written, which is a bank
 written for a later time when one waits: write cells, not banks, while one
 is pending. `cells.N` is not listed among the controls; `cells` is.
+Reading `cells.N` gives cell N of the bank the sequencer reads back now, so
+a bank too large for a module's description (which then names it in
+`values_omitted`, with each cell's length) is read one cell at a time.
 
 ## Modules see only their ports and controls
 

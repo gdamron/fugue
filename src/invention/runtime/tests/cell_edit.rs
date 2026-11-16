@@ -180,3 +180,33 @@ fn a_cell_write_at_a_later_time_is_refused() {
     assert_eq!(bank[1][0]["note"], 7, "unchanged: {bank}");
     running.stop();
 }
+
+#[test]
+fn a_cell_reads_as_its_place_in_the_bank_now_and_past_the_bank_is_refused() {
+    let invention = Invention::from_json(&doc()).unwrap();
+    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let (running, pump) = start_manual(runtime);
+    let read = |key: &str| match running.get_control("seq", key) {
+        Ok(ControlValue::String(text)) => Ok(serde_json::from_str::<Value>(&text).unwrap()),
+        other => Err(format!("{other:?}")),
+    };
+    let bank = read("cells").unwrap();
+    assert_eq!(read("cells.1").unwrap(), bank[1]);
+    let rests = json!([{"note": 9}, null]);
+    running
+        .set_control("seq", "cells.1", ControlValue::String(rests.to_string()))
+        .unwrap();
+    pump.render(1);
+    assert_eq!(
+        read("cells.1").unwrap(),
+        read("cells").unwrap()[1],
+        "read after a write"
+    );
+    assert_ne!(read("cells.1").unwrap(), bank[1]);
+    let past = read("cells.2").unwrap_err();
+    assert!(
+        past.contains("the bank holds 2 cells, cells.0 to cells.1"),
+        "{past}"
+    );
+    running.stop();
+}

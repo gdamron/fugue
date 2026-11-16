@@ -142,6 +142,10 @@ fn rpc_commands_round_trip_json() {
             config: Some(serde_json::json!({"channel_count":8})),
             ..Default::default()
         }),
+        RpcCommand::GetControl {
+            module_id: "mel_1".into(),
+            key: "cells.3".into(),
+        },
     ];
 
     for command in commands {
@@ -470,4 +474,31 @@ fn get_development_reads_by_path_on_the_wire_and_moves_no_revision() {
     assert_eq!(serde_json::to_value(&command).unwrap(), wire);
     let parsed: RpcCommand = serde_json::from_value(wire).unwrap();
     assert_eq!(parsed, command);
+}
+
+#[test]
+fn get_control_and_its_answer_round_trip_and_an_older_peer_states_its_refusal() {
+    let json = r#"{"command":"get_control","module_id":"mel_1","key":"cells.3"}"#;
+    let command: RpcCommand = serde_json::from_str(json).unwrap();
+    assert_eq!(serde_json::to_string(&command).unwrap(), json);
+    let answer = RpcResponsePayload::Control {
+        module_id: "mel_1".into(),
+        key: "cells.3".into(),
+        value: crate::ControlValue::String("[null]".into()),
+    };
+    let wire = serde_json::to_value(&answer).unwrap();
+    assert_eq!(
+        wire,
+        serde_json::json!({"kind":"control","module_id":"mel_1","key":"cells.3","value":"[null]"})
+    );
+    assert_eq!(
+        serde_json::from_value::<RpcResponsePayload>(wire).unwrap(),
+        answer
+    );
+    // A daemon that predates a command fails to decode it, and answers that
+    // failure as an error naming the command, rather than going quiet.
+    let known = serde_json::to_string(&RpcRequest::new(command)).unwrap();
+    let unknown = known.replace("get_control", "read_everything");
+    let error = serde_json::from_str::<RpcRequest>(&unknown).unwrap_err();
+    assert!(error.to_string().contains("read_everything"), "{error}");
 }

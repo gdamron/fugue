@@ -16,6 +16,9 @@ impl ControlSurface for DeclaredSurface {
     }
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
+        if let Some(part) = self.part_read(key) {
+            return part;
+        }
         if let Some((index, _)) = self.payload_decl(key) {
             return self
                 .shown(index)

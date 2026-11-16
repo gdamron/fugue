@@ -473,6 +473,17 @@ pub enum RpcCommand {
     DescribeModuleTypes(ModuleTypeQuery),
     /// Inspect type defaults, supplied config, or an existing module instance.
     DescribeModule(DescribeModuleQuery),
+    /// Read the current value of one control of a running module, answered
+    /// as [`RpcResponsePayload::Control`]. A part reads as what it is of
+    /// its whole now: a cell sequencer's `cells.3` is cell 3 of its bank,
+    /// refused as a write to it would be when the bank holds no such cell.
+    /// This is how a value a description leaves out for its size is read.
+    ///
+    /// [`RpcResponsePayload::Control`]: super::RpcResponsePayload::Control
+    GetControl {
+        module_id: String,
+        key: String,
+    },
     /// Wait until every change the daemon has applied is saved to its session
     /// file, so it survives a daemon restart. A mutation's reply means the
     /// change is live; the daemon saves in the background shortly after, and
