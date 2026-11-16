@@ -10,6 +10,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 mod acks;
+mod cell_edit;
 mod editing;
 mod exact_integers;
 mod front_doors;

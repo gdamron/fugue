@@ -42,6 +42,42 @@ pub struct StoredNotes {
     pub pitch_range: [u8; 2],
     /// The fields of a step object.
     pub step: StepFields,
+    /// Set when the module stores a bank of patterns (cells) rather than
+    /// one: then [`pattern`](Self::pattern) holds an array of patterns and
+    /// one plays at a time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cells: Option<StoredCells>,
+}
+
+/// How a module that stores a bank of cells plays them, and how one cell is
+/// written on its own.
+///
+/// Cell `N` is written as the control `<cell_key>.N`, with one pattern as
+/// JSON text. Such a write changes only that cell, keeps the rest of the
+/// bank, and is recorded in the document as the whole bank: a bank the
+/// document shared from an asset becomes the module's own copy on its first
+/// edit. A cell keeps its length (its trailing rests included), so a write
+/// of another length, or to a cell past the bank, is refused. The playing
+/// cell's edit is heard from its next step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct StoredCells {
+    /// The prefix of the per-cell controls: `cells` names `cells.0`, ...
+    pub cell_key: Name,
+    /// The most cells a bank holds.
+    pub max_cells: u32,
+    /// The control reporting the cell that plays now.
+    pub playing: Name,
+    /// The control selecting the cell to play.
+    pub select: Name,
+    /// The config key naming the cell that plays first.
+    pub start: Name,
+    /// The control holding how cells play: `loop` repeats the selected
+    /// cell, `one_shot` plays the bank through once.
+    pub mode: Name,
+    /// The control that, when true, wraps each cycle at the playing cell's
+    /// own length rather than the step count.
+    pub follow_length: Name,
 }
 
 /// The fields of one stored step.

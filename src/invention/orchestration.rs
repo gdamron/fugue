@@ -359,6 +359,19 @@ impl RuntimeSnapshot {
         // so a stringified write lands and the retained document stays typed.
         // set_control_transient stays uncoerced: its callers are
         // internal telemetry writes that already carry the right type.
+        // A part of another control (a cell of a bank) is written and
+        // recorded as the whole it makes, built from the whole as it is
+        // once this writer's turn has come, so no other authored write
+        // lands between the read and the write.
+        let part_turn = (self.live.as_ref())
+            .filter(|_| self.is_part(module_id, key))
+            .map(|live| live.authoring());
+        let whole = self.whole_write(module_id, key, &value)?;
+        let (key, value) = match whole {
+            Some((key, value)) => (std::borrow::Cow::Owned(key), value),
+            None => (std::borrow::Cow::Borrowed(key), value),
+        };
+        let key = key.as_ref();
         let value = self.coerced(module_id, key, value)?;
         let (load, origin) = self.asset_to_load((module_id, key), &value)?;
         let Some(live) = &self.live else {
@@ -379,7 +392,7 @@ impl RuntimeSnapshot {
         // the module is cancelled. Authored writers take turns, so the
         // last submitted is the last recorded. A timed edit already landed
         // is adopted first, so the write goes to the module playing.
-        let _authoring = live.authoring();
+        let _authoring = part_turn.unwrap_or_else(|| live.authoring());
         live.adopt_landed();
         let authoring = Authoring {
             value,
@@ -397,6 +410,37 @@ impl RuntimeSnapshot {
             live.reconcile_authored((module_id, key), queued.safe, now);
         }
         Ok(ControlAck::new(authoring.value, &queued))
+    }
+
+    /// The write of a whole that an authored write of `value` to part `key`
+    /// of `module_id` is (see `ControlSurface::whole_write`), or `None`
+    /// when `key` is no part.
+    fn whole_write(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: &ControlValue,
+    ) -> Result<Option<(String, ControlValue)>, GraphCommandError> {
+        let surfaces = self.control_surfaces.lock().unwrap();
+        let Some(surface) = surfaces.get(module_id) else {
+            return Ok(None);
+        };
+        match surface.whole_write(key, value) {
+            Some(Ok(whole)) => Ok(Some(whole)),
+            Some(Err(reason)) => Err(GraphCommandError::ControlError(format!(
+                "{module_id}.{key}: {reason}"
+            ))),
+            None => Ok(None),
+        }
+    }
+
+    /// Whether `key` of `module_id` is a part of another control.
+    fn is_part(&self, module_id: &str, key: &str) -> bool {
+        let surfaces = self.control_surfaces.lock().unwrap();
+        (surfaces
+            .get(module_id)
+            .and_then(|surface| surface.declaration(key)))
+        .is_some_and(|declaration| declaration.decl.part.is_some())
     }
 
     /// Whether `key` of `module_id` is a declared event control.

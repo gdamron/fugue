@@ -203,6 +203,10 @@ impl DeclaredSurface {
         value: ControlValue,
         options: &WriteOptions,
     ) -> Result<Queued, String> {
+        if let Some(whole) = self.whole_write(key, &value) {
+            let (key, value) = whole?;
+            return self.set_control_queued(&key, value, options);
+        }
         if let Some(prepared) = self.prepare(key, &value) {
             let (index, payload, shown) = prepared?;
             return self.deliver(index, Write::Payload(payload, shown, None), options, None);
@@ -211,6 +215,19 @@ impl DeclaredSurface {
         let value = self.coerce(index, &value)?;
         let authored = options.authored.is_some().then_some(key);
         self.deliver(index, Write::Value(value), options, authored)
+    }
+
+    /// The write of a whole that a write of `value` to part `key` is,
+    /// built from what the whole reads back now (see
+    /// [`crate::control_request::WholePart`]); `None` when `key` names no
+    /// part. Control thread.
+    pub(crate) fn whole_write(
+        &self,
+        key: &str,
+        value: &ControlValue,
+    ) -> Option<Result<(String, ControlValue), String>> {
+        let current = |whole: &str| self.index(whole).ok().and_then(|index| self.shown(index));
+        self.table.whole_write(key, value, current)
     }
 
     /// The live graph's publisher generation, read under its lock (so

@@ -46,8 +46,12 @@ impl ControlSurface for DeclaredSurface {
         &self,
         key: &str,
         value: &ControlValue,
-        _surfaces: &ControlSurfaceMap,
+        surfaces: &ControlSurfaceMap,
     ) -> Result<(), String> {
+        if let Some(whole) = self.whole_write(key, value) {
+            let (key, value) = whole?;
+            return self.validate_control(&key, &value, surfaces);
+        }
         let decl = (self.index(key).ok()).and_then(|index| self.table.decl(index));
         if decl.is_some_and(|(decl, _)| decl.loads_on_write) {
             return value.as_string().map(drop);
@@ -73,6 +77,14 @@ impl ControlSurface for DeclaredSurface {
         }
         let prepared = self.prepare(key, value)?;
         Some(prepared.map(|(_, payload, shown)| (payload, shown)))
+    }
+
+    fn whole_write(
+        &self,
+        key: &str,
+        value: &ControlValue,
+    ) -> Option<Result<(String, ControlValue), String>> {
+        DeclaredSurface::whole_write(self, key, value)
     }
 
     fn bind(&self, route: Route, module: &mut dyn Module) {

@@ -60,6 +60,13 @@ starting state and is written into its config, exactly as a standalone
 `SetControl` with the default `author` intent. There is no `intent` field. Live
 performance gestures stay on `SetControl`/`SetControls` with `intent: perform`.
 
+A write to one part of a control, such as a cell sequencer's `cells.2` (one
+cell of its `cells` bank, see [module-design.md](module-design.md#a-bank-of-cells)),
+is made as a write of the whole: it is built from the whole as the batch has
+it so far, so several cells written in one batch all land, and it is
+reported in `controls_written` and recorded in the document as the whole
+(`cells`). A part that does not fit is refused as `invalid_control_value`.
+
 `move_modules` maps module ids to positions, `{ "x": …, "y": … }` in the
 document's canvas units, or to `null` to unplace a module:
 
