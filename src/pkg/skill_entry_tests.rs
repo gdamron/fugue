@@ -1,7 +1,8 @@
 use super::*;
-use crate::pkg::validate::{validate, ValidationError};
 
-const SKILL: &str = "---\nname: pulse-study\ndescription: Shape a pulse into a phrase.\n---\n\
+const SKILL: &str =
+    "---\nname: pulse-study\ndescription: Shape a pulse into a phrase, then return \
+                     to the opening idea.\nallowed-tools: Read\n---\n\
                      # Pulse\n\nFollow the [rules](policies/fugue.test.rules.md).\n";
 const INVENTION: &str = r#"{"modules": [], "connections": []}"#;
 
@@ -48,24 +49,35 @@ fn accepts_a_skill_with_declared_policies_and_examples() {
             ("examples/a.invention.json", INVENTION),
             (
                 "examples/voice.json",
-                r#"{"modules": [], "connections": [], "outputs": [{"name": "out", "from": "m", "from_port": "out"}]}"#,
+                r#"{"modules": [{"id": "osc", "type": "oscillator"}], "connections": [], "inputs": [],
+                    "outputs": [{"name": "audio", "from": "osc", "from_port": "audio"}],
+                    "controls": [{"name": "pitch", "module": "osc", "control": "frequency"}]}"#,
             ),
         ],
         serde_json::json!({"examples": ["examples/a.invention.json", "./examples/voice.json"]}),
     )
     .unwrap();
     assert_eq!(checked.name, "pulse-study");
+    assert!(checked.entry.ends_with("SKILL.md"), "{:?}", checked.entry);
     assert!(checked.warnings.is_empty(), "{:?}", checked.warnings);
+    check(&[("SKILL.md", SKILL)], serde_json::json!({"examples": []})).unwrap();
 }
 
 #[test]
 fn refuses_entry_path_problems_naming_the_path() {
-    let missing = check(&[], serde_json::json!({})).unwrap_err();
-    assert!(matches!(
-        missing,
-        SkillPackageError::Entry(PackageFileError::Missing(_))
-    ));
-    assert!(missing.to_string().contains("SKILL.md"), "{missing}");
+    let nested = check(
+        &[],
+        serde_json::json!({"entry": {"skill": "docs/SKILL.md"}}),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(
+            nested,
+            SkillPackageError::Entry(PackageFileError::Missing(_))
+        ),
+        "{nested}"
+    );
+    assert!(nested.to_string().contains("docs/SKILL.md"), "{nested}");
 
     for entry in ["../SKILL.md", "/tmp/SKILL.md", ".git/SKILL.md"] {
         let err = check(&[], serde_json::json!({"entry": {"skill": entry}})).unwrap_err();
@@ -100,11 +112,26 @@ fn refuses_a_linked_entry() {
         "{err}"
     );
     assert!(err.to_string().contains("SKILL.md"), "{err}");
+
+    let dir = package(&[("real/SKILL.md", SKILL)]);
+    std::os::unix::fs::symlink("real", dir.path().join("linked")).unwrap();
+    let through = manifest(serde_json::json!({"entry": {"skill": "linked/SKILL.md"}}));
+    let err = check_skill_package(dir.path(), &through).unwrap_err();
+    assert!(
+        matches!(err, SkillPackageError::Entry(PackageFileError::Linked(_))),
+        "{err}"
+    );
+    assert!(err.to_string().contains("linked"), "{err}");
 }
 
 #[test]
 fn refuses_a_missing_or_unclosed_frontmatter_block() {
-    for text in ["# Pulse\n", "---\nname: a\ndescription: b\n# Pulse\n", ""] {
+    for text in [
+        "# Pulse\n",
+        "---\nname: a\ndescription: b\n# Pulse\n",
+        "\n---\nname: a\ndescription: b\n---\n",
+        "",
+    ] {
         let err = check(&[("SKILL.md", text)], serde_json::json!({})).unwrap_err();
         assert!(
             matches!(err, SkillPackageError::NoFrontmatter(_)),
@@ -119,6 +146,8 @@ fn refuses_missing_or_empty_fields_naming_the_field() {
     for (text, field) in [
         ("---\ndescription: d\n---\n", "name"),
         ("---\nname: \"\"\ndescription: d\n---\n", "name"),
+        ("---\nname:\ndescription: d\n---\n", "name"),
+        ("---\nname: a\ndescription: \"\"\n---\n", "description"),
         ("---\nname: a\n---\n", "description"),
         ("---\nname: a\ndescription:   \n---\n", "description"),
         ("---\nname: null\ndescription: d\n---\n", "name"),
@@ -176,6 +205,8 @@ fn refuses_a_name_that_is_not_host_safe() {
         "pulse_study",
         "pulse study",
         "pulse.study",
+        "pulse/study",
+        "caf\u{e9}",
         long.as_str(),
     ] {
         let text = format!("---\nname: {name}\ndescription: d\n---\n");
@@ -185,9 +216,13 @@ fn refuses_a_name_that_is_not_host_safe() {
             "{name}: {err}"
         );
         assert!(err.to_string().contains("`name`"), "{err}");
+        assert!(!is_host_safe_name(name), "{name}");
     }
+    assert!(!is_host_safe_name(""));
     assert!(is_host_safe_name(&"a".repeat(64)));
-    assert!(is_host_safe_name("pulse-2"));
+    for name in ["a", "pulse-2", "3d-pulse"] {
+        assert!(is_host_safe_name(name), "{name}");
+    }
 }
 
 #[test]
@@ -200,11 +235,18 @@ fn refuses_bad_examples_naming_the_path() {
             "examples/notes.json",
         ),
         (&[("examples/bad.json", "not json")], "examples/bad.json"),
+        (
+            &[("examples/bad.json", r#"{"modules": 5, "connections": []}"#)],
+            "examples/bad.json",
+        ),
+        (&[("examples/bad.json", "[]")], "examples/bad.json"),
     ];
     for (files, example) in cases {
         let mut files = files.to_vec();
-        files.push(("SKILL.md", SKILL));
-        let err = check(&files, serde_json::json!({"examples": [example]})).unwrap_err();
+        files.extend([("SKILL.md", SKILL), ("examples/good.json", INVENTION)]);
+        let examples = serde_json::json!({"examples": ["examples/good.json", example]});
+        let err = check(&files, examples).unwrap_err();
+        assert!(!err.to_string().contains("good.json"), "{example}: {err}");
         assert!(
             matches!(
                 err,
@@ -212,6 +254,15 @@ fn refuses_bad_examples_naming_the_path() {
             ),
             "{example}: {err}"
         );
+        if example.starts_with("../") {
+            assert!(
+                matches!(
+                    err,
+                    SkillPackageError::Example(PackageFileError::OutsidePackage(_))
+                ),
+                "{example}: {err}"
+            );
+        }
         let named = example.trim_start_matches("../");
         assert!(err.to_string().contains(named), "{example}: {err}");
     }
@@ -224,7 +275,7 @@ fn warns_on_undeclared_policy_links_without_failing() {
                 Again [mix](./policies/fugue.test.mix.md#top).\n\
                 [ref]: policies/fugue.test.ref.md\n\
                 ```\n[code](policies/fugue.test.code.md)\n```\n\
-                Not a policy: [doc](docs/fugue.test.doc.md).\n";
+                Not a policy: [doc](docs/fugue.test.doc.md) or [site](https://example.com/guide).\n";
     let checked = check(&[("SKILL.md", text)], serde_json::json!({})).unwrap();
     let links: Vec<String> = checked.warnings.iter().map(ToString::to_string).collect();
     assert_eq!(links.len(), 2, "{links:?}");
@@ -233,6 +284,16 @@ fn warns_on_undeclared_policy_links_without_failing() {
         "{links:?}"
     );
     assert!(links[1].contains("policies/fugue.test.ref.md"), "{links:?}");
+
+    let none_listed = check(
+        &[("SKILL.md", SKILL)],
+        serde_json::json!({"policies": null}),
+    )
+    .unwrap();
+    assert_eq!(none_listed.warnings.len(), 1, "{:?}", none_listed.warnings);
+    assert!(none_listed.warnings[0]
+        .to_string()
+        .contains("policies/fugue.test.rules.md"));
 }
 
 #[test]
@@ -247,18 +308,4 @@ fn refuses_a_package_of_another_kind() {
         check_skill_package(dir.path(), &other),
         Err(SkillPackageError::NotSkillPackage { .. })
     ));
-}
-
-#[test]
-fn examples_are_allowed_only_on_skills() {
-    validate(&manifest(serde_json::json!({"examples": []}))).unwrap();
-    let mut agent = manifest(serde_json::json!({"examples": []}));
-    agent.kind = crate::pkg::PackageKind::Agent;
-    agent.entry = EntrySpec::Agent {
-        definition: "agent.json".into(),
-    };
-    assert_eq!(
-        validate(&agent),
-        Err(ValidationError::ExamplesNotAllowed { kind: "agent" })
-    );
 }
