@@ -165,6 +165,7 @@ mod tests {
             },
             deps: Vec::new(),
             policies: None,
+            examples: None,
             entry: EntrySpec::Module {
                 wasm: "module.fugue-module.wasm".to_string(),
             },

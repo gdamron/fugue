@@ -4,11 +4,12 @@
   "kind": "skill",
   "license": "Apache-2.0",
   "authors": [{ "name": "Example Engineer" }],
-  "description": "A Claude Code skill that guides mixing decisions in Fugue.",
+  "description": "An agent skill that guides mixing decisions in Fugue.",
   "targets": ["external-agent"],
   "requires": {
     "mcp-tools": ["fugue"]
   },
   "policies": ["fugue.example.mixing-policy@^0.1.0"],
+  "examples": ["examples/mix-bus.invention.json"],
   "entry": { "skill": "SKILL.md" }
 }

@@ -12,6 +12,8 @@ pub(crate) mod layout;
 pub mod lock;
 pub mod manifest;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod package_file;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod policy_entry;
 pub mod read_limit;
 pub mod resolve;
@@ -42,6 +44,8 @@ pub use audio_asset::{default_packages_dir, resolve_package_asset, ResolvedPacka
 pub use layout::is_source_checkout;
 #[cfg(not(target_arch = "wasm32"))]
 pub use lock::compute_integrity;
+#[cfg(not(target_arch = "wasm32"))]
+pub use package_file::PackageFileError;
 #[cfg(not(target_arch = "wasm32"))]
 pub use policy_entry::{check_policy_entry, PolicyEntryError};
 
