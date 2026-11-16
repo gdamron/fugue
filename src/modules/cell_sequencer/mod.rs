@@ -86,6 +86,7 @@ mod factory;
 mod inputs;
 mod outputs;
 mod parse;
+mod part;
 mod table;
 
 pub(crate) use parse::parse_sequence_bank_json;

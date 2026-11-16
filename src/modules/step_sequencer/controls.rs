@@ -112,6 +112,7 @@ pub(super) fn stored_notes() -> StoredNotes {
             velocity: Borrowed("velocity"),
             grace: Borrowed("grace"),
         },
+        cells: None,
     }
 }
 

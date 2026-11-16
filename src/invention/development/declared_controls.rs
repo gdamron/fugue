@@ -224,6 +224,9 @@ impl DevelopmentControls {
                         // A key lists itself, whatever count its alias's
                         // module lists it below.
                         listed_below: None,
+                        // A part's whole is the inner module's, which the
+                        // inner surface builds as the write reaches it.
+                        part: None,
                         // Its label is the inner control's only under the
                         // same, unindexed key; a key the development names
                         // itself is tidied from that name. An indexed inner

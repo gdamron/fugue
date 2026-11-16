@@ -25,6 +25,9 @@ use crate::{ControlKind, ControlMeta, ControlScale, ControlValue, NumberFormat};
 mod bounds;
 mod hints;
 mod labels;
+mod part;
+
+pub(crate) use part::WholePart;
 
 /// What a declared control holds, and so which [`RtValue`] carries it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -234,6 +237,9 @@ pub(crate) struct ControlDecl {
     pub(crate) option_labels: &'static [(&'static str, &'static str)],
     /// The editor its module prefers for it (see [`crate::ControlWidget`]).
     pub(crate) widget: Option<crate::ControlWidget>,
+    /// For a part of another control, how a write to it becomes a write of
+    /// that control (see [`part`]). A part is never listed.
+    pub(crate) part: Option<WholePart>,
 }
 
 impl ControlDecl {
@@ -269,6 +275,7 @@ impl ControlDecl {
             label: None,
             option_labels: &[],
             widget: None,
+            part: None,
         }
     }
 
@@ -539,6 +546,9 @@ impl ControlTable {
             .filter_map(|index| {
                 let index = ControlIndex(index as u16);
                 let (decl, position) = self.decl(index)?;
+                if decl.part.is_some() {
+                    return None;
+                }
                 if let Some(count) = decl.listed_below {
                     let count = self.resolve(count).and_then(&current);
                     if count.is_some_and(|count| {

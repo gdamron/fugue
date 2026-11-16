@@ -44,6 +44,10 @@ impl ModuleFactory for CellSequencerFactory {
         }
     }
 
+    fn stored_notes(&self) -> Option<crate::StoredNotes> {
+        Some(part::stored_notes())
+    }
+
     fn build(
         &self,
         sample_rate: u32,

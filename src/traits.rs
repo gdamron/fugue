@@ -28,7 +28,7 @@ pub use control_validation::ControlSurfaceMap;
 pub(crate) use control_validation::{check_finite, check_listed_control, read_only};
 pub use feedback_cut::FeedbackCut;
 pub use labels::{tidy_key, TypeLabels};
-pub use stored_notes::{StepFields, StoredNotes};
+pub use stored_notes::{StepFields, StoredCells, StoredNotes};
 
 /// Maximum number of frames the engine processes in a single block.
 ///
@@ -252,6 +252,31 @@ pub trait ControlSurface: Send + Sync {
     ) -> Result<(), String> {
         let _ = surfaces;
         check_listed_control(&self.controls(), key, value)
+    }
+
+    /// The write that a write of `value` to `key` is, when `key` is a part
+    /// of another control (a cell sequencer's `cells.3`, cell 3 of its
+    /// `cells`): that control's key and its whole new value, built from
+    /// its value now, or why the part refuses `value`. `None` for a key
+    /// that is no part. A caller recording a write records the whole.
+    /// Control thread.
+    #[doc(hidden)]
+    fn whole_write(
+        &self,
+        key: &str,
+        value: &ControlValue,
+    ) -> Option<Result<(String, ControlValue), String>> {
+        let _ = (key, value);
+        None
+    }
+
+    /// The turn a writer of a part of another control takes from reading
+    /// the whole to writing it (see [`Self::whole_write`]), so two part
+    /// writes never build on the same whole. `None` for a surface with no
+    /// parts. Taken before the surface's other locks. Control thread.
+    #[doc(hidden)]
+    fn part_turn(&self) -> Option<std::sync::MutexGuard<'_, ()>> {
+        None
     }
 
     /// Binds a declared module's surface to the `route` its writes take

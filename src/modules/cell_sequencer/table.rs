@@ -37,6 +37,9 @@ pub(super) const GRACE_DURATION: ControlIndex = ControlIndex(12);
 pub(super) const GRACE_VELOCITY: ControlIndex = ControlIndex(13);
 pub(super) const GRACE_PLACEMENT: ControlIndex = ControlIndex(14);
 pub(super) const ENDED: ControlIndex = ControlIndex(15);
+/// `cells.0`, the first of the cells written one at a time.
+#[cfg(test)]
+pub(super) const CELL_PARTS: ControlIndex = ControlIndex(16);
 
 const LAST_CELL: i32 = MAX_SEQUENCES as i32 - 1;
 
@@ -166,6 +169,16 @@ const DECLS: &[ControlDecl] = &[
         "Read-only: a one_shot bank playthrough has completed",
     )
     .telemetry(),
+    // One cell of `cells`, written as the whole bank it makes (see
+    // `part`). Last, so no other control's index moves.
+    ControlDecl::new(
+        "cells",
+        DeclKind::Payload,
+        RtValue::Bool(false),
+        "One cell as JSON, the same length as the cell it replaces",
+    )
+    .indexed(MAX_SEQUENCES as u16)
+    .part_of("cells", super::part::assemble_cell),
 ];
 
 pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);
@@ -173,7 +186,7 @@ pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);
 /// The table's defaults, in index order: where every cell sequencer's
 /// cells start before it applies its own values.
 pub(super) fn defaults() -> impl Iterator<Item = RtValue> {
-    DECLS.iter().map(|decl| decl.default)
+    (DECLS.iter()).flat_map(|decl| std::iter::repeat_n(decl.default, usize::from(decl.count)))
 }
 
 /// A bank of cells, as the sequencer keeps it.

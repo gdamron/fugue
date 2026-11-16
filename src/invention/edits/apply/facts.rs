@@ -351,6 +351,15 @@ impl EditFacts for LiveFacts {
         self.found(id).is_some_and(|surface| surface.is_whole(key))
     }
 
+    fn whole_write(
+        &mut self,
+        id: &str,
+        key: &str,
+        value: &ControlValue,
+    ) -> Option<Result<(String, ControlValue), String>> {
+        self.writable(id).ok()?.whole_write(key, value)
+    }
+
     fn write_control(
         &mut self,
         id: &str,

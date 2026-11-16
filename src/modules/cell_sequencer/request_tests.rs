@@ -244,7 +244,8 @@ fn control_indices_follow_the_table() {
         (table::GRACE_PLACEMENT, "grace_placement"),
         (table::ENDED, "ended"),
     ];
-    assert_eq!(table::TABLE.len(), named.len());
+    assert_eq!(table::TABLE.len(), named.len() + MAX_SEQUENCES);
+    assert_eq!(table::TABLE.resolve("cells.0"), Some(table::CELL_PARTS));
     for (index, key) in named {
         assert_eq!(table::TABLE.resolve(key), Some(index), "{key}");
     }

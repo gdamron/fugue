@@ -55,13 +55,38 @@ fn a_module_that_makes_its_notes_as_it_plays_declares_none() {
 }
 
 #[test]
-fn only_the_step_sequencer_stores_notes_among_the_builtin_types() {
+fn only_the_sequencers_store_notes_among_the_builtin_types() {
     let registry = ModuleRegistry::default();
-    let declaring: Vec<&str> = registry
+    let mut declaring: Vec<&str> = registry
         .types()
         .filter(|name| registry.stored_notes(name).is_some())
         .collect();
-    assert_eq!(declaring, ["step_sequencer"]);
+    declaring.sort_unstable();
+    assert_eq!(declaring, ["cell_sequencer", "step_sequencer"]);
+}
+
+#[test]
+fn a_cell_sequencer_declares_its_bank_and_how_its_cells_play() {
+    let described = described("cell_sequencer");
+    let notes = &described["stored_notes"];
+    assert_eq!(
+        (&notes["pattern"], &notes["max_steps"], &notes["root"]),
+        (&"cells".into(), &1024.into(), &"root_note".into())
+    );
+    assert_eq!(
+        notes["cells"],
+        serde_json::json!({
+            "cell_key": "cells",
+            "max_cells": 64,
+            "playing": "cell",
+            "select": "select_cell",
+            "start": "start_cell",
+            "mode": "mode",
+            "follow_length": "follow_cell_length"
+        })
+    );
+    let back: crate::StoredNotes = serde_json::from_value(notes.clone()).unwrap();
+    assert_eq!(back.cells.map(|cells| cells.max_cells), Some(64));
 }
 
 #[test]

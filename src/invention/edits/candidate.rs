@@ -281,6 +281,25 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             }
         }
         let facts = self.module_facts(module_id)?;
+        // A part of another control (a cell of a bank) is written, and
+        // authored, as the whole it makes.
+        let whole = match self.facts.whole_write(module_id, key, value) {
+            Some(Ok(whole)) => Some(whole),
+            Some(Err(reason)) => {
+                return Err(Refusal(
+                    EditFailureReason::InvalidControlValue,
+                    format!(
+                        "module '{module_id}' refused the value for control '{key}': {}",
+                        bounded(&reason, MODULE_ERROR_BYTES)
+                    ),
+                ))
+            }
+            None => None,
+        };
+        let (key, value) = match &whole {
+            Some((key, value)) => (key.as_str(), value),
+            None => (key, value),
+        };
         let Some(kind) = facts.controls.get(key) else {
             let keys: Vec<String> = facts.controls.keys().cloned().collect();
             return Err(Refusal(

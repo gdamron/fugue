@@ -48,6 +48,13 @@ impl ControlSurface for DeclaredSurface {
         value: &ControlValue,
         _surfaces: &ControlSurfaceMap,
     ) -> Result<(), String> {
+        // A part checks as the whole it builds, which is then checked as
+        // the whole would be.
+        let whole = self.whole_write(key, value).transpose()?;
+        let (key, value) = match &whole {
+            Some((key, value)) => (key.as_str(), value),
+            None => (key, value),
+        };
         let decl = (self.index(key).ok()).and_then(|index| self.table.decl(index));
         if decl.is_some_and(|(decl, _)| decl.loads_on_write) {
             return value.as_string().map(drop);
@@ -73,6 +80,18 @@ impl ControlSurface for DeclaredSurface {
         }
         let prepared = self.prepare(key, value)?;
         Some(prepared.map(|(_, payload, shown)| (payload, shown)))
+    }
+
+    fn whole_write(
+        &self,
+        key: &str,
+        value: &ControlValue,
+    ) -> Option<Result<(String, ControlValue), String>> {
+        DeclaredSurface::whole_write(self, key, value)
+    }
+
+    fn part_turn(&self) -> Option<std::sync::MutexGuard<'_, ()>> {
+        DeclaredSurface::part_turn(self)
     }
 
     fn bind(&self, route: Route, module: &mut dyn Module) {

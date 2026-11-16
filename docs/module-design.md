@@ -273,8 +273,46 @@ asset (`{"$asset": …}`) is replaced in the document by the written text; the
 asset file is never written.
 
 A module that makes its notes as it plays, such as `melody`, declares none.
-The declaration is shaped so that `cell_sequencer` can adopt it later with
-one more field naming its bank of cells.
+
+### A bank of cells
+
+`cell_sequencer` stores a bank of patterns, its `cells`, and plays one at a
+time. Its declaration has the same fields, with `pattern` naming the bank
+(`"pattern": "cells"`, `"max_steps": 1024`), and one more, `cells`, saying how
+the cells play:
+
+```json
+"cells": {
+  "cell_key": "cells",
+  "max_cells": 64,
+  "playing": "cell",
+  "select": "select_cell",
+  "start": "start_cell",
+  "mode": "mode",
+  "follow_length": "follow_cell_length"
+}
+```
+
+`playing` reports the cell that plays now, `select` asks for another,
+`start` is the config key naming the first, `mode` is `loop` or `one_shot`,
+and `follow_length` wraps each cycle at the playing cell's length. A module
+that stores one pattern leaves `cells` out.
+
+An editor changes one cell by writing it on its own: `cells.N` takes one
+cell's steps as JSON text and replaces cell N, leaving the others as they
+are. The write is made as a write of the whole bank, built on a control
+thread from the bank the sequencer reads back, so the sequencer takes it as
+it takes any bank and nothing restarts: an edit to the playing cell is heard
+from its next step. The document records the whole bank, so a bank shared
+from an asset becomes this module's own copy on its first edit, and other
+sequencers reading the same asset keep playing it unchanged. A cell keeps its
+length, trailing rests included: a write of another length, or to a cell past
+the bank's end, is refused with the cell's length or the bank's size, and
+nothing changes. A cell write is made now: one asked for at a later time
+is refused. Cell writes take turns on the module, so several made at once
+each land. A cell builds on the bank as last written, which is a bank
+written for a later time when one waits: write cells, not banks, while one
+is pending. `cells.N` is not listed among the controls; `cells` is.
 
 ## Modules see only their ports and controls
 

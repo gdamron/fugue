@@ -165,6 +165,18 @@ pub(crate) trait EditFacts {
     fn is_whole(&self, _id: &str, _key: &str) -> bool {
         false
     }
+
+    /// The write a write of `value` to `key` of module `id` is, when `key`
+    /// is a part of another control, as the batch has the module so far
+    /// (see `ControlSurface::whole_write`). None by default.
+    fn whole_write(
+        &mut self,
+        _id: &str,
+        _key: &str,
+        _value: &ControlValue,
+    ) -> Option<Result<(String, ControlValue), String>> {
+        None
+    }
 }
 
 /// One `set_control` edit's authored write, tagged with the edit that made

@@ -12,7 +12,7 @@ use crate::{
 use indexmap::IndexMap;
 use std::any::Any;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
 
@@ -355,6 +355,22 @@ impl RuntimeSnapshot {
         value: ControlValue,
         options: &WriteOptions,
     ) -> Result<ControlAck, GraphCommandError> {
+        if self.is_part(module_id, key) {
+            return self.set_part_recorded(module_id, key, value, options);
+        }
+        self.record_control(module_id, key, value, options, None)
+    }
+
+    /// [`Self::set_control_recorded`] of a control, taking the authoring
+    /// turn unless `turn` holds it already.
+    fn record_control(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: ControlValue,
+        options: &WriteOptions,
+        turn: Option<MutexGuard<'_, ()>>,
+    ) -> Result<ControlAck, GraphCommandError> {
         // Coerce to the control's declared kind before applying and recording,
         // so a stringified write lands and the retained document stays typed.
         // set_control_transient stays uncoerced: its callers are
@@ -379,7 +395,7 @@ impl RuntimeSnapshot {
         // the module is cancelled. Authored writers take turns, so the
         // last submitted is the last recorded. A timed edit already landed
         // is adopted first, so the write goes to the module playing.
-        let _authoring = live.authoring();
+        let _authoring = turn.unwrap_or_else(|| live.authoring());
         live.adopt_landed();
         let authoring = Authoring {
             value,
@@ -397,6 +413,56 @@ impl RuntimeSnapshot {
             live.reconcile_authored((module_id, key), queued.safe, now);
         }
         Ok(ControlAck::new(authoring.value, &queued))
+    }
+
+    /// An authored write to part `key` of `module_id` (a cell of a bank),
+    /// made and recorded as the write of the whole it builds. From reading
+    /// the whole to writing it, this writer holds the authoring turn, so no
+    /// other authored write lands between, and the surface's part turn, so
+    /// no performed part write does; landed timed edits are adopted first,
+    /// so the whole read is the one the module playing holds.
+    fn set_part_recorded(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: ControlValue,
+        options: &WriteOptions,
+    ) -> Result<ControlAck, GraphCommandError> {
+        let refused = |reason: String| {
+            GraphCommandError::ControlError(format!("{module_id}.{key}: {reason}"))
+        };
+        let turn = self.live.as_ref().map(|live| {
+            let turn = live.authoring();
+            live.adopt_landed();
+            turn
+        });
+        let surface = self
+            .control_surfaces
+            .lock()
+            .unwrap()
+            .get(module_id)
+            .cloned();
+        let surface = surface.ok_or_else(|| refused("the module has no controls".into()))?;
+        let _parts = surface.part_turn();
+        if options.time.is_some() {
+            return Err(refused(
+                "a part is written now; a timed write to it is refused".into(),
+            ));
+        }
+        let whole = surface.whole_write(key, &value);
+        let (whole_key, whole_value) = whole
+            .unwrap_or_else(|| Err("no part".into()))
+            .map_err(refused)?;
+        self.record_control(module_id, &whole_key, whole_value, options, turn)
+    }
+
+    /// Whether `key` of `module_id` is a part of another control.
+    fn is_part(&self, module_id: &str, key: &str) -> bool {
+        let surfaces = self.control_surfaces.lock().unwrap();
+        (surfaces
+            .get(module_id)
+            .and_then(|surface| surface.declaration(key)))
+        .is_some_and(|declaration| declaration.decl.part.is_some())
     }
 
     /// Whether `key` of `module_id` is a declared event control.
