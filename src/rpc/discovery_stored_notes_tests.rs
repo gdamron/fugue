@@ -202,12 +202,15 @@ fn a_description_leaving_a_value_out_writes_its_numbers_as_before() {
     let gate = (described.info.controls.iter_mut())
         .find(|c| c.key == "gate_length")
         .unwrap();
-    gate.default = crate::ControlValue::Number(0.1);
+    gate.default = crate::ControlValue::Number(0.000001);
     described
         .control_values
-        .insert("gate_length".into(), crate::ControlValue::Number(0.1));
+        .insert("gate_length".into(), crate::ControlValue::Number(0.000001));
     let wire = serde_json::to_string(&described).unwrap();
-    assert!(!wire.contains("0.10000000149011612"), "widened");
-    let wire: serde_json::Value = serde_json::from_str(&wire).unwrap();
-    assert_eq!(wire["control_values"]["gate_length"].to_string(), "0.1");
+    assert!(wire.contains(r#""gate_length":0.000001"#), "{wire}");
+    assert!(wire.contains(r#""default":0.000001"#), "{wire}");
+    assert!(
+        !wire.contains("1e-6") && !wire.contains("9.99999"),
+        "rewritten"
+    );
 }

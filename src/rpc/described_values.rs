@@ -11,6 +11,7 @@ use super::discovery::{check_discovery_size, MetadataSource, ModuleTypeInfo, Reg
 use super::{ModuleDescription, RpcError};
 use crate::{ControlMeta, ControlValue, StoredCells};
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use std::collections::BTreeMap;
 
 /// The largest control value, as JSON, a description or control listing
@@ -101,21 +102,68 @@ pub(crate) fn leave_out(
     }
 }
 
-/// Drops `default` from each control in `controls`, a JSON list of
-/// [`ControlMeta`], whose value is omitted. Read `controls` from JSON text
-/// rather than with `serde_json::to_value`, which widens an `f32`.
-pub fn leave_out_defaults(
-    controls: &mut serde_json::Value,
-    omitted: &BTreeMap<String, OmittedValue>,
-) {
-    for control in controls.as_array_mut().into_iter().flatten() {
-        let key = control.get("key").and_then(|key| key.as_str());
-        if key.is_some_and(|key| omitted.contains_key(key)) {
-            if let Some(control) = control.as_object_mut() {
-                control.remove("default");
+/// A JSON object's entries in order, each value exactly as written.
+struct Entries(Vec<(String, Box<RawValue>)>);
+
+impl<'de> Deserialize<'de> for Entries {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Entries;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a JSON object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Entries, A::Error> {
+                let mut entries = Vec::new();
+                while let Some(entry) = map.next_entry()? {
+                    entries.push(entry);
+                }
+                Ok(Entries(entries))
             }
         }
+        deserializer.deserialize_map(Visitor)
     }
+}
+
+impl Serialize for Entries {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (key, value) in &self.0 {
+            map.serialize_entry(key, value)?;
+        }
+        map.end()
+    }
+}
+
+/// `object`, JSON text of an object whose `controls` lists [`ControlMeta`],
+/// with `default` dropped from each control whose value is omitted.
+/// Everything else stays as written: a trip through `serde_json::Value`
+/// would rewrite an `f32` as an `f64` (0.1 as 0.10000000149011612, 0.000001
+/// as 1e-6).
+pub fn leave_out_defaults(
+    object: &str,
+    omitted: &BTreeMap<String, OmittedValue>,
+) -> serde_json::Result<Box<RawValue>> {
+    let mut entries: Entries = serde_json::from_str(object)?;
+    for (name, value) in &mut entries.0 {
+        if name != "controls" {
+            continue;
+        }
+        let mut controls: Vec<Entries> = serde_json::from_str(value.get())?;
+        for control in &mut controls {
+            let key = (control.0.iter()).find(|(name, _)| name == "key");
+            let key = key.and_then(|(_, key)| serde_json::from_str::<String>(key.get()).ok());
+            if key.is_some_and(|key| omitted.contains_key(&key)) {
+                control.0.retain(|(name, _)| name != "default");
+            }
+        }
+        *value = serde_json::value::to_raw_value(&controls)?;
+    }
+    serde_json::value::to_raw_value(&entries)
 }
 
 /// The bytes a description saves by leaving out control `key`: its entry
@@ -217,8 +265,7 @@ impl Serialize for ModuleDescription {
             return DescriptionFields::serialize(self, serializer);
         }
         use serde::ser::Error;
-        // Through JSON text, not straight to a `Value`, so an `f32` keeps the
-        // shortest form it is written in (0.1, not 0.10000000149011612).
+        // Through JSON text, never a `Value`, so each number stays as written.
         struct Fields<'a>(&'a ModuleDescription);
         impl Serialize for Fields<'_> {
             fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -226,11 +273,8 @@ impl Serialize for ModuleDescription {
             }
         }
         let text = serde_json::to_string(&Fields(self)).map_err(S::Error::custom)?;
-        let mut value: serde_json::Value = serde_json::from_str(&text).map_err(S::Error::custom)?;
-        if let Some(controls) = value.get_mut("controls") {
-            leave_out_defaults(controls, &self.values_omitted);
-        }
-        value.serialize(serializer)
+        let written = leave_out_defaults(&text, &self.values_omitted).map_err(S::Error::custom)?;
+        written.serialize(serializer)
     }
 }
 
@@ -340,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn a_left_out_default_is_dropped_from_the_listing() {
+    fn a_left_out_default_is_dropped_from_the_listing_and_the_rest_stays_as_written() {
         let omitted = BTreeMap::from([(
             "cells".to_string(),
             OmittedValue {
@@ -348,32 +392,40 @@ mod tests {
                 cell_lengths: None,
             },
         )]);
-        let mut listed = serde_json::json!([
-            {"key": "cells", "default": ""},
-            {"key": "mode", "default": "loop"},
-        ]);
-        leave_out_defaults(&mut listed, &omitted);
+        let text = r#"{"module_id":"m","controls":[{"key":"cells","default":""},{"key":"mode","default":"loop"},{"key":"gain","default":0.000001,"max":0.1}]}"#;
+        let written = leave_out_defaults(text, &omitted).unwrap();
         assert_eq!(
-            listed,
-            serde_json::json!([{"key": "cells"}, {"key": "mode", "default": "loop"}])
+            written.get(),
+            r#"{"module_id":"m","controls":[{"key":"cells"},{"key":"mode","default":"loop"},{"key":"gain","default":0.000001,"max":0.1}]}"#
         );
     }
 
     #[test]
     fn a_control_whose_leaving_out_saves_nothing_stays_listed() {
         // A large value and many controls with no value read: leaving those
-        // out would only add their names, so the search leaves the large one.
+        // out would only add their names (a small number's too, written as
+        // it is), so the search leaves the large one.
         let mut controls = vec![meta("bank", "x".repeat(7000).as_str().into())];
         controls.extend((0..200).map(|n| meta(&format!("unread.{n}"), "".into())));
+        controls.extend((0..200).map(|n| meta(&format!("tiny.{n}"), 0.000001.into())));
         let values = BTreeMap::from([("bank".to_string(), "x".repeat(7000).as_str().into())]);
+        #[derive(Serialize)]
+        struct Wire<'a> {
+            controls: &'a [ControlMeta],
+            control_values: &'a BTreeMap<String, ControlValue>,
+            values_omitted: &'a BTreeMap<String, OmittedValue>,
+        }
         let size = |omitted: &BTreeMap<String, OmittedValue>| {
             let mut listed = controls.clone();
             let mut shown = values.clone();
             leave_out(&mut listed, &mut shown, omitted);
-            let mut wire = serde_json::json!({"controls": listed, "control_values": shown});
-            leave_out_defaults(&mut wire["controls"], omitted);
-            wire["values_omitted"] = serde_json::to_value(omitted).unwrap();
-            json_bytes(&wire)
+            let wire = Wire {
+                controls: &listed,
+                control_values: &shown,
+                values_omitted: omitted,
+            };
+            let text = serde_json::to_string(&wire).unwrap();
+            leave_out_defaults(&text, omitted).unwrap().get().len()
         };
         let whole = size(&BTreeMap::new());
         let mut omitted = BTreeMap::new();
