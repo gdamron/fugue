@@ -2,10 +2,14 @@
 //!
 //! Agent hosts discover a skill by the `name` and `description` in its
 //! frontmatter, which they read as YAML. The block must parse as a YAML
-//! mapping; a field is text only when YAML reads it as a string.
+//! mapping; a field is text only when YAML reads it as a string. Only the
+//! top-level fields are kept, read from the parser's events.
+
+use std::collections::BTreeMap;
 
 use yaml_rust2::parser::{Event, Parser};
-use yaml_rust2::{Yaml, YamlLoader};
+use yaml_rust2::scanner::TScalarStyle;
+use yaml_rust2::Yaml;
 
 /// A `SKILL.md` split at its frontmatter block.
 pub(crate) struct Split<'a> {
@@ -37,24 +41,13 @@ pub(crate) fn split(text: &str) -> Option<Split<'_>> {
     None
 }
 
-/// Refuse YAML aliases (`*name`) before building the tree: the loader copies
-/// each alias's target, so nested aliases grow exponentially from a small
-/// file. Skill metadata never needs them.
-fn refuse_aliases(frontmatter: &str) -> Result<(), String> {
-    let mut parser = Parser::new_from_str(frontmatter);
-    loop {
-        match parser.next_token().map_err(|err| err.to_string())? {
-            (Event::StreamEnd, _) => return Ok(()),
-            (Event::Alias(_), _) => {
-                return Err("it uses a YAML alias (`*name`); write the value out".to_string())
-            }
-            _ => {}
-        }
-    }
-}
+/// The deepest collection nesting a frontmatter block may use. Skill
+/// metadata is flat; the bound keeps a hostile file from costing more than a
+/// counter.
+const MAX_DEPTH: usize = 32;
 
 /// A frontmatter field's value.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Field {
     /// Absent, null, or a string that is empty or only whitespace.
     Missing,
@@ -65,37 +58,95 @@ pub(crate) enum Field {
     NotText,
 }
 
-/// A parsed frontmatter block: a YAML mapping.
-pub(crate) struct Frontmatter(Yaml);
+/// A parsed frontmatter block: the top-level fields of a YAML mapping.
+pub(crate) struct Frontmatter(BTreeMap<String, Field>);
 
 impl Frontmatter {
-    /// Parse `frontmatter` as YAML; it must be a mapping (or empty) with no
-    /// aliases.
+    /// Read `frontmatter` as one YAML mapping (or nothing), keeping only its
+    /// top-level fields. This walks the parser's events rather than building
+    /// a document tree, so a small file cannot make it allocate copies of
+    /// anchored values or recurse without bound; aliases are refused.
     pub(crate) fn parse(frontmatter: &str) -> Result<Self, String> {
-        refuse_aliases(frontmatter)?;
-        let mut documents =
-            YamlLoader::load_from_str(frontmatter).map_err(|err| err.to_string())?;
-        match documents.len() {
-            0 => Ok(Frontmatter(Yaml::Null)),
-            1 => match documents.remove(0) {
-                mapping @ (Yaml::Hash(_) | Yaml::Null) => Ok(Frontmatter(mapping)),
-                _ => Err("it is not a mapping of `key: value` pairs".to_string()),
-            },
-            _ => Err("it holds more than one YAML document".to_string()),
+        let mut parser = Parser::new_from_str(frontmatter);
+        let mut fields = BTreeMap::new();
+        let mut depth = 0usize;
+        let mut documents = 0usize;
+        // At depth 1, the key whose value comes next.
+        let mut key: Option<String> = None;
+        let mut record = |key: &mut Option<String>, field: Field| -> Result<(), String> {
+            let Some(name) = key.take() else {
+                return Ok(());
+            };
+            match fields.insert(name.clone(), field) {
+                Some(_) => Err(format!("key `{name}` appears more than once")),
+                None => Ok(()),
+            }
+        };
+        loop {
+            let (event, _) = parser.next_token().map_err(|err| err.to_string())?;
+            match event {
+                Event::StreamEnd => break,
+                Event::DocumentStart => {
+                    documents += 1;
+                    if documents > 1 {
+                        return Err("it holds more than one YAML document".to_string());
+                    }
+                }
+                Event::Alias(_) => {
+                    return Err("it uses a YAML alias (`*name`); write the value out".to_string())
+                }
+                Event::Scalar(value, style, _, _) => match depth {
+                    0 if style == TScalarStyle::Plain
+                        && matches!(Yaml::from_str(&value), Yaml::Null) => {}
+                    0 => return Err(NOT_A_MAPPING.to_string()),
+                    1 if key.is_none() => key = Some(value),
+                    1 => record(&mut key, scalar_field(value, style))?,
+                    _ => {}
+                },
+                Event::SequenceStart(..) | Event::MappingStart(..) => {
+                    let mapping = matches!(event, Event::MappingStart(..));
+                    match depth {
+                        0 if !mapping => return Err(NOT_A_MAPPING.to_string()),
+                        1 if key.is_none() => return Err("its keys must be plain text".to_string()),
+                        1 => record(&mut key, Field::NotText)?,
+                        _ => {}
+                    }
+                    depth += 1;
+                    if depth > MAX_DEPTH {
+                        return Err(format!("it nests deeper than {MAX_DEPTH} levels"));
+                    }
+                }
+                Event::SequenceEnd | Event::MappingEnd => depth = depth.saturating_sub(1),
+                _ => {}
+            }
         }
+        Ok(Frontmatter(fields))
     }
 
     /// The value of the top-level `key`.
     pub(crate) fn field(&self, key: &str) -> Field {
-        let Yaml::Hash(mapping) = &self.0 else {
-            return Field::Missing;
-        };
-        match mapping.get(&Yaml::String(key.to_string())) {
-            None | Some(Yaml::Null) => Field::Missing,
-            Some(Yaml::String(text)) if text.trim().is_empty() => Field::Missing,
-            Some(Yaml::String(text)) => Field::Text(text.trim().to_string()),
-            Some(_) => Field::NotText,
+        self.0.get(key).cloned().unwrap_or(Field::Missing)
+    }
+}
+
+const NOT_A_MAPPING: &str = "it is not a mapping of `key: value` pairs";
+
+/// A scalar value as a field: plain scalars resolve like YAML's core schema
+/// (`null`, numbers and booleans are not text), quoted and block scalars are
+/// always strings.
+fn scalar_field(value: String, style: TScalarStyle) -> Field {
+    let text = if style == TScalarStyle::Plain {
+        match Yaml::from_str(&value) {
+            Yaml::Null => return Field::Missing,
+            Yaml::String(text) => text,
+            _ => return Field::NotText,
         }
+    } else {
+        value
+    };
+    match text.trim() {
+        "" => Field::Missing,
+        trimmed => Field::Text(trimmed.to_string()),
     }
 }
 
@@ -176,6 +227,27 @@ mod tests {
             Frontmatter::parse("name: &n a\n").is_ok(),
             "an anchor alone is fine"
         );
+    }
+
+    #[test]
+    fn anchors_cost_nothing_and_deep_nesting_is_refused() {
+        let mut anchored = String::from("name: a\nextra: ");
+        for level in 0..128 {
+            anchored.push_str(&format!("&a{level} {{k: "));
+        }
+        anchored.push_str(&"x".repeat(1 << 16));
+        anchored.push_str(&"}".repeat(128));
+        anchored.push('\n');
+        // Deeper than the bound, so refused; the anchors themselves are inert.
+        assert!(Frontmatter::parse(&anchored).is_err());
+        assert_eq!(
+            field("name: a\nextra: &e {k: v}\n", "name"),
+            Field::Text("a".to_string())
+        );
+
+        let deep = format!("name: a\nextra:\n  {}x\n", "- ".repeat(5000));
+        let error = Frontmatter::parse(&deep).err().unwrap();
+        assert!(error.contains("nests deeper"), "{error}");
     }
 
     #[test]
