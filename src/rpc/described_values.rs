@@ -102,7 +102,8 @@ pub(crate) fn leave_out(
 }
 
 /// Drops `default` from each control in `controls`, a JSON list of
-/// [`ControlMeta`], whose value is omitted.
+/// [`ControlMeta`], whose value is omitted. Read `controls` from JSON text
+/// rather than with `serde_json::to_value`, which widens an `f32`.
 pub fn leave_out_defaults(
     controls: &mut serde_json::Value,
     omitted: &BTreeMap<String, OmittedValue>,
@@ -216,8 +217,16 @@ impl Serialize for ModuleDescription {
             return DescriptionFields::serialize(self, serializer);
         }
         use serde::ser::Error;
-        let mut value = DescriptionFields::serialize(self, serde_json::value::Serializer)
-            .map_err(S::Error::custom)?;
+        // Through JSON text, not straight to a `Value`, so an `f32` keeps the
+        // shortest form it is written in (0.1, not 0.10000000149011612).
+        struct Fields<'a>(&'a ModuleDescription);
+        impl Serialize for Fields<'_> {
+            fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                DescriptionFields::serialize(self.0, s)
+            }
+        }
+        let text = serde_json::to_string(&Fields(self)).map_err(S::Error::custom)?;
+        let mut value: serde_json::Value = serde_json::from_str(&text).map_err(S::Error::custom)?;
         if let Some(controls) = value.get_mut("controls") {
             leave_out_defaults(controls, &self.values_omitted);
         }

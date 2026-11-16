@@ -186,3 +186,28 @@ fn a_type_too_large_to_list_whole_is_unavailable_and_the_catalog_lists_the_rest(
     ));
     assert!(matches!(&details[1], ModuleTypeDetail::Available { .. }));
 }
+
+#[test]
+fn a_description_leaving_a_value_out_writes_its_numbers_as_before() {
+    let mut registry = ModuleRegistry::default();
+    registry.register(LargeBank("large_bank", 1));
+    let query = DescribeModuleQuery {
+        module_type: Some("large_bank".to_string()),
+        ..Default::default()
+    };
+    let mut described =
+        ModuleDescription::from_registry(&registry, 48_000, RegistryScope::Running, &query)
+            .unwrap();
+    assert!(!described.values_omitted.is_empty());
+    let gate = (described.info.controls.iter_mut())
+        .find(|c| c.key == "gate_length")
+        .unwrap();
+    gate.default = crate::ControlValue::Number(0.1);
+    described
+        .control_values
+        .insert("gate_length".into(), crate::ControlValue::Number(0.1));
+    let wire = serde_json::to_string(&described).unwrap();
+    assert!(!wire.contains("0.10000000149011612"), "widened");
+    let wire: serde_json::Value = serde_json::from_str(&wire).unwrap();
+    assert_eq!(wire["control_values"]["gate_length"].to_string(), "0.1");
+}
