@@ -9,6 +9,8 @@ const CLEAN: &str = "fugue.test.clean-audio";
 const INTENT: &str = "fugue.test.musical-intent";
 const GROOVE: &str = "fugue.test.groove";
 const TEMPO: &str = "fugue.test.tempo";
+/// Named to sort first, so prompt order cannot be alphabetical by accident.
+const HARMONY: &str = "fugue.test.a-harmony";
 
 fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -50,7 +52,9 @@ fn skill_md(name: &str, body: &str) -> String {
 }
 
 /// An agent that requires the clean-audio policy itself and composes two
-/// skills, both of which also require policies.
+/// skills, listed out of alphabetical order, both of which also require
+/// policies: tempo requires intent and clean-audio, groove harmony and
+/// intent. First-required order is clean-audio, intent, harmony.
 fn packs(dir: &Path) -> PathBuf {
     let packs = dir.join("packs");
     install(
@@ -71,10 +75,18 @@ fn packs(dir: &Path) -> PathBuf {
     );
     install(
         &packs,
+        HARMONY,
+        "1.0.0",
+        "policy",
+        json!({}),
+        &[("POLICY.md", "Voice the harmony.")],
+    );
+    install(
+        &packs,
         GROOVE,
         "0.1.0",
         "skill",
-        json!({"policies": [format!("{INTENT}@^1"), format!("{CLEAN}@^1")]}),
+        json!({"policies": [format!("{HARMONY}@^1"), format!("{INTENT}@^1")]}),
         &[("SKILL.md", &skill_md("groove", "# Groove\nKeep time."))],
     );
     install(
@@ -82,7 +94,7 @@ fn packs(dir: &Path) -> PathBuf {
         TEMPO,
         "0.1.0",
         "skill",
-        json!({"policies": [format!("{INTENT}@^1")]}),
+        json!({"policies": [format!("{INTENT}@^1"), format!("{CLEAN}@^1")]}),
         &[("SKILL.md", &skill_md("tempo", "Pick a tempo."))],
     );
     install(
@@ -92,7 +104,7 @@ fn packs(dir: &Path) -> PathBuf {
         "agent",
         json!({
             "policies": [format!("{CLEAN}@^1")],
-            "skills": [format!("{GROOVE}@^0.1"), format!("{TEMPO}@^0.1")],
+            "skills": [format!("{TEMPO}@^0.1"), format!("{GROOVE}@^0.1")],
         }),
         &[(
             "agent.json",
@@ -114,7 +126,7 @@ fn composes_persona_policies_once_then_skill_bodies() {
     assert_eq!(
         agent.system_prompt,
         "You are a pulse agent.\n\nKeep audio clean.\n\nServe musical intent.\n\n\
-         # Groove\nKeep time.\n\nPick a tempo."
+         Voice the harmony.\n\nPick a tempo.\n\n# Groove\nKeep time."
     );
     let parts: Vec<_> = agent
         .parts
@@ -127,8 +139,9 @@ fn composes_persona_policies_once_then_skill_bodies() {
             (PromptSource::Persona, AGENT, "You are a pulse agent.".len()),
             (PromptSource::Policy, CLEAN, "Keep audio clean.".len()),
             (PromptSource::Policy, INTENT, "Serve musical intent.".len()),
-            (PromptSource::Skill, GROOVE, "# Groove\nKeep time.".len()),
+            (PromptSource::Policy, HARMONY, "Voice the harmony.".len()),
             (PromptSource::Skill, TEMPO, "Pick a tempo.".len()),
+            (PromptSource::Skill, GROOVE, "# Groove\nKeep time.".len()),
         ]
     );
     assert_eq!(agent.model, None);
@@ -184,9 +197,11 @@ fn refuses_naming_the_package_at_fault() {
         assert!(err.contains(expected), "{reference}: {err}");
     }
 
-    fs::remove_dir_all(packs.join(TEMPO)).unwrap();
-    let err = refusal(&format!("{AGENT}@^1"), &packs);
-    assert!(err.contains(TEMPO), "{err}");
+    for id in [HARMONY, TEMPO] {
+        fs::remove_dir_all(packs.join(id)).unwrap();
+        let err = refusal(&format!("{AGENT}@^1"), &packs);
+        assert!(err.contains(id), "{err}");
+    }
 }
 
 #[test]
@@ -207,11 +222,11 @@ fn refuses_conflicting_requirements_for_one_policy() {
     let packs = packs(tmp.path());
     install(
         &packs,
-        TEMPO,
+        GROOVE,
         "0.1.0",
         "skill",
         json!({"policies": [format!("{INTENT}@^2")]}),
-        &[("SKILL.md", &skill_md("tempo", "Pick a tempo."))],
+        &[("SKILL.md", &skill_md("groove", "Keep time."))],
     );
     let err = refusal(&format!("{AGENT}@^1"), &packs);
     assert!(
@@ -243,6 +258,7 @@ fn frozen(dir: &Path, packs: &Path) -> FrozenLock {
         (AGENT, "1.0.0", "agent"),
         (CLEAN, "1.0.0", "policy"),
         (INTENT, "1.0.0", "policy"),
+        (HARMONY, "1.0.0", "policy"),
         (GROOVE, "0.1.0", "skill"),
         (TEMPO, "0.1.0", "skill"),
     ] {
