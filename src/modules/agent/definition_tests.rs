@@ -120,6 +120,10 @@ fn a_definition_runs_with_the_resolved_prompt_and_shows_its_parts() {
             described.control_values["definition"],
             REFERENCE.to_string().into()
         );
+        for key in ["definition", "resolved_definition"] {
+            let meta = described.info.controls.iter().find(|meta| meta.key == key);
+            assert!(meta.is_some_and(|meta| meta.read_only), "{key}");
+        }
         running.stop();
     });
 }
@@ -142,6 +146,24 @@ fn describe_module_lists_definition_read_only() {
     assert_eq!(described.control_values["definition"], String::new().into());
     // Only a module running a definition shows what it resolved to.
     assert!(listed("resolved_definition").is_none());
+
+    // Described with a config naming one, it resolves.
+    with_pulse_agent(|_| {
+        let query = DescribeModuleQuery {
+            module_type: Some("agent".into()),
+            config: Some(json!({ "definition": REFERENCE })),
+            ..Default::default()
+        };
+        let described = crate::rpc::ModuleDescription::from_registry(
+            &ModuleRegistry::default(),
+            48_000,
+            crate::RegistryScope::Builtins,
+            &query,
+        )
+        .unwrap();
+        let resolved = text(described.control_values["resolved_definition"].clone());
+        assert!(resolved.contains(PULSE_AGENT), "{resolved}");
+    });
 }
 
 #[test]
@@ -177,6 +199,7 @@ fn a_definition_that_does_not_resolve_refuses_the_load_naming_module_and_package
             assert!(error.contains(expected), "{reference}: {error}");
         }
         let error = load_error(json!({ "definition": 7 }));
+        assert!(error.contains("module 'improvise'"), "{error}");
         assert!(error.contains("'definition'"), "{error}");
         // A policy it requires is missing.
         std::fs::remove_dir_all(packs.join(MUSICAL_INTENT)).unwrap();

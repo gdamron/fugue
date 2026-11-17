@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use super::{install, install_pulse_agent, piece, start, text, with_pulse_agent};
-use super::{PULSE_AGENT, REFERENCE};
+use super::{PERSONA, PULSE_AGENT, REFERENCE};
 use crate::pkg::audio_asset::with_packs_dir;
 use crate::{ControlValue, Invention, InventionBuilder, NullBackend, RunningInvention};
 
@@ -92,10 +92,10 @@ fn a_requirement_picks_the_installed_version_it_admits() {
         );
         let older = format!("{}@=0.1.0", PULSE_AGENT);
         let (running, _) = start(echo(json!({ "definition": older })));
-        assert_eq!(
-            sent(&running, "improvise")["system"],
-            resolved(packs, &older).as_str()
-        );
+        let system = sent(&running, "improvise")["system"].clone();
+        assert_eq!(system, resolved(packs, &older).as_str());
+        // The pinned older version's persona, not the newer one's.
+        assert!(system.as_str().unwrap().starts_with(PERSONA), "{system}");
         running.stop();
         let latest = format!("{}@>=0.1.0", PULSE_AGENT);
         let (running, _) = start(echo(json!({ "definition": latest })));
