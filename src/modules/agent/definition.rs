@@ -4,7 +4,8 @@
 //! control thread building the graph, through
 //! [`crate::pkg::resolve_agent`] against [`crate::pkg::default_packages_dir`]
 //! and under the lockfile governing that thread. The resolved system prompt
-//! becomes the module's `system_prompt`. Nothing here reaches the audio thread:
+//! becomes the module's `system_prompt`; the definition's default model is
+//! used when the config names none. Nothing here reaches the audio thread:
 //! the module holds the result in its control-side state only.
 
 use serde_json::Value;
@@ -24,8 +25,17 @@ pub(crate) struct AgentDefinition {
     pub(super) reference: String,
     /// The composed system prompt.
     pub(super) system_prompt: String,
+    /// The definition's default model, if it names one.
+    pub(super) model: Option<String>,
     /// The resolution as the `resolved_definition` control reads it.
     pub(super) summary: String,
+}
+
+impl AgentDefinition {
+    /// The definition's default model, if it names one.
+    pub(crate) fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
 }
 
 /// The definition `config` names, resolved; `None` when it names none (no
@@ -62,6 +72,7 @@ fn resolve(reference: &str) -> Result<AgentDefinition, String> {
         reference: reference.to_string(),
         summary: summary(&agent).to_string(),
         system_prompt: agent.system_prompt,
+        model: agent.model,
     })
 }
 

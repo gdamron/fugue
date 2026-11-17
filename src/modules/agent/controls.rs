@@ -198,6 +198,12 @@ impl AgentControls {
         self
     }
 
+    /// The resolved definition the module runs as, if it names one.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn definition(&self) -> Option<&AgentDefinition> {
+        self.definition.as_deref()
+    }
+
     /// The `definition` control's value: empty without a definition.
     fn definition_reference(&self) -> String {
         (self.definition.as_ref()).map_or_else(String::new, |d| d.reference.clone())

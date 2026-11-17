@@ -31,10 +31,15 @@ pub(super) fn call_backend(
             Some(value) => value.to_string(),
             None => packet.to_string(),
         };
+        // A fake answers as the model it was asked for, so a history shows
+        // which one a request named.
         return Ok(BackendResult {
             text,
             backend: backend.to_string(),
-            model: None,
+            model: config
+                .get("model")
+                .and_then(Value::as_str)
+                .map(String::from),
         });
     }
 

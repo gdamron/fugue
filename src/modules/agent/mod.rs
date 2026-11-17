@@ -20,12 +20,14 @@
 //! reload or edit naming the module and the package. `prompt`, the task
 //! given on each trigger, is set beside it as before.
 //!
-//! The definition's `default_tools` are shown but not enforced: the module
-//! has no tool model, and the response is applied only as its `apply`
-//! config says. The read-only `definition` control shows the package
-//! named; with one, `resolved_definition` shows what it resolved to: the
-//! package and version, the default model and tools, and the prompt's size
-//! and parts (source, package, version, characters).
+//! The definition's `default_model` is used when the config names no
+//! `model`; a `model` in the config wins, and with neither the backend
+//! chooses. Its `default_tools` are shown but not enforced: the module has
+//! no tool model, and the response is applied only as its `apply` config
+//! says. The read-only `definition` control shows the package named; with
+//! one, `resolved_definition` shows what it resolved to: the package and
+//! version, the default model and tools, and the prompt's size and parts
+//! (source, package, version, characters).
 //!
 //! A live write to `system_prompt` replaces the definition's prompt until
 //! the next reload, which restores it. It is not recorded in the document,
