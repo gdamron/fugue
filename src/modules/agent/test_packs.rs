@@ -1,6 +1,6 @@
 //! Test-only: a stand-in for the demo agent package `fugue.demo.pulse-agent`
 //! and the skill and policies it composes, installed into a packages dir as
-//! `fugue install` lays them out.
+//! `fyug install` lays them out.
 
 use std::fs;
 use std::path::Path;

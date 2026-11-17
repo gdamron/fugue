@@ -3,7 +3,7 @@
 //! A packages directory (`FUGUE_PACKS_DIR`, or `~/.fugue/packs`) holds each
 //! package in one of two layouts:
 //!
-//! - **Installed**, what `fugue install` stages: `<packs>/<id>/<version>/`,
+//! - **Installed**, what `fyug install` stages: `<packs>/<id>/<version>/`,
 //!   one directory per installed version.
 //! - **Source checkout**, a pack repository's `packs/` directory:
 //!   `<packs>/<id>/fugue.pkg.json`, a single version whose number is the

@@ -2,7 +2,7 @@
 
 Every Fugue extension — `module`, `development`, `invention`, `skill`,
 `agent`, `sample-pack`, `policy` — ships with a `fugue.pkg.json` at its
-root. This file is the shared manifest format that the `fugue install`
+root. This file is the shared manifest format that the `fyug install`
 pipeline, the daemon, and the MCP server all read.
 
 The Rust source of truth is [`PackageManifest`](manifest.rs). Validation
