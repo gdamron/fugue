@@ -27,7 +27,6 @@
 //! package and version, the default model and tools, and the prompt's size
 //! and parts (source, package, version, characters).
 
-
 use std::any::Any;
 use std::sync::Arc;
 
