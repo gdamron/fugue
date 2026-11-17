@@ -11,12 +11,16 @@
 //! The strings (`prompt`, `system_prompt`, `backend`, and the telemetry
 //! `status`, `last_*` and `history`) sit behind a lock only control threads
 //! take: the audio module holds the cells and the edge counters, never the
-//! lock, so no audio-thread path reaches it.
+//! lock, so no audio-thread path reaches it. The module's `definition` and,
+//! with one, what it `resolved_definition` to are fixed as the module builds
+//! and read only.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use crate::audio_thread::ControlLock;
+
+use super::definition::{AgentDefinition, DEFINITION, RESOLVED};
 
 use crate::control_request::{
     Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, EventCounter,
@@ -93,6 +97,10 @@ pub(super) const TELEMETRY: &[&str] = &[
     "request_count",
 ];
 
+/// The read-only controls the module's build fixes, rather than its worker
+/// writes.
+pub(super) const READ_ONLY: &[&str] = &[DEFINITION, RESOLVED];
+
 /// Rising edges on the `trigger` and `reset` inputs, and writes to the
 /// controls of those names. The audio thread records them; the worker
 /// claims them.
@@ -134,6 +142,8 @@ pub struct AgentControls {
     cells: Arc<ControlCells>,
     shared: Arc<ControlLock<AgentState>>,
     edges: Arc<Edges>,
+    /// The agent package the module runs as, resolved as it built.
+    definition: Option<Arc<AgentDefinition>>,
 }
 
 #[derive(Clone, Debug)]
@@ -175,7 +185,22 @@ impl AgentControls {
                 last_apply_error: String::new(),
             })),
             edges: Arc::default(),
+            definition: None,
         }
+    }
+
+    /// These controls, running as the resolved `definition`: its prompt is
+    /// the `system_prompt`, and it reads as `definition` and
+    /// `resolved_definition`.
+    pub(super) fn with_definition(mut self, definition: AgentDefinition) -> Self {
+        self.shared.lock().unwrap().system_prompt = definition.system_prompt.clone();
+        self.definition = Some(Arc::new(definition));
+        self
+    }
+
+    /// The `definition` control's value: empty without a definition.
+    fn definition_reference(&self) -> String {
+        (self.definition.as_ref()).map_or_else(String::new, |d| d.reference.clone())
     }
 
     /// What the audio module holds: the cells and the edge counters, never
@@ -281,7 +306,7 @@ impl ControlSurface for AgentControls {
             .try_into()
             .expect("the agent declares five controls");
         let state = self.snapshot();
-        vec![
+        let mut controls = vec![
             enabled,
             ControlMeta::string("status", "Current agent runtime status (read-only)")
                 .with_default(state.status)
@@ -311,12 +336,39 @@ impl ControlSurface for AgentControls {
             cooldown,
             trigger,
             reset,
-        ]
+            ControlMeta::string(
+                DEFINITION,
+                "The installed agent package (id@requirement) the module runs as, set in its config (read-only)",
+            )
+            .with_default(self.definition_reference())
+            .read_only(),
+        ];
+        // Only a module running a definition has a resolution to show.
+        if let Some(definition) = &self.definition {
+            controls.push(
+                ControlMeta::string(
+                    RESOLVED,
+                    "What the definition resolved to: package, version, default model and tools, and the prompt's size and parts (read-only)",
+                )
+                .with_default(definition.summary.clone())
+                .read_only(),
+            );
+        }
+        controls
     }
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
         if self.declared.declares(key) {
             return self.declared.get_control(key);
+        }
+        match key {
+            DEFINITION => return Ok(self.definition_reference().into()),
+            RESOLVED => {
+                if let Some(definition) = &self.definition {
+                    return Ok(definition.summary.clone().into());
+                }
+            }
+            _ => {}
         }
         let state = self.shared.lock().unwrap();
         match key {
@@ -337,7 +389,7 @@ impl ControlSurface for AgentControls {
         if self.declared.declares(key) {
             return self.declared.set_control(key, value);
         }
-        if TELEMETRY.contains(&key) {
+        if TELEMETRY.contains(&key) || READ_ONLY.contains(&key) {
             return read_only(key);
         }
         let mut state = self.shared.lock().unwrap();
@@ -359,7 +411,7 @@ impl ControlSurface for AgentControls {
         if self.declared.declares(key) {
             return self.declared.validate_control(key, value, surfaces);
         }
-        if TELEMETRY.contains(&key) {
+        if TELEMETRY.contains(&key) || READ_ONLY.contains(&key) {
             return read_only(key);
         }
         check_listed_control(&self.controls(), key, value)
@@ -389,7 +441,6 @@ impl ControlSurface for AgentControls {
     fn declares(&self, key: &str) -> bool {
         self.declared.declares(key)
     }
-
     #[allow(private_interfaces)]
     fn submit(
         &self,
@@ -455,8 +506,9 @@ mod tests {
     #[test]
     fn telemetry_is_listed_read_only() {
         for meta in controls().controls() {
-            let telemetry = TELEMETRY.contains(&meta.key.as_str());
-            assert_eq!(meta.read_only, telemetry, "{}", meta.key);
+            let key = meta.key.as_str();
+            let read_only = TELEMETRY.contains(&key) || READ_ONLY.contains(&key);
+            assert_eq!(meta.read_only, read_only, "{}", meta.key);
         }
     }
 
@@ -529,6 +581,7 @@ mod tests {
                 "cooldown",
                 "trigger",
                 "reset",
+                "definition",
             ]
         );
     }

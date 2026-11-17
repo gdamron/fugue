@@ -6,6 +6,26 @@
 //! reset edges, from its inputs or written to its `trigger` and `reset` event
 //! controls, increment shared atomic counters that are drained by the runtime
 //! [`crate::agents::AgentManager`] on background threads.
+//!
+//! # Definitions
+//!
+//! An agent either carries its system prompt inline (`system_prompt`) or
+//! names an installed agent package with `definition` (`id@requirement`,
+//! such as `"fugue.demo.pulse-agent@^0.1.0"`), never both. A definition
+//! resolves as the graph builds, on a control thread, from the installed
+//! packages and under the lockfile governing the invention (see
+//! [`crate::pkg::resolve_agent`]): its persona, each policy it and its
+//! skills require once, then each skill's body become the module's
+//! `system_prompt`. A definition that does not resolve refuses the load,
+//! reload or edit naming the module and the package. `prompt`, the task
+//! given on each trigger, is set beside it as before.
+//!
+//! The definition's `default_tools` are shown but not enforced: the module
+//! has no tool model, and the response is applied only as its `apply`
+//! config says. The read-only `definition` control shows the package
+//! named; with one, `resolved_definition` shows what it resolved to: the
+//! package and version, the default model and tools, and the prompt's size
+//! and parts (source, package, version, characters).
 
 use std::any::Any;
 use std::sync::Arc;
@@ -23,10 +43,13 @@ use self::controls::{Edges, COOLDOWN as COOLDOWN_CONTROL, ENABLED, RESET, TABLE,
 pub use self::controls::AgentControls;
 
 mod controls;
+mod definition;
 #[cfg(test)]
 mod event_tests;
 mod inputs;
 mod outputs;
+#[cfg(test)]
+pub(crate) mod test_packs;
 
 /// Factory for constructing `agent` modules from invention config.
 ///
@@ -42,6 +65,8 @@ struct AgentConfig {
     backend: String,
     /// Seconds.
     cooldown: f32,
+    /// The installed agent package it runs as, resolved.
+    definition: Option<definition::AgentDefinition>,
 }
 
 const TYPE_ID: &str = "agent";
@@ -59,6 +84,7 @@ impl ModuleFactory for AgentFactory {
                 ConfigKey::boolean("enabled"),
                 ConfigKey::text("prompt"),
                 ConfigKey::text("system_prompt"),
+                ConfigKey::text(definition::DEFINITION),
                 ConfigKey::text("backend"),
                 // Read by the agent host (src/agents) as it runs.
                 ConfigKey::json("response"),
@@ -84,13 +110,16 @@ impl ModuleFactory for AgentFactory {
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let config = parse_config(config)?;
-        let controls = AgentControls::new(
+        let mut controls = AgentControls::new(
             config.enabled,
             config.prompt,
             config.system_prompt,
             config.backend,
             config.cooldown,
         );
+        if let Some(definition) = config.definition {
+            controls = controls.with_definition(definition);
+        }
 
         let (cells, edges) = controls.audio_parts();
         Ok(ModuleBuildResult {
@@ -114,8 +143,8 @@ impl ModuleFactory for AgentFactory {
 fn parse_config(config: &serde_json::Value) -> Result<AgentConfig, Box<dyn std::error::Error>> {
     // Telemetry is the worker's to write, never authored. `history` was the
     // history settings' key before they became `history_limits`.
-    if let Some(key) = controls::TELEMETRY
-        .iter()
+    if let Some(key) = (controls::TELEMETRY.iter())
+        .chain([&definition::RESOLVED])
         .find(|key| config.get(**key).is_some())
     {
         let hint = if *key == "history" {
@@ -148,6 +177,7 @@ fn parse_config(config: &serde_json::Value) -> Result<AgentConfig, Box<dyn std::
         cooldown: ConfigReader::new(TYPE_ID, config)
             .float(&COOLDOWN)?
             .unwrap_or(0.0),
+        definition: definition::from_config(config)?,
     })
 }
 
