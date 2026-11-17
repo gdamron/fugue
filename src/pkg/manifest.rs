@@ -53,6 +53,11 @@ pub struct PackageManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policies: Option<Vec<String>>,
 
+    /// Example invention or development documents in a skill package, as
+    /// paths relative to the package root. Allowed only on `skill` packages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub examples: Option<Vec<String>>,
+
     /// Kind-specific entry point.
     pub entry: EntrySpec,
 

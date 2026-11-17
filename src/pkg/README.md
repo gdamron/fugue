@@ -27,6 +27,7 @@ content, see [Musical content identity and resolution](CONTENT_IDENTITY.md).
 | `requires`    | object                    | no       | Declared runtime requirements (see below).                                    |
 | `deps`        | array of `id@req` strings | no       | Other Fugue packages this one depends on. Phase 1 shape-checks only.          |
 | `policies`    | array of `id@req` strings | no       | Policy packages a `skill` or `agent` requires (see [Policies](#policies)).    |
+| `examples`    | array of paths            | no       | Example invention or development documents in a `skill`; allowed only on skills. |
 | `entry`       | object                    | yes      | Kind-specific entry point (see below).                                        |
 | `signing`     | `{key, signature}`        | no       | Reserved for Phase 2; accepted but not enforced.                              |
 

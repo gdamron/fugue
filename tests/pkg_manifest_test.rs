@@ -150,3 +150,49 @@ fn dep_ref_parses_id_and_requirement() {
     assert!(DepRef::parse("@no-id").is_none());
     assert!(DepRef::parse("no-req@").is_none());
 }
+
+#[test]
+fn examples_are_allowed_only_on_skills_even_when_empty() {
+    let dir = examples_dir();
+    for (file, kind) in KINDS {
+        let text = std::fs::read_to_string(dir.join(file)).unwrap();
+        let base: serde_json::Value = serde_json::from_str(&text).unwrap();
+        if *kind == PackageKind::Skill {
+            assert_eq!(
+                parse_str(&text).unwrap().examples,
+                Some(vec!["examples/mix-bus.invention.json".to_string()])
+            );
+            let mut empty = base.clone();
+            empty["examples"] = serde_json::json!([]);
+            let parsed = parse_str(&empty.to_string()).unwrap();
+            assert_eq!(parsed.examples, Some(Vec::new()));
+            continue;
+        }
+        // A manifest without `examples` keeps it absent when written back.
+        let parsed = parse_str(&text).unwrap();
+        assert!(parsed.examples.is_none(), "{file}");
+        let written = serde_json::to_value(&parsed).unwrap();
+        assert!(written.get("examples").is_none(), "{file}: {written}");
+
+        for examples in [
+            serde_json::json!(["examples/a.json"]),
+            serde_json::json!([]),
+        ] {
+            let mut manifest = base.clone();
+            manifest["examples"] = examples.clone();
+            match parse_str(&manifest.to_string()) {
+                Err(ManifestError::Invalid(ValidationError::ExamplesNotAllowed { .. })) => {}
+                other => panic!("{file} with examples {examples}: {other:?}"),
+            }
+            let mut built = parsed.clone();
+            built.examples = serde_json::from_value(examples).unwrap();
+            assert!(
+                matches!(
+                    validate(&built),
+                    Err(ValidationError::ExamplesNotAllowed { .. })
+                ),
+                "{file}: validate should refuse examples"
+            );
+        }
+    }
+}

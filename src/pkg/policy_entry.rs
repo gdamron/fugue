@@ -8,9 +8,10 @@
 //! discover as a skill.
 
 use std::fmt;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use super::manifest::{EntrySpec, PackageManifest};
+use super::package_file::{self, PackageFileError};
 
 /// Why a policy package's entry file was refused. Every variant names the
 /// path it is about.
@@ -96,56 +97,26 @@ pub fn check_policy_entry(
         });
     };
     let relative = Path::new(policy);
-    let path = package_root.join(relative);
-    if relative.as_os_str().is_empty()
-        || relative.components().any(|component| match component {
-            // Any case: on a case-insensitive filesystem `.GIT` is `.git`.
-            Component::Normal(name) => name.eq_ignore_ascii_case(".git"),
-            Component::CurDir => false,
-            _ => true,
-        })
-    {
+    if !package_file::stays_inside(relative) {
         return Err(PolicyEntryError::OutsidePackage(relative.to_path_buf()));
     }
     if relative.extension().and_then(|ext| ext.to_str()) != Some("md") {
-        return Err(PolicyEntryError::NotMarkdown(path));
+        return Err(PolicyEntryError::NotMarkdown(package_root.join(relative)));
     }
-    // Walk the path without following links: the lock's content hash covers
-    // only regular files reached through real directories.
-    let mut current = package_root.to_path_buf();
-    for component in relative.components() {
-        let Component::Normal(name) = component else {
-            continue;
-        };
-        current.push(name);
-        match std::fs::symlink_metadata(&current) {
-            Ok(meta) if meta.file_type().is_symlink() => {
-                return Err(PolicyEntryError::Linked(path));
-            }
-            Ok(_) => {}
-            Err(_) => return Err(PolicyEntryError::Missing(path)),
-        }
-    }
-    if !path.is_file() {
-        return Err(PolicyEntryError::Missing(path));
-    }
+    let path = package_file::locate(package_root, relative).map_err(|err| match err {
+        PackageFileError::OutsidePackage(path) => PolicyEntryError::OutsidePackage(path),
+        PackageFileError::Linked(path) => PolicyEntryError::Linked(path),
+        PackageFileError::Missing(path) => PolicyEntryError::Missing(path),
+    })?;
     let bytes =
         super::read_limit::read_document(&path).map_err(|err| PolicyEntryError::Unreadable {
             path: path.clone(),
             reason: err.to_string(),
         })?;
-    if opens_with_frontmatter(&bytes) {
+    if package_file::opens_with_frontmatter(&bytes) {
         return Err(PolicyEntryError::HasFrontmatter(path));
     }
     Ok(path)
-}
-
-/// Whether the text's first line (after an optional byte-order mark) is the
-/// `---` fence that opens a YAML frontmatter block.
-fn opens_with_frontmatter(bytes: &[u8]) -> bool {
-    let text = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
-    let first_line = text.split(|&b| b == b'\n').next().unwrap_or_default();
-    first_line.trim_ascii_end() == b"---"
 }
 
 #[cfg(test)]
