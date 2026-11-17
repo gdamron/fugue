@@ -183,15 +183,16 @@ fn run_host(
 }
 
 /// The module's config as its backend reads it: with its definition's
-/// default model as `model` when the config names none. A `model` in the
-/// config wins; with neither, the backend chooses.
+/// default model as `model` when the config names none (a `null` names
+/// none, as backends read it). A `model` in the config wins; with neither,
+/// the backend chooses.
 fn with_definition_model<'a>(
     config: &'a Value,
     controls: &AgentControls,
 ) -> std::borrow::Cow<'a, Value> {
     let model = (controls.definition()).and_then(|definition| definition.model());
     match model {
-        Some(model) if config.get("model").is_none() => {
+        Some(model) if config.get("model").and_then(Value::as_str).is_none() => {
             let mut config = config.clone();
             match config.as_object_mut() {
                 Some(object) => {

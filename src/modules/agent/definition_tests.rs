@@ -302,6 +302,8 @@ fn the_definitions_model_is_used_unless_the_config_names_one() {
             requested_model(json!({ "definition": REFERENCE })),
             "pulse-model"
         );
+        let unnamed = json!({ "definition": REFERENCE, "model": null });
+        assert_eq!(requested_model(unnamed), "pulse-model");
         let named = json!({ "definition": REFERENCE, "model": "named-model" });
         assert_eq!(requested_model(named), "named-model");
         // With neither, the backend chooses.
