@@ -150,11 +150,25 @@ fn refusal(path: &Path) -> Option<String> {
     if invention.modules.is_empty() {
         return None;
     }
-    let registry = ModuleRegistry::default().for_validation();
-    InventionBuilder::with_registry(48_000, registry)
-        .build(invention)
-        .err()
-        .map(|error| format!("{}: {error}", path.display()))
+    let build = |invention: Invention| {
+        let registry = ModuleRegistry::default().for_validation();
+        InventionBuilder::with_registry(48_000, registry)
+            .build(invention)
+            .err()
+            .map(|error| format!("{}: {error}", path.display()))
+    };
+    // A document naming an agent definition builds once the demo agent
+    // is installed.
+    let defines_agent = (invention.modules.iter())
+        .any(|spec| crate::modules::agent::names_definition(&spec.module_type, &spec.config));
+    if !defines_agent {
+        return build(invention);
+    }
+    let packs = tempfile::tempdir().unwrap();
+    crate::modules::agent::test_packs::install_pulse_agent(packs.path());
+    let mut refused = None;
+    crate::pkg::audio_asset::with_packs_dir(packs.path(), || refused = build(invention));
+    refused
 }
 
 #[test]

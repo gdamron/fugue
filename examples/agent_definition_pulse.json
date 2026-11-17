@@ -1,0 +1,97 @@
+{
+  "version": "1.0.0",
+  "title": "Pulse Agent Definition",
+  "description": "A bass pulse an agent varies every few bars. The agent runs as the installed fugue.demo.pulse-agent package (its persona, shared policies and skill) rather than an inline system prompt. Install the package before loading: fyug install fugue.demo.pulse-agent.",
+  "modules": [
+    {
+      "id": "clock",
+      "type": "clock",
+      "config": {
+        "bpm": 96.0
+      }
+    },
+    {
+      "id": "seq",
+      "type": "step_sequencer",
+      "config": {
+        "root_note": 36,
+        "step_count": 8,
+        "gate_length": 0.5,
+        "pattern": [
+          { "note": 0, "gate_length": 0.8 },
+          { "note": null },
+          { "note": 0, "gate_length": 0.4 },
+          { "note": 7, "gate_length": 0.5 },
+          { "note": 0, "gate_length": 0.8 },
+          { "note": null },
+          { "note": 5, "gate_length": 0.4 },
+          { "note": 3, "gate_length": 0.5 }
+        ]
+      }
+    },
+    {
+      "id": "osc",
+      "type": "oscillator",
+      "config": {
+        "waveform": "sawtooth"
+      }
+    },
+    {
+      "id": "adsr",
+      "type": "adsr",
+      "config": {
+        "attack": 0.01,
+        "decay": 0.12,
+        "sustain": 0.5,
+        "release": 0.15
+      }
+    },
+    {
+      "id": "vca",
+      "type": "vca"
+    },
+    {
+      "id": "improvise",
+      "type": "agent",
+      "config": {
+        "definition": "fugue.demo.pulse-agent@^0.1.0",
+        "prompt": "Vary the bass line: keep its pulse and root, change a few steps.",
+        "cooldown": 8.0,
+        "context": [
+          {
+            "name": "current_pattern",
+            "from": "seq",
+            "source": "config",
+            "path": "pattern"
+          }
+        ],
+        "response": {
+          "format": "json",
+          "kind": "pattern_variation",
+          "schema_ref": "fugue.step_pattern.v1"
+        },
+        "apply": [
+          {
+            "from": "$.payload.pattern",
+            "to": "seq",
+            "control": "pattern",
+            "type": "json_string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dac",
+      "type": "dac"
+    }
+  ],
+  "connections": [
+    { "from": "clock", "from_port": "beat", "to": "seq", "to_port": "clock" },
+    { "from": "clock", "from_port": "beat_d4", "to": "improvise", "to_port": "trigger" },
+    { "from": "seq", "from_port": "frequency", "to": "osc", "to_port": "frequency" },
+    { "from": "seq", "from_port": "gate", "to": "adsr", "to_port": "gate" },
+    { "from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio" },
+    { "from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "level" },
+    { "from": "vca", "from_port": "audio", "to": "dac", "to_port": "audio" }
+  ]
+}

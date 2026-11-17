@@ -464,5 +464,35 @@ fn a_governing_lock_picks_the_locked_packages_and_a_reload_under_it_rebuilds() {
     });
 }
 
+#[test]
+fn the_example_loads_with_the_demo_agent_installed() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/agent_definition_pulse.json");
+    let invention = Invention::from_file(path.to_str().unwrap()).unwrap();
+    let spec = invention
+        .modules
+        .iter()
+        .find(|spec| spec.module_type == "agent")
+        .unwrap();
+    assert_eq!(spec.config["definition"], REFERENCE);
+    with_pulse_agent(|_| {
+        let mut engine = crate::RenderEngine::new(48_000);
+        engine.stub_agent_backends(true);
+        engine.load_invention(invention.clone()).unwrap();
+        let mut block = vec![0.0f32; 1024];
+        engine.render_interleaved(&mut block).unwrap();
+        let prompt = text(engine.get_control(&spec.id, "system_prompt").unwrap());
+        assert!(prompt.starts_with(PERSONA), "{prompt}");
+    });
+    // Without the package, the load is refused naming it.
+    let empty = tempfile::tempdir().unwrap();
+    with_packs_dir(empty.path(), || {
+        let error = InventionBuilder::new(48_000)
+            .build(invention)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains(PULSE_AGENT), "{error}");
+    });
+}
+
 #[path = "definition_play_tests.rs"]
 mod play;
