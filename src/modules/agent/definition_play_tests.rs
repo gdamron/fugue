@@ -2,6 +2,7 @@
 //! it: the prompt it sends, the version it resolved, and what a reload or a
 //! refused change leaves playing.
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -53,7 +54,7 @@ fn echo(config: Value) -> Value {
     config
 }
 
-fn resolved(packs: &std::path::Path, reference: &str) -> String {
+fn resolved(packs: &Path, reference: &str) -> String {
     crate::pkg::resolve_agent(reference, packs)
         .unwrap()
         .system_prompt
@@ -265,5 +266,43 @@ fn default_tools_do_not_limit_what_a_response_applies() {
         let pattern: Value = serde_json::from_str(&pattern).unwrap();
         assert_eq!(pattern.as_array().unwrap().len(), 3, "{pattern}");
         running.stop();
+    });
+}
+
+#[test]
+fn the_example_loads_with_the_demo_agent_installed() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/agent_definition_pulse.json");
+    let invention = Invention::from_file(path.to_str().unwrap()).unwrap();
+    let spec = invention
+        .modules
+        .iter()
+        .find(|spec| spec.module_type == "agent")
+        .unwrap();
+    assert_eq!(spec.config["definition"], REFERENCE);
+    with_pulse_agent(|_| {
+        let mut engine = crate::RenderEngine::new(48_000);
+        engine.stub_agent_backends(true);
+        engine.load_invention(invention.clone()).unwrap();
+        // Two seconds of it, with the agent idle, still sound.
+        let mut block = vec![0.0f32; 1024];
+        let mut peak = 0.0f32;
+        for _ in 0..(2 * 48_000usize).div_ceil(512) {
+            engine.render_interleaved(&mut block).unwrap();
+            peak = block
+                .iter()
+                .fold(peak, |peak, sample| peak.max(sample.abs()));
+        }
+        assert!(peak > 0.01, "peak {peak}");
+        let prompt = text(engine.get_control(&spec.id, "system_prompt").unwrap());
+        assert!(prompt.starts_with(PERSONA), "{prompt}");
+    });
+    // Without the package, the load is refused naming it.
+    let empty = tempfile::tempdir().unwrap();
+    with_packs_dir(empty.path(), || {
+        let error = InventionBuilder::new(48_000)
+            .build(invention)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains(PULSE_AGENT), "{error}");
     });
 }
