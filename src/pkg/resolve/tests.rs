@@ -477,9 +477,12 @@ fn a_provider_error_stays_reachable_for_every_requirement_field() {
         &[],
         Some(&["fugue.test.x@^1.0.0"]),
     );
+    let mut composed = manifest("fugue.test.root", "1.0.0", "agent", &[], None);
+    composed.skills = Some(vec!["fugue.test.x@^1.0.0".into()]);
     let cases = [
         (dependent, "installed copy is damaged"),
         (governed, "policy fugue.test.x: installed copy is damaged"),
+        (composed, "skill fugue.test.x: installed copy is damaged"),
     ];
     for (root, message) in cases {
         let err = resolve_package(&root, &DamagedProvider)
