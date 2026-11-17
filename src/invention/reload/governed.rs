@@ -43,7 +43,8 @@ pub(super) const DEVELOPMENT_LOADERS: [&str; 5] = [
 /// Under another policy than the graph was built under (`built_under`:
 /// another lockfile or none), a module that may hold package content is
 /// rebuilt rather than kept: what it holds was loaded under that policy, and
-/// never verified against the candidate's. That is a package loader, or an
+/// never verified against the candidate's. That is a package loader, an
+/// agent naming a definition, or an
 /// instance of a development that may hold what one loads or a `$asset`
 /// expands (`LoadedDevelopments::holding_packages`): an alias passes a
 /// package ref to a loader unchanged, so its config does not change with the
@@ -64,10 +65,16 @@ pub(super) fn rebuild_under_another_policy(
         .definitions
         .loaded
         .holding_packages(&DEVELOPMENT_LOADERS);
-    let holds_packages =
-        |module_type: &str| PACKAGE_LOADERS.contains(&module_type) || holding.contains(module_type);
+    // An agent that names a definition holds the prompt its packages
+    // composed.
+    let holds_packages = |spec: &crate::ModuleSpec| {
+        let module_type = spec.module_type.as_str();
+        PACKAGE_LOADERS.contains(&module_type)
+            || holding.contains(module_type)
+            || crate::modules::agent::names_definition(module_type, &spec.config)
+    };
     let rebuilt: Vec<_> = (validated.resolved.modules.iter())
-        .filter(|spec| plan.unchanged.contains(&spec.id) && holds_packages(&spec.module_type))
+        .filter(|spec| plan.unchanged.contains(&spec.id) && holds_packages(spec))
         .cloned()
         .collect();
     let is_rebuilt = |id: &String| rebuilt.iter().any(|spec| spec.id == *id);

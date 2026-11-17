@@ -61,7 +61,7 @@ impl RunningInvention {
         };
         let read_only = (surface.declaration(key))
             .is_some_and(|declared| declared.decl.writer == Writer::Telemetry);
-        surface.get_control(key).is_ok() && !read_only
+        surface.get_control(key).is_ok() && !read_only && !surface.refuses_writes(key)
     }
 
     /// Gets the current value of a module control.

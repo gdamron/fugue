@@ -135,6 +135,83 @@ fn an_inline_prompt_needs_no_packages() {
 }
 
 #[test]
+fn a_refused_reload_or_edit_leaves_the_document_and_the_prompt_sent() {
+    with_pulse_agent(|packs| {
+        let expected = resolved(packs, REFERENCE);
+        let (mut running, _) = start(echo(json!({ "definition": REFERENCE })));
+        let before = serde_json::to_value(running.document().unwrap()).unwrap();
+        // One names a package that is not installed; the other, one whose
+        // skill is not.
+        let broken = "fugue.demo.broken-agent";
+        let skills = json!({ "skills": ["fugue.demo.absent-skill@^1"] });
+        let persona = json!({ "system_prompt": "You break." }).to_string();
+        install(
+            packs,
+            (broken, "1.0.0", "agent"),
+            skills,
+            &[("agent.json", &persona)],
+        );
+        for package in ["fugue.demo.absent", broken] {
+            let config = echo(json!({ "definition": format!("{package}@^1") }));
+            let error = running
+                .reload(piece(config.clone()))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("module 'improvise'"), "{error}");
+            assert!(error.contains(package), "{error}");
+            let edit = crate::rpc::StructuralEdit::AddModule {
+                id: "second".into(),
+                module_type: "agent".into(),
+                config,
+                name: None,
+            };
+            let error = format!("{:?}", running.apply_edits(&[edit]).unwrap_err());
+            assert!(error.contains("second"), "{error}");
+            assert!(error.contains(package), "{error}");
+            // Neither changed the document: no module was added.
+            let after = serde_json::to_value(running.document().unwrap()).unwrap();
+            assert_eq!(after, before);
+        }
+        assert_eq!(sent(&running, "improvise")["system"], expected.as_str());
+        running.stop();
+    });
+}
+
+#[test]
+fn a_reload_to_another_definition_shows_only_its_parts() {
+    with_pulse_agent(|packs| {
+        let plain = json!({ "system_prompt": "You are plain." }).to_string();
+        install(
+            packs,
+            ("fugue.demo.plain-agent", "1.0.0", "agent"),
+            json!({}),
+            &[("agent.json", &plain)],
+        );
+        let (mut running, _) = start(echo(json!({ "definition": REFERENCE })));
+        let other = echo(json!({ "definition": "fugue.demo.plain-agent@^1" }));
+        running.reload(piece(other)).unwrap();
+        let summary = text(
+            running
+                .get_control("improvise", "resolved_definition")
+                .unwrap(),
+        );
+        let summary: Value = serde_json::from_str(&summary).unwrap();
+        assert_eq!(summary["id"], "fugue.demo.plain-agent");
+        assert_eq!(
+            summary["parts"],
+            json!([{
+                "source": "persona",
+                "package": "fugue.demo.plain-agent",
+                "version": "1.0.0",
+                "chars": "You are plain.".len(),
+            }])
+        );
+        assert_eq!(sent(&running, "improvise")["system"], "You are plain.");
+        running.stop();
+    });
+}
+
+#[test]
 fn default_tools_do_not_limit_what_a_response_applies() {
     with_pulse_agent(|packs| {
         let toolful = json!({

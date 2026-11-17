@@ -270,6 +270,15 @@ impl RuntimeState {
     pub(crate) fn record_authored_control(&mut self, id: &str, key: &str, value: &ControlValue) {
         self.authored_epoch += 1;
         (self.authored_log).push((id.to_string(), key.to_string(), value.clone()));
+        // A write the document cannot hold beside the module's config (an
+        // agent's prompt over its definition's) plays until a reload
+        // restores the config's.
+        if (self.modules.get(id)).is_some_and(|info| {
+            crate::modules::agent::plays_unrecorded(&info.module_type, &info.config, key)
+        }) {
+            self.written_since.mark_unrecorded(id, key);
+            return;
+        }
         self.document_write_control(id, key, value);
         self.write_stored_control(id, key, value);
     }

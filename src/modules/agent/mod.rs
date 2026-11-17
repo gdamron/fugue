@@ -26,6 +26,10 @@
 //! named; with one, `resolved_definition` shows what it resolved to: the
 //! package and version, the default model and tools, and the prompt's size
 //! and parts (source, package, version, characters).
+//!
+//! A live write to `system_prompt` replaces the definition's prompt until
+//! the next reload, which restores it. It is not recorded in the document,
+//! which cannot hold an inline prompt beside its definition.
 
 use std::any::Any;
 use std::sync::Arc;
@@ -41,6 +45,9 @@ use crate::{ControlMeta, Module};
 use self::controls::{Edges, COOLDOWN as COOLDOWN_CONTROL, ENABLED, RESET, TABLE, TRIGGER};
 
 pub use self::controls::AgentControls;
+pub(crate) use self::definition::{
+    names_definition, plays_unrecorded, unauthorable, unstated_keys,
+};
 
 mod controls;
 mod definition;

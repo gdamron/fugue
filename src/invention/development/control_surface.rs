@@ -442,6 +442,10 @@ impl ControlSurface for DevelopmentControlSurface {
         self.declared(key)?.declaration(key)
     }
 
+    fn refuses_writes(&self, key: &str) -> bool {
+        (self.lookup(key)).is_ok_and(|(control, surface)| surface.refuses_writes(&control.key))
+    }
+
     /// Validates the write against every internal control `key` aliases.
     /// Inner surfaces resolve against the development's own directory, as
     /// their setters do, never against the outer candidate's.

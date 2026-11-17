@@ -384,6 +384,16 @@ pub trait ControlSurface: Send + Sync {
         false
     }
 
+    /// Whether `key` is an undeclared control that refuses every write (an
+    /// agent's telemetry, or what its build fixed): a reload never writes
+    /// it to follow a config change, but rebuilds the module. False by
+    /// default. Control thread.
+    #[doc(hidden)]
+    fn refuses_writes(&self, key: &str) -> bool {
+        let _ = key;
+        false
+    }
+
     /// The declared control `key`, for a development aliasing it, or `None`
     /// for an undeclared one. Control thread.
     #[doc(hidden)]
