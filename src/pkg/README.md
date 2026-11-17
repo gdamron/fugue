@@ -127,6 +127,25 @@ all declared on its manifest so the lockfile resolves them:
   requirement that resolves to a package of another kind, or to a skill whose
   `targets` lack `in-graph-agent`, fails resolution naming the id.
 
+The definition file (`entry.definition`) holds only what the agent is:
+
+```json
+{ "system_prompt": "You are a groove agent...", "default_tools": ["fugue.set_control"], "default_model": "a-model-id" }
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `system_prompt` | yes | The persona: non-empty text. |
+| `default_tools` | no | Tool names the agent starts with; none when absent. |
+| `default_model` | no | When absent, the host's configured model applies. Not checked against any model list. |
+| `id`, `version` | no | When present, must equal the manifest's. |
+
+Any other field, `skills`, `policies` and `kind` included, is an error naming
+the field: requirements belong on the manifest. `check_agent_package` checks
+the file once a package is on disk (installers and pack checkers call it); it
+refuses a definition that is missing, outside the package, reached through a
+link, or not a JSON object, naming the path.
+
 ## Examples
 
 One per kind lives in [`examples/`](examples/):
