@@ -141,9 +141,14 @@ pub(crate) fn plan_reload(
                 };
                 if let Some(implicit) = &implicit {
                     let pending = updates.as_deref().unwrap_or_default();
+                    // A key the module plays from elsewhere (an agent's
+                    // prompt from its definition) is restored even where
+                    // the config states it.
+                    let unstated =
+                        crate::modules::agent::unstated_keys(&spec.module_type, &spec.config);
                     let restores = implicit_restores(
                         implicit.written.unrecorded(&spec.id),
-                        &config,
+                        &without(&config, unstated),
                         pending,
                         |key| is_event(&spec.id, key),
                         |key| has_control(&spec.id, key),

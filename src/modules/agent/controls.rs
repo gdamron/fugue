@@ -441,6 +441,11 @@ impl ControlSurface for AgentControls {
     fn declares(&self, key: &str) -> bool {
         self.declared.declares(key)
     }
+
+    fn refuses_writes(&self, key: &str) -> bool {
+        TELEMETRY.contains(&key) || READ_ONLY.contains(&key)
+    }
+
     #[allow(private_interfaces)]
     fn submit(
         &self,

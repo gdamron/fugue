@@ -103,6 +103,46 @@ fn summary(agent: &crate::pkg::ResolvedAgent) -> Value {
     })
 }
 
+/// Whether an authored write of `key` to an `agent` module with `config`
+/// plays without being recorded in the document: a `system_prompt` written
+/// over a definition's prompt, which the document cannot hold beside its
+/// `definition`. It plays until the next reload restores the definition's.
+pub(crate) fn plays_unrecorded(module_type: &str, config: &Value, key: &str) -> bool {
+    unstated_keys(module_type, config).contains(&key)
+}
+
+/// The keys a module of `module_type` with `config` plays from elsewhere
+/// whatever its config states: an agent naming a definition plays the
+/// definition's `system_prompt` even beside an empty inline one, so a
+/// reload restores a live write of it.
+pub(crate) fn unstated_keys(module_type: &str, config: &Value) -> &'static [&'static str] {
+    match names_definition(module_type, config) {
+        true => &[SYSTEM_PROMPT],
+        false => &[],
+    }
+}
+
+/// Why an edit batch may not author `key` of `spec` into the document, if
+/// it may not: a `system_prompt` over a definition's, which the document
+/// cannot hold beside it. A live write plays it instead.
+pub(crate) fn unauthorable(spec: &crate::ModuleSpec, key: &str) -> Option<String> {
+    plays_unrecorded(&spec.module_type, &spec.config, key).then(|| {
+        format!(
+            "module '{}' runs the agent definition in its '{DEFINITION}', which supplies its \
+             '{key}': an edit cannot author one beside it; write the control live to play \
+             another until the next reload",
+            spec.id
+        )
+    })
+}
+
+/// Whether a module of `module_type` with `config` is an agent naming a
+/// definition, so holds what its packages composed.
+pub(crate) fn names_definition(module_type: &str, config: &Value) -> bool {
+    module_type == super::TYPE_ID
+        && (config.get(DEFINITION).and_then(Value::as_str)).is_some_and(|r| !r.trim().is_empty())
+}
+
 #[cfg(test)]
 #[path = "definition_tests.rs"]
 mod tests;

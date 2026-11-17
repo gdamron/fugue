@@ -334,6 +334,12 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         if let Some(message) = non_finite_refusal(module_id, key, &applied) {
             return Err(Refusal(EditFailureReason::InvalidControlValue, message));
         }
+        if let Some(message) = (self.document.modules.iter())
+            .find(|spec| spec.id == module_id)
+            .and_then(|spec| crate::modules::agent::unauthorable(spec, key))
+        {
+            return Err(Refusal(EditFailureReason::InvalidControlValue, message));
+        }
         // Made on the module as the batch has it so far, so a value its
         // setter refuses at this point is refused here, and the edits after
         // this one see the controls it adds or removes.
