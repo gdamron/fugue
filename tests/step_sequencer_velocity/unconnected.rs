@@ -80,7 +80,9 @@ fn stored_velocities_change_nothing_while_the_output_is_unconnected() {
 /// Long enough for every example's pattern to play through at least once.
 const EXAMPLE_SECONDS: usize = 8;
 
-/// Every example document under `examples/` that contains a step sequencer.
+/// Every example document under `examples/` that contains a step sequencer,
+/// except those whose agent runs an installed definition: they load only
+/// with its package installed, and the agent module's own tests render them.
 fn examples_with_a_step_sequencer() -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut dirs = vec![Path::new("examples").to_path_buf()];
@@ -91,7 +93,7 @@ fn examples_with_a_step_sequencer() -> Vec<PathBuf> {
                 dirs.push(path);
             } else if path.extension().is_some_and(|ext| ext == "json") {
                 let text = std::fs::read_to_string(&path).unwrap();
-                if text.contains("\"step_sequencer\"") {
+                if text.contains("\"step_sequencer\"") && !runs_a_definition(&text) {
                     found.push(path);
                 }
             }
@@ -99,6 +101,15 @@ fn examples_with_a_step_sequencer() -> Vec<PathBuf> {
     }
     found.sort();
     found
+}
+
+/// Whether an agent in the document `text` names an agent definition.
+fn runs_a_definition(text: &str) -> bool {
+    let document: serde_json::Value = serde_json::from_str(text).unwrap();
+    let modules = document["modules"].as_array().into_iter().flatten();
+    modules
+        .into_iter()
+        .any(|module| module["type"] == "agent" && module["config"].get("definition").is_some())
 }
 
 /// The peak of a seeded render of the example at `path`.
