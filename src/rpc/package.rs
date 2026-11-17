@@ -167,7 +167,7 @@ pub enum PackageSource {
 
 /// Install one package (and its dependencies) into the daemon's package cache.
 ///
-/// `package` takes the same forms as `fugue install`:
+/// `package` takes the same forms as `fyug install`:
 /// `local:<absolute directory>`, `github:<owner>/<repo>[@<ref>]`, or a registry
 /// `<id>@<version>`. A registry ID may instead pass its version in `version`;
 /// `version` is refused for local and GitHub sources, whose manifest decides it.
@@ -201,4 +201,8 @@ pub struct PackageInstallReport {
     /// development and invention packages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation: Option<String>,
+    /// Problems that did not stop the install, each naming its package or
+    /// what the install fell back to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }

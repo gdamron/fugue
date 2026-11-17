@@ -288,6 +288,7 @@ fn installed_entry_and_wire_shapes() {
                 installed_from: "local:/tmp/p".into(),
                 dependencies: Vec::new(),
                 generation: Some("s:1".into()),
+                warnings: vec!["registry index unreachable".into()],
             },
         },
     ] {

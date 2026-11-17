@@ -418,3 +418,77 @@ fn a_package_already_chosen_as_a_dependency_must_still_be_a_policy() {
     let err = resolve_err(&root, &provider);
     assert!(err.contains("required as a policy"), "{err}");
 }
+
+/// A provider error with its own type, to check it survives resolution.
+#[derive(Debug)]
+struct Damaged;
+
+impl std::fmt::Display for Damaged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("installed copy is damaged")
+    }
+}
+
+impl Error for Damaged {}
+
+/// Advertises one version of every id and fails to acquire any of them.
+struct DamagedProvider;
+
+impl PackageProvider for DamagedProvider {
+    type Acquired = ();
+
+    fn available_versions(&self, _id: &str) -> Result<Vec<Version>, Box<dyn Error>> {
+        Ok(vec![ver("1.0.0")])
+    }
+
+    fn acquire(
+        &self,
+        _id: &str,
+        _version: &Version,
+    ) -> Result<(PackageManifest, ()), Box<dyn Error>> {
+        Err(Box::new(Damaged))
+    }
+}
+
+fn caused_by_damage(err: &(dyn Error + 'static)) -> bool {
+    let mut current = Some(err);
+    while let Some(err) = current {
+        if err.is::<Damaged>() {
+            return true;
+        }
+        current = err.source();
+    }
+    false
+}
+
+#[test]
+fn a_provider_error_stays_reachable_for_every_requirement_field() {
+    let dependent = manifest(
+        "fugue.test.root",
+        "1.0.0",
+        "development",
+        &["fugue.test.x@^1.0.0"],
+        None,
+    );
+    let governed = manifest(
+        "fugue.test.root",
+        "1.0.0",
+        "skill",
+        &[],
+        Some(&["fugue.test.x@^1.0.0"]),
+    );
+    let mut composed = manifest("fugue.test.root", "1.0.0", "agent", &[], None);
+    composed.skills = Some(vec!["fugue.test.x@^1.0.0".into()]);
+    let cases = [
+        (dependent, "installed copy is damaged"),
+        (governed, "policy fugue.test.x: installed copy is damaged"),
+        (composed, "skill fugue.test.x: installed copy is damaged"),
+    ];
+    for (root, message) in cases {
+        let err = resolve_package(&root, &DamagedProvider)
+            .err()
+            .expect("acquire fails");
+        assert!(caused_by_damage(err.as_ref()), "{err}");
+        assert_eq!(err.to_string(), message);
+    }
+}

@@ -171,11 +171,37 @@ impl RequiredAs {
         Ok(())
     }
 
+    /// Name the policy or skill a provider error came from. The provider's
+    /// error stays reachable as the [`Error::source`], so a caller can still
+    /// tell a fetch failure from a damaged package by its type.
     fn with_context(self, id: &str, err: Box<dyn Error>) -> Box<dyn Error> {
         match self {
             RequiredAs::Dependency => err,
-            _ => format!("{}{id}: {err}", self.label()).into(),
+            _ => Box::new(RequirementError {
+                context: format!("{}{id}", self.label()),
+                source: err,
+            }),
         }
+    }
+}
+
+/// A provider error for a required policy or skill, prefixed with what was
+/// required. Displays as `<label><id>: <provider error>`.
+#[derive(Debug)]
+struct RequirementError {
+    context: String,
+    source: Box<dyn Error>,
+}
+
+impl std::fmt::Display for RequirementError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.context, self.source)
+    }
+}
+
+impl Error for RequirementError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.source.as_ref())
     }
 }
 

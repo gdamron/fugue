@@ -107,7 +107,7 @@ mod fs_ops {
     }
 
     /// The default installed-package cache: `$FUGUE_PACKS_DIR` when set,
-    /// otherwise `~/.fugue/packs` (the same location `fugue install` stages
+    /// otherwise `~/.fugue/packs` (the same location `fyug install` stages
     /// packages into).
     pub fn default_packages_dir() -> Result<PathBuf, String> {
         if let Some(dir) = std::env::var_os("FUGUE_PACKS_DIR") {
@@ -190,7 +190,7 @@ mod fs_ops {
                 ),
                 Available::Installed(_) => format!(
                     "no installed version of {} satisfies {} (looked in {}); \
-                     run `fugue install {}@{}`",
+                     run `fyug install {}@{}`",
                     reference.id,
                     reference.requirement,
                     packages_dir.display(),
@@ -364,7 +364,7 @@ mod fs_tests {
         let err = resolve_package_asset(&parse("fugue.drums.808@^2.0:kick.wav"), tmp.path(), None)
             .unwrap_err();
         assert!(err.contains("no installed version"));
-        assert!(err.contains("fugue install"));
+        assert!(err.contains("fyug install"));
 
         let err =
             resolve_package_asset(&parse("fugue.drums.808@1.2.0:snare.wav"), tmp.path(), None)

@@ -2,7 +2,7 @@
 //!
 //! The lockfile pins every installed (β) package to a concrete resolved
 //! version, the source it was fetched from, and an integrity hash over the
-//! installed directory contents. `fugue install` writes it (see the
+//! installed directory contents. `fyug install` writes it (see the
 //! `fugue-cli` `lockwrite` module) and invention loaders [`verify`] it so a
 //! tampered or missing package is caught before audio starts.
 //!
@@ -140,7 +140,7 @@ impl Lockfile {
 
     /// Upgrade a v1 document (`{version,kind,source:string,path}` entries, no
     /// integrity) into the in-memory v2 shape. Integrity is left empty so a
-    /// frozen load reports it as unverifiable until `fugue install` refreshes.
+    /// frozen load reports it as unverifiable until `fyug install` refreshes.
     fn from_v1(value: &serde_json::Value) -> Result<Self, Box<dyn Error>> {
         let mut lock = Lockfile::new();
         if let Some(packages) = value.get("packages").and_then(|p| p.as_object()) {
@@ -265,7 +265,7 @@ mod fs_ops {
         }
 
         /// Read `path` (or start fresh), merge in `entries`/`roots`, and return
-        /// the serialized v2 bytes — the update `fugue install` writes.
+        /// the serialized v2 bytes — the update `fyug install` writes.
         pub fn merged_bytes(
             path: &Path,
             entries: Vec<(String, LockedPackage)>,
@@ -388,7 +388,7 @@ mod fs_ops {
         };
         if package.integrity.is_empty() {
             return Err(format!(
-                "{id}@{} has no integrity hash; run `fugue install` to refresh the lockfile",
+                "{id}@{} has no integrity hash; run `fyug install` to refresh the lockfile",
                 package.version
             ));
         }
