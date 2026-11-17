@@ -102,9 +102,12 @@ pub fn resolve_agent(
         reason,
     };
     let _reading = begin(packages_dir).map_err(refuse)?;
-    let provider = InstalledPackages::new(packages_dir);
-    let (manifest, dir) = installed_agent(reference, &provider).map_err(refuse)?;
-    compose(&manifest, &dir, &provider).map_err(refuse)
+    under_one_lock(|| {
+        let provider = InstalledPackages::new(packages_dir);
+        let (manifest, dir) = installed_agent(reference, &provider)?;
+        compose(&manifest, &dir, &provider)
+    })
+    .map_err(refuse)
 }
 
 /// Resolve the agent package at `package_root`, its requirements from
@@ -120,11 +123,20 @@ pub fn resolve_agent_package(
         }
     };
     let _reading = begin(packages_dir).map_err(refuse(package_root.display().to_string()))?;
-    let manifest =
-        read_manifest(package_root).map_err(refuse(package_root.display().to_string()))?;
-    let provider = InstalledPackages::new(packages_dir);
-    compose(&manifest, package_root, &provider)
-        .map_err(refuse(format!("{}@{}", manifest.id, manifest.version)))
+    under_one_lock(|| {
+        let manifest =
+            read_manifest(package_root).map_err(refuse(package_root.display().to_string()))?;
+        let provider = InstalledPackages::new(packages_dir);
+        compose(&manifest, package_root, &provider)
+            .map_err(refuse(format!("{}@{}", manifest.id, manifest.version)))
+    })
+}
+
+/// Run a whole resolution under the lock governing this thread as it starts,
+/// so a session that adopts another lock meanwhile cannot have versions
+/// chosen under one lock and bytes verified under another.
+fn under_one_lock<T>(body: impl FnOnce() -> T) -> T {
+    super::lock::govern_here(super::lock::governing(), body)
 }
 
 /// Refuse the audio thread, then take the packages dir's shared read lock.
