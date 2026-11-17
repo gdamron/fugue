@@ -53,6 +53,12 @@ pub struct PackageManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policies: Option<Vec<String>>,
 
+    /// Skill packages this agent composes (`id@req` strings). Allowed only on
+    /// `agent` packages; resolved and locked like `deps`, but each must
+    /// resolve to a `skill` package that targets `in-graph-agent`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skills: Option<Vec<String>>,
+
     /// Example invention or development documents in a skill package, as
     /// paths relative to the package root. Allowed only on `skill` packages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -99,6 +105,11 @@ impl PackageKind {
     /// Whether a package of this kind may declare `policies`.
     pub fn accepts_policies(self) -> bool {
         matches!(self, PackageKind::Skill | PackageKind::Agent)
+    }
+
+    /// Whether a package of this kind may declare `skills`.
+    pub fn accepts_skills(self) -> bool {
+        self == PackageKind::Agent
     }
 }
 
@@ -180,6 +191,11 @@ impl PackageManifest {
     /// The declared policy requirements, empty when the field is absent.
     pub fn policy_requirements(&self) -> &[String] {
         self.policies.as_deref().unwrap_or_default()
+    }
+
+    /// The declared skill requirements, empty when the field is absent.
+    pub fn skill_requirements(&self) -> &[String] {
+        self.skills.as_deref().unwrap_or_default()
     }
 }
 

@@ -1,6 +1,6 @@
 //! Pure transitive dependency resolution.
 //!
-//! Given a package's declared `deps` and `policies` (`id@requirement`), this walks the
+//! Given a package's declared `deps`, `policies` and `skills` (`id@requirement`), this walks the
 //! transitive graph, picks a concrete version for each id, and records the
 //! resolved edges. All I/O — fetching candidate versions and package contents
 //! from a registry, git, or local path — lives behind the [`PackageProvider`]
@@ -18,7 +18,7 @@ use std::error::Error;
 
 use semver::{Version, VersionReq};
 
-use crate::pkg::{DepRef, LockSource, PackageKind, PackageManifest};
+use crate::pkg::{DepRef, LockSource, PackageKind, PackageManifest, Target};
 
 /// Supplies candidate versions and package contents during resolution.
 ///
@@ -77,15 +77,23 @@ pub fn dependency_edges(deps: &[String], versions: &BTreeMap<String, String>) ->
         .collect()
 }
 
-/// Resolve `id@version` edges for everything a package requires — its `deps`
-/// then its `policies` — from the chosen-version map, without duplicates. This
-/// is the `dependencies` list a lockfile entry records.
+/// Resolve `id@version` edges for everything a package requires — its `deps`,
+/// then its `policies`, then its `skills` — from the chosen-version map,
+/// without duplicates. This is the `dependencies` list a lockfile entry
+/// records.
 pub fn locked_edges(
     manifest: &PackageManifest,
     versions: &BTreeMap<String, String>,
 ) -> Vec<String> {
     let mut edges = dependency_edges(&manifest.deps, versions);
-    for edge in dependency_edges(manifest.policy_requirements(), versions) {
+    let required = [
+        manifest.policy_requirements(),
+        manifest.skill_requirements(),
+    ];
+    for edge in required
+        .iter()
+        .flat_map(|requirements| dependency_edges(requirements, versions))
+    {
         if !edges.contains(&edge) {
             edges.push(edge);
         }
@@ -94,36 +102,81 @@ pub fn locked_edges(
 }
 
 /// Resolve the transitive closure of `root_deps` (excluding the root package),
-/// returning resolved packages in discovery order. Policies the resolved
-/// packages require are resolved too; use [`resolve_package`] when the root
-/// itself may require policies.
+/// returning resolved packages in discovery order. Policies and skills the
+/// resolved packages require are resolved too; use [`resolve_package`] when
+/// the root itself may require policies or skills.
 pub fn resolve_transitive<P: PackageProvider>(
     root_deps: &[String],
     provider: &P,
 ) -> Result<Vec<Resolved<P::Acquired>>, Box<dyn Error>> {
-    resolve_requirements(root_deps, &[], provider)
+    resolve_requirements(Requirements::of_deps(root_deps), provider)
 }
 
-/// Resolve everything `root` requires, its `deps` and its `policies`, and
-/// their transitive requirements (excluding the root package itself).
+/// Resolve everything `root` requires, its `deps`, `policies` and `skills`,
+/// and their transitive requirements (excluding the root package itself).
 ///
-/// A policy is chosen and locked exactly like a dependency, once per id
-/// however many packages require it, and must resolve to a `policy` package.
+/// A policy or skill is chosen and locked exactly like a dependency, once per
+/// id however many packages require it. A policy must resolve to a `policy`
+/// package, and a skill to a `skill` package that targets `in-graph-agent`.
 /// Every failure names the id it is about, and comes before anything is
 /// staged or loaded.
 pub fn resolve_package<P: PackageProvider>(
     root: &PackageManifest,
     provider: &P,
 ) -> Result<Vec<Resolved<P::Acquired>>, Box<dyn Error>> {
-    resolve_requirements(&root.deps, root.policy_requirements(), provider)
+    resolve_requirements(Requirements::of(root), provider)
 }
 
-/// Whether a requirement came from `deps` (any kind) or `policies` (must be a
-/// `policy` package).
+/// Which manifest field a requirement came from: `deps` (any kind),
+/// `policies` (must be a `policy` package) or `skills` (must be a `skill`
+/// package for in-graph agents).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RequiredAs {
     Dependency,
     Policy,
+    Skill,
+}
+
+impl RequiredAs {
+    /// How a requirement of this field is named in messages: `""`,
+    /// `"policy "` or `"skill "`.
+    fn label(self) -> &'static str {
+        match self {
+            RequiredAs::Dependency => "",
+            RequiredAs::Policy => "policy ",
+            RequiredAs::Skill => "skill ",
+        }
+    }
+
+    /// Refuse a package that cannot meet a requirement of this field.
+    fn ensure_fits(self, id: &str, manifest: &PackageManifest) -> Result<(), Box<dyn Error>> {
+        let (wanted, field) = match self {
+            RequiredAs::Dependency => return Ok(()),
+            RequiredAs::Policy => (PackageKind::Policy, "policy"),
+            RequiredAs::Skill => (PackageKind::Skill, "skill"),
+        };
+        if manifest.kind != wanted {
+            return Err(format!(
+                "{id} is required as a {field} but is a `{}` package",
+                manifest.kind.as_str()
+            )
+            .into());
+        }
+        if self == RequiredAs::Skill && !manifest.targets.contains(&Target::InGraphAgent) {
+            return Err(format!(
+                "{id} is required as a skill but its `targets` lack `in-graph-agent`"
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    fn with_context(self, id: &str, err: Box<dyn Error>) -> Box<dyn Error> {
+        match self {
+            RequiredAs::Dependency => err,
+            _ => format!("{}{id}: {err}", self.label()).into(),
+        }
+    }
 }
 
 struct Requirement {
@@ -131,42 +184,63 @@ struct Requirement {
     required_as: RequiredAs,
 }
 
-fn requirements<'a>(
+/// A package's requirement fields, read in the order they resolve.
+struct Requirements<'a> {
     deps: &'a [String],
     policies: &'a [String],
-) -> impl Iterator<Item = Result<Requirement, Box<dyn Error>>> + 'a {
-    let deps = deps.iter().map(|raw| {
-        Ok(Requirement {
-            dep: parse_dep(raw)?,
-            required_as: RequiredAs::Dependency,
-        })
-    });
-    let policies = policies.iter().map(|raw| {
-        let dep = DepRef::parse(raw).ok_or_else(|| format!("invalid policy reference '{raw}'"))?;
-        Ok(Requirement {
-            dep,
-            required_as: RequiredAs::Policy,
-        })
-    });
-    deps.chain(policies)
+    skills: &'a [String],
+}
+
+impl<'a> Requirements<'a> {
+    fn of(manifest: &'a PackageManifest) -> Self {
+        Self {
+            deps: &manifest.deps,
+            policies: manifest.policy_requirements(),
+            skills: manifest.skill_requirements(),
+        }
+    }
+
+    fn of_deps(deps: &'a [String]) -> Self {
+        Self {
+            deps,
+            policies: &[],
+            skills: &[],
+        }
+    }
+
+    fn parsed(self) -> impl Iterator<Item = Result<Requirement, Box<dyn Error>>> + 'a {
+        let fields = [
+            (self.deps, RequiredAs::Dependency, "dependency"),
+            (self.policies, RequiredAs::Policy, "policy"),
+            (self.skills, RequiredAs::Skill, "skill"),
+        ];
+        fields
+            .into_iter()
+            .flat_map(|(raws, required_as, noun)| {
+                raws.iter().map(move |raw| (raw, required_as, noun))
+            })
+            .map(|(raw, required_as, noun)| {
+                let dep = DepRef::parse(raw)
+                    .ok_or_else(|| format!("invalid {noun} reference '{raw}'"))?;
+                Ok(Requirement { dep, required_as })
+            })
+    }
 }
 
 fn resolve_requirements<P: PackageProvider>(
-    root_deps: &[String],
-    root_policies: &[String],
+    root: Requirements<'_>,
     provider: &P,
 ) -> Result<Vec<Resolved<P::Acquired>>, Box<dyn Error>> {
     let mut chosen: BTreeMap<String, Version> = BTreeMap::new();
     let mut acquired: BTreeMap<String, (PackageManifest, P::Acquired)> = BTreeMap::new();
     let mut order: Vec<String> = Vec::new();
     let mut queue: VecDeque<Requirement> = VecDeque::new();
-    for requirement in requirements(root_deps, root_policies) {
+    for requirement in root.parsed() {
         queue.push_back(requirement?);
     }
 
     while let Some(Requirement { dep, required_as }) = queue.pop_front() {
-        let policy = required_as == RequiredAs::Policy;
-        let label = if policy { "policy " } else { "" };
+        let label = required_as.label();
         let req = VersionReq::parse(&dep.requirement).map_err(|err| {
             format!(
                 "invalid version requirement '{}' for {label}{}: {err}",
@@ -175,23 +249,25 @@ fn resolve_requirements<P: PackageProvider>(
         })?;
         if let Some(version) = chosen.get(&dep.id) {
             if !req.matches(version) {
-                let conflict = if policy { "policy" } else { "dependency" };
+                let conflict = match required_as {
+                    RequiredAs::Dependency => "dependency",
+                    RequiredAs::Policy => "policy",
+                    RequiredAs::Skill => "skill",
+                };
                 return Err(format!(
                     "{conflict} conflict: {} is pinned to {version} but a requirement needs {}",
                     dep.id, dep.requirement
                 )
                 .into());
             }
-            if policy {
-                ensure_policy_kind(&dep.id, &acquired[&dep.id].0)?;
-            }
+            required_as.ensure_fits(&dep.id, &acquired[&dep.id].0)?;
             continue;
         }
         let available = provider
             .available_versions(&dep.id)
-            .map_err(|err| with_policy_context(policy, &dep.id, err))?;
-        if policy && available.is_empty() {
-            return Err(format!("no package provides policy {}", dep.id).into());
+            .map_err(|err| required_as.with_context(&dep.id, err))?;
+        if required_as != RequiredAs::Dependency && available.is_empty() {
+            return Err(format!("no package provides {label}{}", dep.id).into());
         }
         let version = select_version(&available, &req).ok_or_else(|| {
             format!(
@@ -201,11 +277,9 @@ fn resolve_requirements<P: PackageProvider>(
         })?;
         let (manifest, contents) = provider
             .acquire(&dep.id, &version)
-            .map_err(|err| with_policy_context(policy, &dep.id, err))?;
-        if policy {
-            ensure_policy_kind(&dep.id, &manifest)?;
-        }
-        for requirement in requirements(&manifest.deps, manifest.policy_requirements()) {
+            .map_err(|err| required_as.with_context(&dep.id, err))?;
+        required_as.ensure_fits(&dep.id, &manifest)?;
+        for requirement in Requirements::of(&manifest).parsed() {
             queue.push_back(requirement?);
         }
         chosen.insert(dep.id.clone(), version);
@@ -236,29 +310,6 @@ fn resolve_requirements<P: PackageProvider>(
         });
     }
     Ok(out)
-}
-
-fn ensure_policy_kind(id: &str, manifest: &PackageManifest) -> Result<(), Box<dyn Error>> {
-    if manifest.kind == PackageKind::Policy {
-        return Ok(());
-    }
-    Err(format!(
-        "{id} is required as a policy but is a `{}` package",
-        manifest.kind.as_str()
-    )
-    .into())
-}
-
-fn with_policy_context(policy: bool, id: &str, err: Box<dyn Error>) -> Box<dyn Error> {
-    if policy {
-        format!("policy {id}: {err}").into()
-    } else {
-        err
-    }
-}
-
-fn parse_dep(raw: &str) -> Result<DepRef, Box<dyn Error>> {
-    DepRef::parse(raw).ok_or_else(|| format!("invalid dependency reference '{raw}'").into())
 }
 
 #[cfg(test)]
