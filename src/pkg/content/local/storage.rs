@@ -145,7 +145,11 @@ pub(super) fn read_receipt(
         Err(e) => Err(io_error(e)),
     }
 }
-pub(super) fn package_read_guard(packages: &Path) -> Result<Option<fs::File>> {
+/// A shared lock on the packages dir's catalog lock, held while reading
+/// installed packages, so a reader never sees an install half committed (an
+/// install takes it exclusively for its commit). `None` when the dir does not
+/// exist.
+pub(crate) fn package_read_guard(packages: &Path) -> Result<Option<fs::File>> {
     if !packages.try_exists().map_err(io_error)? {
         return Ok(None);
     }

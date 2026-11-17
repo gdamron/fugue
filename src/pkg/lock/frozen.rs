@@ -182,29 +182,52 @@ impl FrozenLock {
         requirement: &VersionReq,
         reference: &dyn std::fmt::Display,
     ) -> Result<Option<Version>, String> {
+        let Some(version) = self.locked_version(packages_dir, id, reference)? else {
+            return Ok(None);
+        };
+        if !requirement.matches(&version) {
+            return Err(self.refusal(
+                reference,
+                format!("the lockfile locks {id}@{version}, which does not satisfy {requirement}"),
+            ));
+        }
+        Ok(Some(version))
+    }
+
+    /// The version this lock locks `id` to under `packages_dir`, its bytes
+    /// verified, whatever requirement will be matched against it. `Ok(None)`
+    /// when this lock does not govern it: another packages dir, or a package
+    /// it does not lock.
+    pub(crate) fn locked_version(
+        &self,
+        packages_dir: &Path,
+        id: &str,
+        reference: &dyn std::fmt::Display,
+    ) -> Result<Option<Version>, String> {
         if !same_dir(packages_dir, &self.packages_dir) {
             return Ok(None);
         }
         let Some(locked) = self.lockfile.packages.get(id) else {
             return Ok(None);
         };
-        let refused = |why: String| {
-            format!(
-                "frozen load refused {reference}: {why} (lockfile {}). Update the lockfile \
-                 with `fyug install`, or load without --frozen",
-                self.path.display()
+        let version = Version::parse(&locked.version).map_err(|err| {
+            self.refusal(
+                reference,
+                format!("{id} is locked to invalid version: {err}"),
             )
-        };
-        let version = Version::parse(&locked.version)
-            .map_err(|err| refused(format!("{id} is locked to invalid version: {err}")))?;
-        if !requirement.matches(&version) {
-            return Err(refused(format!(
-                "the lockfile locks {id}@{version}, which does not satisfy {requirement}"
-            )));
-        }
-        self.verify(id)
-            .map_err(|problem| refused(format!("lockfile validation failed: {problem}")))?;
+        })?;
+        self.verify(id).map_err(|problem| {
+            self.refusal(reference, format!("lockfile validation failed: {problem}"))
+        })?;
         Ok(Some(version))
+    }
+
+    fn refusal(&self, reference: &dyn std::fmt::Display, why: String) -> String {
+        format!(
+            "frozen load refused {reference}: {why} (lockfile {}). Update the lockfile with \
+             `fyug install`, or load without --frozen",
+            self.path.display()
+        )
     }
 
     /// Checks `file`, which a governed ref resolved to after [`Self::admit`]

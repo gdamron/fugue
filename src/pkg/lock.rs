@@ -506,12 +506,12 @@ mod scoped;
 
 pub(crate) use policy::BuildPolicy;
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
-pub(crate) use frozen::ungoverned_here;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use frozen::{changes_policy, check_bytes};
 #[cfg(not(target_arch = "wasm32"))]
 pub use frozen::{govern, govern_here, governing, FrozenLock, Governance};
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use frozen::{ungoverned_here, with_governing};
 
 #[cfg(test)]
 mod tests {

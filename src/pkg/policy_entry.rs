@@ -90,6 +90,22 @@ pub fn check_policy_entry(
     package_root: &Path,
     manifest: &PackageManifest,
 ) -> Result<PathBuf, PolicyEntryError> {
+    let path = policy_entry_path(package_root, manifest)?;
+    let bytes =
+        super::read_limit::read_document(&path).map_err(|err| PolicyEntryError::Unreadable {
+            path: path.clone(),
+            reason: err.to_string(),
+        })?;
+    check_policy_text(&path, &bytes)?;
+    Ok(path)
+}
+
+/// The `.md` entry file a policy `manifest` names under `package_root`,
+/// located without reading it.
+pub(crate) fn policy_entry_path(
+    package_root: &Path,
+    manifest: &PackageManifest,
+) -> Result<PathBuf, PolicyEntryError> {
     let EntrySpec::Policy { policy } = &manifest.entry else {
         return Err(PolicyEntryError::NotPolicyPackage {
             id: manifest.id.clone(),
@@ -103,20 +119,19 @@ pub fn check_policy_entry(
     if relative.extension().and_then(|ext| ext.to_str()) != Some("md") {
         return Err(PolicyEntryError::NotMarkdown(package_root.join(relative)));
     }
-    let path = package_file::locate(package_root, relative).map_err(|err| match err {
+    package_file::locate(package_root, relative).map_err(|err| match err {
         PackageFileError::OutsidePackage(path) => PolicyEntryError::OutsidePackage(path),
         PackageFileError::Linked(path) => PolicyEntryError::Linked(path),
         PackageFileError::Missing(path) => PolicyEntryError::Missing(path),
-    })?;
-    let bytes =
-        super::read_limit::read_document(&path).map_err(|err| PolicyEntryError::Unreadable {
-            path: path.clone(),
-            reason: err.to_string(),
-        })?;
-    if package_file::opens_with_frontmatter(&bytes) {
-        return Err(PolicyEntryError::HasFrontmatter(path));
+    })
+}
+
+/// Check the text of the policy entry at `path`: no YAML frontmatter block.
+pub(crate) fn check_policy_text(path: &Path, bytes: &[u8]) -> Result<(), PolicyEntryError> {
+    if package_file::opens_with_frontmatter(bytes) {
+        return Err(PolicyEntryError::HasFrontmatter(path.to_path_buf()));
     }
-    Ok(path)
+    Ok(())
 }
 
 #[cfg(test)]
