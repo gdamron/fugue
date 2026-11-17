@@ -31,10 +31,15 @@ pub(super) fn call_backend(
             Some(value) => value.to_string(),
             None => packet.to_string(),
         };
+        // A fake answers as the model it was asked for, so a history shows
+        // which one a request named.
         return Ok(BackendResult {
             text,
             backend: backend.to_string(),
-            model: None,
+            model: config
+                .get("model")
+                .and_then(Value::as_str)
+                .map(String::from),
         });
     }
 
@@ -362,4 +367,24 @@ pub(super) fn command_available(command: &str) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::claude_args;
+
+    fn model_arg(config: serde_json::Value) -> Option<String> {
+        let args = claude_args(&json!({ "system": "s", "task": "t" }), &config);
+        let at = args.iter().position(|arg| arg == "--model")?;
+        Some(args[at + 1].clone())
+    }
+
+    #[test]
+    fn claude_is_passed_the_configs_model_only_when_it_names_one() {
+        assert_eq!(model_arg(json!({ "model": "x" })).as_deref(), Some("x"));
+        assert_eq!(model_arg(json!({})), None);
+        assert_eq!(model_arg(json!({ "model": null })), None);
+    }
 }

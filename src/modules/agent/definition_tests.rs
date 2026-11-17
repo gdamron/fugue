@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -268,6 +269,45 @@ fn a_reload_or_edit_that_does_not_resolve_leaves_the_piece_playing() {
             prompt
         );
         running.stop();
+    });
+}
+
+/// The model the agent's first request named, as its history records it.
+fn requested_model(config: Value) -> Value {
+    let mut config = config;
+    config["backend"] = json!("test:echo");
+    let (running, controls) = start(config);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        controls.increment_trigger();
+        let count = running.get_control("improvise", "request_count").unwrap();
+        if count.as_number().unwrap() >= 1.0 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the agent made no request");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let history = text(running.get_control("improvise", "history").unwrap());
+    running.stop();
+    serde_json::from_str::<Value>(&history).unwrap()[0]["response"]["model"].clone()
+}
+
+#[test]
+fn the_definitions_model_is_used_unless_the_config_names_one() {
+    let packs = tempfile::tempdir().unwrap();
+    let definition = json!({ "system_prompt": PERSONA, "default_model": "pulse-model" });
+    install_pulse_agent_as(packs.path(), &definition.to_string());
+    with_packs_dir(packs.path(), || {
+        assert_eq!(
+            requested_model(json!({ "definition": REFERENCE })),
+            "pulse-model"
+        );
+        let unnamed = json!({ "definition": REFERENCE, "model": null });
+        assert_eq!(requested_model(unnamed), "pulse-model");
+        let named = json!({ "definition": REFERENCE, "model": "named-model" });
+        assert_eq!(requested_model(named), "named-model");
+        // With neither, the backend chooses.
+        assert_eq!(requested_model(json!({})), Value::Null);
     });
 }
 

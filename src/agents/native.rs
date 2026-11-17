@@ -172,12 +172,37 @@ fn run_host(
         }
         last_request_at = Some(Instant::now());
 
+        let config = with_definition_model(&config, &current);
         if let Err(error) = service_request(&module_id, &config, &controller, &mut history, stubbed)
         {
             eprintln!("[agent:{}] error: {}", module_id, error);
             set_string(&controller, &module_id, "status", "error");
             set_string(&controller, &module_id, "last_error", &error);
         }
+    }
+}
+
+/// The module's config as its backend reads it: with its definition's
+/// default model as `model` when the config names none (a `null` names
+/// none, as backends read it). A `model` in the config wins; with neither,
+/// the backend chooses.
+fn with_definition_model<'a>(
+    config: &'a Value,
+    controls: &AgentControls,
+) -> std::borrow::Cow<'a, Value> {
+    let model = (controls.definition()).and_then(|definition| definition.model());
+    match model {
+        Some(model) if config.get("model").and_then(Value::as_str).is_none() => {
+            let mut config = config.clone();
+            match config.as_object_mut() {
+                Some(object) => {
+                    object.insert("model".to_string(), Value::from(model));
+                }
+                None => config = json!({ "model": model }),
+            }
+            std::borrow::Cow::Owned(config)
+        }
+        _ => std::borrow::Cow::Borrowed(config),
     }
 }
 
