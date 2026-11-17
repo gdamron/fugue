@@ -7,8 +7,12 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod agent_entry;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod agent_resolve;
 pub mod audio_asset;
 pub mod content;
+#[cfg(not(target_arch = "wasm32"))]
+mod installed;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod layout;
 pub mod lock;
@@ -48,6 +52,11 @@ pub use audio_asset::{default_packages_dir, resolve_package_asset, ResolvedPacka
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use agent_entry::{check_agent_package, AgentDefinition, AgentPackageError};
+#[cfg(not(target_arch = "wasm32"))]
+pub use agent_resolve::{
+    resolve_agent, resolve_agent_package, AgentResolveError, PromptPart, PromptSource,
+    ResolvedAgent,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use layout::is_source_checkout;
 #[cfg(not(target_arch = "wasm32"))]

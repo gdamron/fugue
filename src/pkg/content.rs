@@ -151,4 +151,6 @@ pub struct ContentDetail {
 #[cfg(not(target_arch = "wasm32"))]
 mod local;
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) use local::package_read_guard;
+#[cfg(not(target_arch = "wasm32"))]
 pub use local::{receipt_path, ContentCatalog, ContentReceipt, ContentRoots};

@@ -138,22 +138,7 @@ pub fn check_skill_package(
     package_root: &Path,
     manifest: &PackageManifest,
 ) -> Result<SkillCheck, SkillPackageError> {
-    let EntrySpec::Skill { skill } = &manifest.entry else {
-        return Err(SkillPackageError::NotSkillPackage {
-            id: manifest.id.clone(),
-            kind: manifest.kind.as_str(),
-        });
-    };
-    let relative = Path::new(skill);
-    if !package_file::stays_inside(relative) {
-        return Err(SkillPackageError::Entry(PackageFileError::OutsidePackage(
-            relative.to_path_buf(),
-        )));
-    }
-    if relative.file_name().and_then(|name| name.to_str()) != Some("SKILL.md") {
-        return Err(SkillPackageError::NotSkillFile(package_root.join(relative)));
-    }
-    let entry = package_file::locate(package_root, relative).map_err(SkillPackageError::Entry)?;
+    let entry = skill_entry_path(package_root, manifest)?;
     let text = read_text(&entry)?;
     let split =
         skill_frontmatter::split(&text).ok_or(SkillPackageError::NoFrontmatter(entry.clone()))?;
@@ -188,6 +173,30 @@ pub fn check_skill_package(
         name,
         warnings,
     })
+}
+
+/// The `SKILL.md` a skill `manifest` names under `package_root`, located
+/// without reading it.
+pub(crate) fn skill_entry_path(
+    package_root: &Path,
+    manifest: &PackageManifest,
+) -> Result<PathBuf, SkillPackageError> {
+    let EntrySpec::Skill { skill } = &manifest.entry else {
+        return Err(SkillPackageError::NotSkillPackage {
+            id: manifest.id.clone(),
+            kind: manifest.kind.as_str(),
+        });
+    };
+    let relative = Path::new(skill);
+    if !package_file::stays_inside(relative) {
+        return Err(SkillPackageError::Entry(PackageFileError::OutsidePackage(
+            relative.to_path_buf(),
+        )));
+    }
+    if relative.file_name().and_then(|name| name.to_str()) != Some("SKILL.md") {
+        return Err(SkillPackageError::NotSkillFile(package_root.join(relative)));
+    }
+    package_file::locate(package_root, relative).map_err(SkillPackageError::Entry)
 }
 
 /// Lowercase ASCII letters, digits and hyphens, 1 to 64 characters: a name

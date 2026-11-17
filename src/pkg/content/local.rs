@@ -388,9 +388,10 @@ mod used;
 use cache::Hashing;
 pub use catalog::ContentCatalog;
 use closure::Closure;
+pub(crate) use storage::package_read_guard;
 use storage::{
-    canonical, contained, directory, hash, hash_audio_asset, open_audio_asset, package_read_guard,
-    read_file, read_lock, read_receipt, revision_of, workspace_refs,
+    canonical, contained, directory, hash, hash_audio_asset, open_audio_asset, read_file,
+    read_lock, read_receipt, revision_of, workspace_refs,
 };
 pub use storage::{receipt_path, ContentReceipt};
 

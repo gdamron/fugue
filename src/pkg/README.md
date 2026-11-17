@@ -146,6 +146,19 @@ the file once a package is on disk (installers and pack checkers call it); it
 refuses a definition that is missing, outside the package, reached through a
 link, or not a JSON object, naming the path.
 
+`resolve_agent("id@requirement", packages_dir)` (or `resolve_agent_package`
+for a package directory) resolves an agent from installed packages alone,
+under the lockfile governing a frozen session, on a control thread and never
+the network. Its system prompt joins, separated by blank lines: the persona;
+each policy once, the agent's own `policies` first and then each skill's in
+`skills` order; and each skill's `SKILL.md` body without its frontmatter, in
+`skills` order. The result also reports the model (absent when unset), the
+tool list and each prompt part's size in characters. A missing package, an
+unsatisfiable requirement or two requirements with no common version fails
+before anything loads, naming the package. Resolution is non-backtracking
+like every other: the first version chosen for an id must satisfy every
+later requirement on it.
+
 ## Examples
 
 One per kind lives in [`examples/`](examples/):
