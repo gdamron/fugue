@@ -27,6 +27,7 @@ content, see [Musical content identity and resolution](CONTENT_IDENTITY.md).
 | `requires`    | object                    | no       | Declared runtime requirements (see below).                                    |
 | `deps`        | array of `id@req` strings | no       | Other Fugue packages this one depends on. Phase 1 shape-checks only.          |
 | `policies`    | array of `id@req` strings | no       | Policy packages a `skill` or `agent` requires (see [Policies](#policies)).    |
+| `skills`      | array of `id@req` strings | no       | Skill packages an `agent` composes (see [Agents](#agents)).                    |
 | `examples`    | array of paths            | no       | Example invention or development documents in a `skill` (see [Skills](#skills)). |
 | `entry`       | object                    | yes      | Kind-specific entry point (see below).                                        |
 | `signing`     | `{key, signature}`        | no       | Reserved for Phase 2; accepted but not enforced.                              |
@@ -109,6 +110,22 @@ the skill points to:
 - A body link to `policies/<package-id>.md` for a policy the manifest's
   `policies` does not list is returned as a warning, not a failure. That link
   is how a skill body points at a policy it requires.
+
+## Agents
+
+An `agent` package composes a persona with the skills and policies it needs,
+all declared on its manifest so the lockfile resolves them:
+
+```json
+{ "kind": "agent", "skills": ["fugue.example.groove@^0.1.0"], "policies": ["fugue.example.mixing-policy@^0.1.0"], "entry": { "definition": "agent.json" } }
+```
+
+- Only `agent` packages may declare `skills`; on any other kind the field is a
+  validation error, even when empty.
+- A skill is locked like a dependency, once per id however many requirements
+  name it, with an `id@version` edge in the agent's `dependencies`. A
+  requirement that resolves to a package of another kind, or to a skill whose
+  `targets` lack `in-graph-agent`, fails resolution naming the id.
 
 ## Examples
 

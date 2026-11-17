@@ -87,6 +87,12 @@ pub enum ValidationError {
     ExamplesNotAllowed {
         kind: &'static str,
     },
+    /// A `skills` entry is not of the form `id@requirement`.
+    InvalidSkillRef(String),
+    /// `skills` declared on a kind other than `agent`.
+    SkillsNotAllowed {
+        kind: &'static str,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -129,6 +135,13 @@ impl fmt::Display for ValidationError {
             ValidationError::ExamplesNotAllowed { kind } => write!(
                 f,
                 "`examples` is allowed only on skill packages, not on a `{kind}`"
+            ),
+            ValidationError::InvalidSkillRef(s) => {
+                write!(f, "invalid skills entry `{s}`: expected `id@requirement`")
+            }
+            ValidationError::SkillsNotAllowed { kind } => write!(
+                f,
+                "`skills` is allowed only on agent packages, not on a `{kind}`"
             ),
         }
     }
@@ -180,7 +193,24 @@ pub fn validate(manifest: &PackageManifest) -> Result<(), ValidationError> {
             kind: manifest.kind.as_str(),
         });
     }
+    validate_skill_fields(manifest)?;
     validate_policy_fields(manifest)
+}
+
+/// The `skills` field: only agents declare it, and each entry is
+/// `id@requirement`.
+fn validate_skill_fields(manifest: &PackageManifest) -> Result<(), ValidationError> {
+    if manifest.skills.is_some() && !manifest.kind.accepts_skills() {
+        return Err(ValidationError::SkillsNotAllowed {
+            kind: manifest.kind.as_str(),
+        });
+    }
+    for skill in manifest.skill_requirements() {
+        if DepRef::parse(skill).is_none() {
+            return Err(ValidationError::InvalidSkillRef(skill.clone()));
+        }
+    }
+    Ok(())
 }
 
 /// The `policies` field and the flat-policy rule: only skills and agents
