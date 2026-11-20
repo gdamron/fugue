@@ -104,6 +104,8 @@ impl InventionRuntime {
     /// built and keep their controls, so a host that must never run a
     /// document's scripts or agents (a server reading a piece's controls,
     /// say) can still read everything else a started piece reports.
+    /// On wasm32 the host page, not this runtime, runs `code` modules, so
+    /// there this keeps nothing from running.
     pub fn start_without_hosts<B: AudioBackend + 'static>(
         self,
         backend: B,

@@ -126,11 +126,13 @@ impl RunningInvention {
             self.agents.stop_module(id);
         }
         // A piece started without hosts never starts one.
-        for info in committed.started.into_iter().filter(|_| self.hosts) {
-            match info.module_type.as_str() {
-                "code" => self.scripts.start_module(self.controller(), info),
-                "agent" => self.agents.start_module(self.controller(), info),
-                _ => {}
+        if self.hosts {
+            for info in committed.started {
+                match info.module_type.as_str() {
+                    "code" => self.scripts.start_module(self.controller(), info),
+                    "agent" => self.agents.start_module(self.controller(), info),
+                    _ => {}
+                }
             }
         }
         InventionHandles::new(committed.handles)
