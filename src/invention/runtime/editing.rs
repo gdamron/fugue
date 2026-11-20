@@ -118,13 +118,15 @@ impl RunningInvention {
     }
 
     /// Stops the scripts and agents of removed or replaced modules and starts
-    /// those of newly built ones, returning the built modules' handles.
+    /// those of newly built ones (unless the piece was started without
+    /// hosts), returning the built modules' handles.
     pub(crate) fn follow_up(&self, committed: Committed) -> InventionHandles {
         for id in &committed.stopped {
             self.scripts.stop_module(id);
             self.agents.stop_module(id);
         }
-        for info in committed.started {
+        // A piece started without hosts never starts one.
+        for info in committed.started.into_iter().filter(|_| self.hosts) {
             match info.module_type.as_str() {
                 "code" => self.scripts.start_module(self.controller(), info),
                 "agent" => self.agents.start_module(self.controller(), info),

@@ -92,6 +92,12 @@ impl ScriptManager {
         }
     }
 
+    /// How many script hosts are running.
+    #[cfg(test)]
+    pub(crate) fn running(&self) -> usize {
+        self.hosts.lock().unwrap().len()
+    }
+
     pub fn stop_all(&self) {
         let module_ids: Vec<String> = self.hosts.lock().unwrap().keys().cloned().collect();
         for module_id in module_ids {

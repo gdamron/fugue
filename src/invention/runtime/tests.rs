@@ -26,6 +26,7 @@ mod taps;
 mod timed;
 mod timed_batch;
 mod timed_writes;
+mod without_hosts;
 
 struct TickBackend {
     sample_rate: u32,
