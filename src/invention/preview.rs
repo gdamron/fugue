@@ -401,3 +401,6 @@ fn seconds_text(frames: u64, sample_rate: u32) -> String {
         format!("{seconds:.2}")
     }
 }
+
+#[cfg(test)]
+mod tests;
