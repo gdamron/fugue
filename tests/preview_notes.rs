@@ -213,10 +213,14 @@ fn matches_live(document: &str, seed: u64, bars: u64) {
             let got = got["start_beats"].as_f64().unwrap();
             assert!((got - beats).abs() < 1e-6, "{context}");
         }
-        // Live runs at least as long as the preview: a note still held
-        // live was still held when the preview stopped.
-        if want.end.is_none() {
-            assert!(got["duration_seconds"].is_null(), "{context}");
+        // Live runs at least as long as the preview, so a note that ended
+        // live by then has a duration in the preview too.
+        match want.end {
+            None => assert!(got["duration_seconds"].is_null(), "{context}"),
+            Some(end) if (end.frame as f64) < (end_seconds + bar_seconds) * rate => {
+                assert!(!got["duration_seconds"].is_null(), "{context}");
+            }
+            Some(_) => {}
         }
         if let (Some(duration), Some(end)) = (got["duration_seconds"].as_f64(), want.end) {
             let live = (end.frame - want.start.frame) as f64 / rate;
@@ -256,4 +260,139 @@ fn a_preview_leaves_nothing_running_and_repeats_exactly() {
         NotePreview::run(&document, request, SAMPLE_RATE).unwrap(),
         first
     );
+}
+
+#[test]
+fn the_benchmark_opens_with_the_subject_and_bar_one_starts_on_the_g() {
+    // Bars count from 0, so beats [0, 4) hold the seven notes of the subject
+    // after its sixteenth rest, and the G on beat 4.0 opens bar 1.
+    let (notes, _) = preview_notes(&benchmark(), serde_json::json!({ "bars": 1 }));
+    let upper: Vec<u64> = notes
+        .iter()
+        .filter(|n| n["module_id"] == "upper")
+        .map(|n| n["pitch"].as_u64().unwrap())
+        .collect();
+    assert_eq!(upper, [60, 62, 64, 65, 62, 64, 60]);
+    assert!(notes
+        .iter()
+        .all(|n| n["start_beats"].as_f64().unwrap() < 4.0 + 0.1));
+    assert!((notes[0]["start_beats"].as_f64().unwrap() - 0.5).abs() < 0.1);
+    let (next, _) = preview_notes(
+        &benchmark(),
+        serde_json::json!({ "bars": 1, "start_bar": 1 }),
+    );
+    let first_upper = next.iter().find(|n| n["module_id"] == "upper").unwrap();
+    assert_eq!(first_upper["pitch"], 67);
+}
+
+#[test]
+fn a_later_range_lists_what_the_whole_run_starts_there_in_order() {
+    let document = benchmark();
+    // The first 44 bars, checked against the live run.
+    matches_live(&document, 0, 44);
+    let (whole, _) = preview_notes(&document, serde_json::json!({ "bars": 44 }));
+    for (start_bar, bars) in [(0, 8), (8, 8), (5, 1), (30, 14)] {
+        let (notes, _) = preview_notes(
+            &document,
+            serde_json::json!({ "bars": bars, "start_bar": start_bar }),
+        );
+        assert!(!notes.is_empty());
+        let (from, to) = (start_bar as f64 * 4.0, (start_bar + bars) as f64 * 4.0);
+        let expected: Vec<&Value> = whole
+            .iter()
+            .filter(|n| {
+                let beats = n["start_beats"].as_f64().unwrap();
+                beats + 1e-4 >= from && beats + 1e-4 < to
+            })
+            .collect();
+        assert_eq!(notes.len(), expected.len(), "bars {start_bar}+{bars}");
+        for (got, want) in notes.iter().zip(expected) {
+            for field in [
+                "module_id",
+                "pitch",
+                "start_beats",
+                "start_seconds",
+                "velocity",
+            ] {
+                assert_eq!(got[field], want[field], "bars {start_bar}+{bars}");
+            }
+        }
+        let key = |n: &Value| {
+            (
+                n["start_seconds"].as_f64().unwrap(),
+                n["module_id"].as_str().unwrap().to_owned(),
+                n["pitch"].as_u64().unwrap(),
+            )
+        };
+        for pair in notes.windows(2) {
+            let (a, b) = (key(&pair[0]), key(&pair[1]));
+            let order =
+                a.0.total_cmp(&b.0)
+                    .then_with(|| a.1.cmp(&b.1))
+                    .then_with(|| a.2.cmp(&b.2));
+            assert!(
+                order.is_le(),
+                "{a:?} before {b:?} at bars {start_bar}+{bars}"
+            );
+        }
+    }
+}
+
+#[test]
+fn one_module_lists_exactly_its_own_notes() {
+    let document = benchmark();
+    let (all, _) = preview_notes(&document, serde_json::json!({ "bars": 8 }));
+    let (lower, _) = preview_notes(
+        &document,
+        serde_json::json!({ "bars": 8, "module_id": "lower" }),
+    );
+    let expected: Vec<Value> = all
+        .into_iter()
+        .filter(|n| n["module_id"] == "lower")
+        .collect();
+    assert!(!expected.is_empty());
+    assert_eq!(lower, expected);
+}
+
+#[test]
+fn the_benchmark_has_no_chance_and_names_its_main_clock() {
+    let (_, answer) = preview_notes(&benchmark(), serde_json::json!({ "bars": 4 }));
+    assert_eq!(answer["chance"]["involved"], false);
+    assert_eq!(answer["chance"]["modules"], serde_json::json!([]));
+    let message = answer["chance"]["message"].as_str().unwrap();
+    assert!(message.contains("chance") && !message.contains("different seed"));
+    assert_eq!(answer["range"]["clock"], "clock");
+}
+
+#[test]
+fn a_bad_document_is_refused_with_the_words_loading_it_gives() {
+    let raw_benchmark = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/preview_notes/invention.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let documents = [
+        String::new(),
+        r#"{"version":"1.0.0"}"#.to_owned(),
+        serde_json::json!({ "version": "1.0.0", "connections": [],
+            "modules": [{ "id": "a", "type": "no_such_module_type" }] })
+        .to_string(),
+        serde_json::json!({ "version": "1.0.0",
+            "modules": [{ "id": "osc", "type": "oscillator" }, { "id": "dac", "type": "dac" }],
+            "connections": [{ "from": "osc", "from_port": "nope", "to": "dac", "to_port": "audio" }] })
+        .to_string(),
+        serde_json::json!({ "version": "1.0.0", "modules": [{ "id": "dac", "type": "dac" }],
+            "connections": [{ "from": "ghost", "from_port": "audio", "to": "dac", "to_port": "audio" }] })
+        .to_string(),
+        // The score still a file reference.
+        raw_benchmark,
+    ];
+    for document in documents {
+        let loaded = fugue::RenderEngine::new(SAMPLE_RATE)
+            .load_json(&document)
+            .unwrap_err()
+            .to_string();
+        let refused = NotePreview::run(&document, r#"{"bars":4}"#, SAMPLE_RATE).unwrap_err();
+        assert_eq!(refused, loaded, "{document:.60}");
+    }
 }
