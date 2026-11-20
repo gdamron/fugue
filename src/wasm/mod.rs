@@ -5,6 +5,8 @@ use wasm_bindgen::prelude::*;
 
 use crate::{ControlValue, RenderEngine};
 
+mod preview;
+
 #[wasm_bindgen(js_name = FugueEngine)]
 /// wasm-bindgen wrapper around `RenderEngine`.
 ///
