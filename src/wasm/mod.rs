@@ -35,6 +35,35 @@ impl WasmFugueEngine {
         self.inner.sample_rate()
     }
 
+    #[wasm_bindgen(js_name = provideSample)]
+    /// Hands the engine the bytes of one file of a package (a WAV sample),
+    /// named by the package id, its version and the file's path in it, and
+    /// decodes it at the engine's rate. A document's package ref
+    /// (`id@requirement:file`) then plays the highest provided version that
+    /// meets the requirement; one with no provided match fails to load,
+    /// naming the ref. Provide samples before loading the piece that plays
+    /// them. Returns the source the file resolves to (`id@=version:file`).
+    /// Provided samples are shared by every engine in this WebAssembly
+    /// instance (an AudioWorklet's engine has an instance of its own) and
+    /// stay for its lifetime. Decoding runs here, so provide samples while
+    /// the engine is not rendering.
+    pub fn provide_sample(
+        &self,
+        package: &str,
+        version: &str,
+        path: &str,
+        bytes: Vec<u8>,
+    ) -> Result<String, JsValue> {
+        crate::modules::sample_loading::provide_package_sample(
+            package,
+            version,
+            path,
+            bytes,
+            self.inner.sample_rate(),
+        )
+        .map_err(|err| JsValue::from_str(&err))
+    }
+
     #[wasm_bindgen(js_name = loadInvention)]
     /// Loads invention JSON into the render engine.
     pub fn load_invention(&mut self, json: &str) -> Result<(), JsValue> {
