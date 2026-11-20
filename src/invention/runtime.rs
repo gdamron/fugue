@@ -92,7 +92,32 @@ impl InventionRuntime {
     /// ```
     pub fn start_with_backend<B: AudioBackend + 'static>(
         self,
+        backend: B,
+    ) -> Result<RunningInvention, Box<dyn std::error::Error>> {
+        self.start_running(backend, true)
+    }
+
+    /// Starts the invention with `backend` as [`Self::start_with_backend`]
+    /// does, but starts no script host and no agent worker: no `code`
+    /// module's script is run and no `agent` module contacts its backend,
+    /// neither now nor for a module a later edit adds. Their modules are
+    /// built and keep their controls, so a host that must never run a
+    /// document's scripts or agents (a server reading a piece's controls,
+    /// say) can still read everything else a started piece reports.
+    /// On wasm32 the host page, not this runtime, runs `code` modules, so
+    /// there this keeps nothing from running.
+    pub fn start_without_hosts<B: AudioBackend + 'static>(
+        self,
+        backend: B,
+    ) -> Result<RunningInvention, Box<dyn std::error::Error>> {
+        self.start_running(backend, false)
+    }
+
+    /// Starts audio with `backend`, and the scripts and agents when `hosts`.
+    fn start_running<B: AudioBackend + 'static>(
+        self,
         mut backend: B,
+        hosts: bool,
     ) -> Result<RunningInvention, Box<dyn std::error::Error>> {
         let module_ports = Arc::new(Mutex::new(module_ports(&self.modules)));
 
@@ -179,9 +204,12 @@ impl InventionRuntime {
             event_sink: Arc::new(Mutex::new(None)),
             master,
             transport,
+            hosts,
         };
-        running.scripts.start_all(running.controller());
-        running.agents.start_all(running.controller());
+        if hosts {
+            running.scripts.start_all(running.controller());
+            running.agents.start_all(running.controller());
+        }
         Ok(running)
     }
 }
@@ -264,6 +292,9 @@ pub struct RunningInvention {
     /// The graph's transport, which pause and resume are requested on (see
     /// [`Self::pause`]).
     transport: Arc<crate::control_request::Transport>,
+    /// Whether scripts and agents run: false when started with
+    /// [`InventionRuntime::start_without_hosts`].
+    hosts: bool,
 }
 
 impl RunningInvention {

@@ -98,6 +98,12 @@ impl AgentManager {
         }
     }
 
+    /// How many agent workers are running.
+    #[cfg(test)]
+    pub(crate) fn running(&self) -> usize {
+        self.hosts.lock().unwrap().len()
+    }
+
     /// Stops all running agent workers.
     pub fn stop_all(&self) {
         let module_ids: Vec<String> = self.hosts.lock().unwrap().keys().cloned().collect();
