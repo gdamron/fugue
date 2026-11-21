@@ -45,8 +45,9 @@ impl WasmFugueEngine {
     /// them. Returns the source the file resolves to (`id@=version:file`).
     /// Provided samples are shared by every engine in this WebAssembly
     /// instance (an AudioWorklet's engine has an instance of its own) and
-    /// stay for its lifetime. Decoding runs here, so provide samples while
-    /// the engine is not rendering.
+    /// stay for its lifetime. Decoding runs here, on the calling thread: in
+    /// an AudioWorklet that is the render thread, so provide samples before
+    /// the piece that plays them starts, not while something plays.
     pub fn provide_sample(
         &self,
         package: &str,

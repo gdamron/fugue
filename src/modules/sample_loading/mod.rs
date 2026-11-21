@@ -229,11 +229,14 @@ pub(crate) fn provide_package_sample(
     sample_rate: u32,
 ) -> Result<String, String> {
     crate::audio_thread::debug_assert_control_thread("providing a sample");
-    let source = provided::provide(id, version, path, bytes)?;
+    let (source, new) = provided::record(id, version, path, bytes)?;
     match load_cached_sample(&source, sample_rate) {
         Ok(_) => Ok(source),
         Err(err) => {
-            provided::withdraw(&source);
+            // A file another engine provided and decoded stays.
+            if new {
+                provided::withdraw(&source);
+            }
             Err(format!("sample {source} did not load: {err}"))
         }
     }
@@ -429,6 +432,8 @@ fn source_extension(source: &str) -> Option<String> {
 }
 
 fn open_source(source: &str) -> Result<(Box<dyn Read>, bool), String> {
+    // Only the browser engine is provided samples; native loads read files.
+    #[cfg(any(test, target_arch = "wasm32"))]
     if let Some(bytes) = provided::bytes(source) {
         return Ok((Box::new(std::io::Cursor::new(bytes)), false));
     }

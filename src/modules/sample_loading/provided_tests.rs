@@ -147,3 +147,16 @@ fn a_provided_file_goes_through_format_detection() {
         provide_package_sample(id, "1.0.0", "kick.ogg", b"OggS....".to_vec(), 48_000).unwrap_err();
     assert!(err.contains("Unsupported audio format"), "{err}");
 }
+
+#[test]
+fn providing_the_same_bytes_again_is_not_a_new_file() {
+    // A decode that fails withdraws only a file it added, never one another
+    // engine provided.
+    let id = "test.provided.shared";
+    let (source, new) = record(id, "1.0.0", "kick.wav", wav(8, 48_000)).unwrap();
+    assert!(new);
+    assert_eq!(
+        record(id, "1.0.0", "kick.wav", wav(8, 48_000)).unwrap(),
+        (source, false)
+    );
+}

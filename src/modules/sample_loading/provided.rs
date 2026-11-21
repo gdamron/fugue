@@ -4,9 +4,11 @@
 //! A host provides each file of a package it carries, named by the package
 //! id, its version and the file's path in it. A document's package ref
 //! (`id@requirement:file`) then resolves to the highest provided version of
-//! that file whose version meets the requirement, as the package cache
-//! resolves it natively, and the sample loads from the provided bytes
-//! through the shared decoder and cache.
+//! that file whose version meets the requirement, and the sample loads from
+//! the provided bytes through the shared decoder and cache. Unlike the
+//! package cache, which picks the highest installed version and then needs
+//! the file in it, a version counts only for the files provided at it: a
+//! host may provide just the files a piece plays.
 //!
 //! The resolved source is itself a package ref pinned to the version
 //! (`id@=version:file`), so resolving it again names the same sample.
@@ -52,6 +54,17 @@ pub(crate) fn provide(
     path: &str,
     bytes: Vec<u8>,
 ) -> Result<String, String> {
+    record(id, version, path, bytes).map(|(source, _)| source)
+}
+
+/// [`provide`], also saying whether the file is new here (`false` when the
+/// same bytes were already provided).
+pub(crate) fn record(
+    id: &str,
+    version: &str,
+    path: &str,
+    bytes: Vec<u8>,
+) -> Result<(String, bool), String> {
     let version = Version::parse(version)
         .map_err(|err| format!("package version '{version}' is not a version: {err}"))?;
     let source = pinned(id, &version, path);
@@ -73,8 +86,8 @@ pub(crate) fn provide(
         .or_default()
         .entry(version)
         .or_default();
-    match files.get(path) {
-        Some(held) if **held == *bytes => {}
+    let new = match files.get(path) {
+        Some(held) if **held == *bytes => false,
         Some(_) => {
             return Err(format!(
                 "sample {source} was already provided with other bytes; a package version's \
@@ -83,9 +96,10 @@ pub(crate) fn provide(
         }
         None => {
             files.insert(path.to_string(), Arc::from(bytes));
+            true
         }
-    }
-    Ok(source)
+    };
+    Ok((source, new))
 }
 
 /// Forgets the file `source` names, if it was provided (a provide whose
