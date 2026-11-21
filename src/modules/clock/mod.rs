@@ -88,7 +88,7 @@ impl ModuleFactory for ClockFactory {
 /// A master clock that generates timing signals for tempo-synchronized modules.
 ///
 /// Outputs a gate on every beat (`beat`), and at subdivisions and multiples
-/// of it (`beat_x2`, `beat_x4`, `beat_d2`, `beat_d4`), for driving
+/// of it (`beat_x2`, `beat_x4`, `beat_x8`, `beat_d2`, `beat_d4`), for driving
 /// downstream modules.
 ///
 /// # Meter
@@ -253,6 +253,7 @@ impl Clock {
             pwm(0.5),  // beat_d2: one pulse every 2 beats
             pwm(2.0),  // beat_x2: 2 pulses per beat
             pwm(4.0),  // beat_x4: 4 pulses per beat
+            pwm(8.0),  // beat_x8: 8 pulses per beat
             self.bpm,
         );
     }

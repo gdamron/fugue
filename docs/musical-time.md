@@ -72,8 +72,9 @@ beat position, readable as its `position` control:
   reach a clock inside a development.
 
 The clock's outputs are the beat and fixed multiples of it: `beat`,
-`beat_d4` (every 4 beats), `beat_d2` (every 2), `beat_x2` (2 per beat) and
-`beat_x4` (4 per beat).
+`beat_d4` (every 4 beats), `beat_d2` (every 2), `beat_x2` (2 per beat),
+`beat_x4` (4 per beat) and `beat_x8` (8 per beat, the 32nd notes of a
+quarter-note beat).
 
 A clock may keep a meter: its `beats_per_bar` control and config key, a
 whole number from 0 to 32, where 0, the default, is no meter and no bars
