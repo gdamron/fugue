@@ -440,11 +440,10 @@ fn open_source(source: &str) -> Result<(Box<dyn Read>, bool), String> {
 
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = source;
-        Err(
-            "Sample loading is not available on wasm32 except for provided package samples"
-                .to_string(),
-        )
+        Err(format!(
+            "Sample loading is not available on wasm32 except for provided package samples, \
+             so '{source}' cannot load"
+        ))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
