@@ -343,6 +343,14 @@ impl Module for Oscillator {
         Some(if index == 0 { self.frequency } else { 0.0 })
     }
 
+    fn input_fades_in(&self, index: usize) -> bool {
+        // A sounding modulator patched into `amplitude_mod` would step the
+        // level, so it ramps in from rest at 0, as an audio input does. FM
+        // bends the pitch without a step in the wave, and a pitch takes at
+        // once.
+        index == 2
+    }
+
     #[allow(private_interfaces)]
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         Some((&TABLE, &self.cells))

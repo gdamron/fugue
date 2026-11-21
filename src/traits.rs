@@ -642,6 +642,26 @@ pub trait Module: Send {
         Some(0.0)
     }
 
+    /// Whether a cable an edit patches into input port `index` fades in
+    /// rather than stepping in: true for an audio input, false for a gate,
+    /// a clock, a pitch or any other input whose value means something the
+    /// instant it arrives.
+    ///
+    /// Patching a sounding source into an audio input steps what the module
+    /// hears, a click, so such a cable is one to ramp in from silence; a
+    /// control input takes its cable at once. Called on the audio thread as
+    /// an edit installs: it must not allocate, lock or free.
+    ///
+    /// The default goes by the port's name: `audio` and its variants
+    /// (`audio_left`, `audio.0`) and `sidechain` fade in. A module whose
+    /// audio inputs are named otherwise, or whose `audio`-named input is not
+    /// audio, overrides it. A catalog test lists every module's decision.
+    fn input_fades_in(&self, index: usize) -> bool {
+        self.inputs()
+            .get(index)
+            .is_some_and(|name| name.starts_with("audio") || *name == "sidechain")
+    }
+
     /// Ids of modules whose controls this module writes during
     /// [`Module::process`] (e.g. the control scheduler's targets).
     ///
@@ -922,6 +942,8 @@ pub fn validate_port(port: &str, valid_ports: &[&str], port_type: &str) -> Resul
 
 #[cfg(test)]
 mod config_fidelity_tests;
+#[cfg(test)]
+mod fade_catalog_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
