@@ -18,11 +18,13 @@ use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, Runti
 mod audio_file_sink;
 mod code_modules;
 mod editing;
+mod levels;
 mod options;
 mod pause;
 mod replay;
 
 pub use code_modules::CodeModuleRuntimeInfo;
+pub use levels::OfflineLevels;
 
 /// Offline renderer for inventions.
 ///
@@ -47,6 +49,8 @@ pub struct RenderEngine {
     replay: replay::Replay,
     /// The invention seed loads build under (see [`Self::set_seed`]).
     seed: Option<u64>,
+    /// What the device clamp cut since [`Self::take_levels`] last read.
+    clamp_counts: levels::ClampCounts,
 }
 
 impl RenderEngine {
@@ -69,6 +73,7 @@ impl RenderEngine {
             event_sink: Arc::new(Mutex::new(None)),
             replay: replay::Replay::default(),
             seed: None,
+            clamp_counts: levels::ClampCounts::default(),
         }
     }
 
@@ -272,6 +277,7 @@ impl RenderEngine {
             // Written as the device receives it: clamped and finite, after
             // the peak meter has read the mix.
             for k in 0..n {
+                self.clamp_counts.count(left[k], right[k]);
                 output[(done + k) * 2] = device_sample(left[k]);
                 output[(done + k) * 2 + 1] = device_sample(right[k]);
             }
@@ -450,6 +456,7 @@ impl RenderEngine {
         let graph = Arc::new(Mutex::new(graph));
         super::declared::bind_offline(&graph, &runtime.control_surfaces);
         self.graph = Some(graph);
+        self.clamp_counts = levels::ClampCounts::default();
         self.registry = runtime.registry;
         self.state = runtime.state;
         // Adopt the runtime's directory (rather than copying its contents)
@@ -508,6 +515,8 @@ mod edit_tests;
 mod end_tests;
 #[cfg(test)]
 mod flush_tests;
+#[cfg(test)]
+mod levels_tests;
 #[cfg(test)]
 mod remap_tests;
 #[cfg(test)]
