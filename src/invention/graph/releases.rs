@@ -7,7 +7,8 @@
 //! connected, and glides it over [`RELEASE_SECONDS`] to where its module
 //! says it rests (see [`crate::Module::input_rest`]), then lets it go as
 //! before: cleared and declared unconnected. A port patched again before
-//! then is the connection's once more.
+//! then is the connection's once more, or, on a port whose cables ramp in
+//! (see [`super::onsets`]), glides out from where it was beneath them.
 //!
 //! An input summed from several cables that loses only some of them would
 //! step the same way, from the old sum to the new one. So each cable it
@@ -189,17 +190,30 @@ impl Releases {
 
 /// A module's connections before an edit: the ports it had connected, the
 /// routes into them, every module's last outputs as of then (indexed as
-/// those routes are), and, when those routes index another module order
+/// those routes are), every module's routes as of then with the module's
+/// index among them, and, when those routes index another module order
 /// than the graph's now, that order's module map, to match sources by id.
 #[derive(Clone, Copy)]
 pub(crate) struct Previous<'a> {
     pub(super) ports: &'a [usize],
     pub(super) routes: &'a [CompiledRoute],
     pub(super) carry: &'a [Vec<f32>],
+    pub(super) everyone: &'a [Vec<CompiledRoute>],
+    pub(super) index: usize,
     pub(super) modules: Option<&'a IndexMap<String, ModuleInstance>>,
 }
 
 impl Previous<'_> {
+    /// Whether the module fed any cable before the edit. One that fed none
+    /// was heard by nothing: what it hears can step in, and the cables the
+    /// edit patches out of it ramp in instead.
+    pub(super) fn fed_a_cable(&self) -> bool {
+        self.everyone
+            .iter()
+            .flatten()
+            .any(|route| route.from_module == self.index)
+    }
+
     /// What the cable `route` last carried, if known.
     fn carried(&self, route: &CompiledRoute) -> Option<f32> {
         self.carry

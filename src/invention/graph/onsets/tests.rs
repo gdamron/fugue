@@ -5,6 +5,7 @@
 use serde_json::{json, Value};
 
 use super::{Onsets, MAX_ONSETS};
+use crate::rpc::StructuralEdit;
 use crate::RenderEngine;
 
 mod catalog;
@@ -49,6 +50,12 @@ fn render(engine: &mut RenderEngine, frames: usize) -> Vec<f32> {
     let mut out = vec![0.0; frames * 2];
     engine.render_interleaved(&mut out).unwrap();
     out.chunks(2).map(|frame| frame[0]).collect()
+}
+
+/// Applies `edits` as one change, as an `apply_edits` batch does.
+fn edit(engine: &RenderEngine, edits: Value) {
+    let edits: Vec<StructuralEdit> = serde_json::from_value(edits).unwrap();
+    engine.apply_edits(&edits).unwrap();
 }
 
 /// The largest change from one frame to the next, `before` the first.
@@ -195,6 +202,56 @@ fn a_mixer_channel_patched_in_ramps_in_once() {
     assert!(after > before, "{before} -> {after}");
     // The mixer adds no ramp of its own, so the two do not compound.
     assert_ramps(before, after, &out);
+}
+
+#[test]
+fn an_idle_module_inserted_into_a_chain_passes_on_what_it_hears() {
+    // `pass`, a unity vca, is in the piece but feeds nothing: nothing has
+    // heard it, so what it hears steps in rather than ramping from silence.
+    let mut engine = engine(
+        json!([still("a"), { "id": "pass", "type": "vca" }]),
+        json!([{ "from": "a", "from_port": "audio", "to": "dac", "to_port": "audio" }]),
+    );
+    let before = *render(&mut engine, 1_024).last().unwrap();
+    edit(
+        &engine,
+        json!([
+            { "op": "disconnect", "from": "a", "from_port": "audio", "to": "dac", "to_port": "audio" },
+            { "op": "connect", "from": "a", "from_port": "audio", "to": "pass", "to_port": "audio" },
+            { "op": "connect", "from": "pass", "from_port": "audio", "to": "dac", "to_port": "audio" }
+        ]),
+    );
+    let out = render(&mut engine, 2_048);
+    assert!(
+        largest_step(before, &out) < 1e-6,
+        "{before} -> {:?}",
+        &out[..4]
+    );
+}
+
+#[test]
+fn a_right_input_that_played_the_left_takes_its_cable_at_once() {
+    // Unpatched, the reverb's right input plays its left: patching the same
+    // source in changes nothing heard, where a ramp from silence would dip.
+    let piece = || {
+        engine(
+            json!([still("a"), { "id": "verb", "type": "reverb" }]),
+            json!([
+                { "from": "a", "from_port": "audio", "to": "verb", "to_port": "audio_left" },
+                { "from": "verb", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
+                { "from": "verb", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
+            ]),
+        )
+    };
+    let (mut edited, mut untouched) = (piece(), piece());
+    let stereo = |engine: &mut RenderEngine| {
+        let mut out = vec![0.0; 2_048 * 2];
+        engine.render_interleaved(&mut out).unwrap();
+        out
+    };
+    assert_eq!(stereo(&mut edited), stereo(&mut untouched));
+    edited.connect("a", "audio", "verb", "audio_right").unwrap();
+    assert_eq!(stereo(&mut edited), stereo(&mut untouched));
 }
 
 #[test]

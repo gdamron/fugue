@@ -349,6 +349,8 @@ impl SignalGraph {
                 ports,
                 routes: topology.compiled_routes.get(mi).map_or(&[], Vec::as_slice),
                 carry: &topology.out_prev,
+                everyone: &topology.compiled_routes,
+                index: mi,
                 modules: None,
             });
             self.reset_module_inputs(mi, was);
@@ -385,14 +387,17 @@ impl SignalGraph {
     ///
     /// A port connected now is declared connected; routing fills it each
     /// block. One connected before and now glides out each cable it lost
-    /// (see [`super::releases`]), keeping the shares already gliding; one
-    /// patched anew is the routes' at once. A port `was` shows connected
-    /// that is unconnected now glides to rest where it can, from all it
-    /// last heard, and is otherwise cleared and declared unconnected at
-    /// once, as every port unconnected now is on a module starting fresh. A
-    /// port unconnected before and now is left as it is, keeping any value
-    /// written to it (see [`crate::Module::set_input`]) or the release it
-    /// is in.
+    /// (see [`super::releases`]), keeping the shares already gliding, and
+    /// ramps in any cable it gained where no cable was lost; one patched
+    /// anew ramps its cables in (see [`super::onsets`]) on a module that was
+    /// heard before, and is otherwise the routes' at once. Either way a port
+    /// that fades in and was still releasing glides that out beneath the
+    /// ramp. A port `was` shows connected that is unconnected now glides to
+    /// rest where it can, from all it last heard, and is otherwise cleared
+    /// and declared unconnected at once, as every port unconnected now is on
+    /// a module starting fresh. A port unconnected before and now is left as
+    /// it is, keeping any value written to it (see
+    /// [`crate::Module::set_input`]) or the release it is in.
     ///
     /// Clearing covers the whole buffer, not just the active span, so an
     /// unconnected input never holds routed samples beyond it that a larger
@@ -446,11 +451,15 @@ impl SignalGraph {
                 module.input_block_mut(p).fill(0.0);
                 module.set_input_connected(p, false);
             }
-            // Newly patched: its cables ramp in. Patched again as it
+            // Newly patched: its cables ramp in, where the module was heard
+            // (a sink, or one that fed a cable). Patched again as it
             // released, on a port that fades in, where it was glides out
             // beneath them, unless a cable steps in, which it then steps to.
-            let ramped =
-                !(connected && !was_connected && was.is_some() && self.ramp_in(mi, p, was));
+            let heard = |was: Previous| self.sink_indices.contains(&mi) || was.fed_a_cable();
+            let ramped = !(connected
+                && !was_connected
+                && was.is_some_and(heard)
+                && self.ramp_in(mi, p, was));
             if connected && held != 0.0 && ramped && self.fades_in(mi, p) {
                 self.glide_out(mi, p, held);
             }

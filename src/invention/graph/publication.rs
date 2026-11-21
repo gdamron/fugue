@@ -617,6 +617,8 @@ impl SignalGraph {
                     ports,
                     routes: topology.compiled_routes.get(old).map_or(&[], Vec::as_slice),
                     carry: &topology.out_prev,
+                    everyone: &topology.compiled_routes,
+                    index: old,
                     modules: Some(&retired.modules),
                 });
                 self.reset_module_inputs(new, was);
