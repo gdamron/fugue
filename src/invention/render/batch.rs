@@ -29,10 +29,7 @@ use crate::invention::edits::refusals::{
 use crate::invention::edits::{build_failed, graph_refusal};
 use crate::invention::publish::{edge, BuiltModule, GraphChange};
 use crate::invention::runtime::GraphCommandError;
-use crate::rpc::{
-    check_edit_batch, EditFailure, EditFailureReason, EditOp, RpcError, RpcErrorCode,
-    StructuralEdit,
-};
+use crate::rpc::{check_edit_batch, EditFailure, EditOp, RpcError, RpcErrorCode, StructuralEdit};
 
 /// What building an `add_module`'s module came to, kept until its edit's
 /// turn so a refusal names the first edit that cannot apply.
