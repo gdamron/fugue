@@ -19,7 +19,8 @@ pub struct OfflineLevels {
     pub left_peak: f32,
     /// Largest absolute sample of the mix, right channel.
     pub right_peak: f32,
-    /// RMS of the mix before the clamp, left channel; absent with no frames.
+    /// RMS of the mix before the clamp, left channel; absent with no frames
+    /// or a sum of squares that is not finite.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub left_rms: Option<f32>,
     /// RMS of the mix before the clamp, right channel.
@@ -31,7 +32,9 @@ pub struct OfflineLevels {
     pub left_overs: u64,
     /// Right samples beyond ±1.0, which the clamp cut.
     pub right_overs: u64,
-    /// Non-finite samples (NaN or ±inf) the sinks replaced with silence.
+    /// Non-finite samples (NaN or ±inf) the sinks replaced with silence. A
+    /// sink rebuilt or removed during the stretch takes its count with it,
+    /// so that stretch can read low.
     pub non_finite_samples: u64,
 }
 
@@ -44,12 +47,13 @@ pub(super) struct ClampCounts {
 }
 
 impl ClampCounts {
-    /// Counts one frame of the mix, before it is clamped. Branch-free: two
-    /// compares and adds a frame, no allocation.
+    /// Counts one frame of the mix, before it is clamped. A sample the
+    /// clamp silences rather than cuts (an infinite sum of finite sinks) is
+    /// no over. Branch-free: a few compares and adds a frame, no allocation.
     #[inline]
     pub(super) fn count(&mut self, left: f32, right: f32) {
-        self.overs[0] += u64::from(left.abs() > 1.0);
-        self.overs[1] += u64::from(right.abs() > 1.0);
+        self.overs[0] += u64::from(left.is_finite() && left.abs() > 1.0);
+        self.overs[1] += u64::from(right.is_finite() && right.abs() > 1.0);
     }
 }
 

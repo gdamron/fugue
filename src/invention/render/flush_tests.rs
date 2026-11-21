@@ -100,7 +100,7 @@ impl ModuleFactory for ProbeFactory {
     }
 }
 
-fn runtime() -> crate::invention::runtime::InventionRuntime {
+pub(super) fn runtime() -> crate::invention::runtime::InventionRuntime {
     let mut registry = ModuleRegistry::default();
     registry.register(ProbeFactory);
     let (runtime, _) = InventionBuilder::with_registry(48_000, registry)

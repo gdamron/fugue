@@ -248,10 +248,12 @@ impl WasmFugueEngine {
     /// The output's levels since the last call (or since the piece loaded),
     /// as JSON: `left_peak` and `right_peak` (linear, read before the
     /// device clamp, so an over reads above 1.0), `left_rms` and `right_rms`
-    /// (before the clamp, absent with no frames), `frames`, `left_overs` and
-    /// `right_overs` (samples beyond ±1.0, which the clamp cut) and
-    /// `non_finite_samples` (NaN or ±inf samples the sinks silenced). Call
-    /// it between renders to measure a stretch: the next starts after it.
+    /// (before the clamp, absent with no frames or a non-finite sum),
+    /// `frames`, `left_overs` and `right_overs` (samples beyond ±1.0, which
+    /// the clamp cut) and `non_finite_samples` (NaN or ±inf samples the
+    /// sinks silenced; a sink rebuilt during the stretch takes its count
+    /// with it). Call it between renders to measure a stretch: the next
+    /// starts after it.
     pub fn take_levels(&mut self) -> Result<String, JsValue> {
         let levels = self
             .inner
