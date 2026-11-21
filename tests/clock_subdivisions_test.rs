@@ -6,17 +6,19 @@
 //   beat_d2 — 2 rising edges (one every 2 beats)
 //   beat_x2 — 8 rising edges (2 per beat)
 //   beat_x4 — 16 rising edges (4 per beat)
+//   beat_x8 — 32 rising edges (8 per beat)
 
 #[cfg(test)]
 mod tests {
     use fugue::*;
 
-    const SUBDIVISIONS: [(&str, usize); 5] = [
+    const SUBDIVISIONS: [(&str, usize); 6] = [
         ("beat", 4),
         ("beat_d4", 1),
         ("beat_d2", 2),
         ("beat_x2", 8),
         ("beat_x4", 16),
+        ("beat_x8", 32),
     ];
 
     #[test]
@@ -54,7 +56,7 @@ mod tests {
     fn test_clock_subdivision_unknown_port_errors() {
         let sample_rate = 44100;
         let clock = Clock::new(sample_rate, 120.0);
-        assert!(clock.get_output("beat_x8").is_err());
+        assert!(clock.get_output("beat_x16").is_err());
         // The pre-convention names are gone (clean break).
         for old in ["gate", "gate_d4", "gate_d2", "gate_x2", "gate_x4"] {
             assert!(clock.get_output(old).is_err(), "{old}");
@@ -71,8 +73,10 @@ mod tests {
         let samples_per_beat = clock.samples_per_beat() as usize;
         let total_samples = samples_per_beat * 4;
 
-        let ports = ["beat", "beat_d4", "beat_d2", "beat_x2", "beat_x4"];
-        let mut high = [0usize; 5];
+        let ports = [
+            "beat", "beat_d4", "beat_d2", "beat_x2", "beat_x4", "beat_x8",
+        ];
+        let mut high = [0usize; 6];
 
         for _ in 0..total_samples {
             for (i, port) in ports.iter().enumerate() {

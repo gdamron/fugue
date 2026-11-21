@@ -125,7 +125,7 @@ use for those mixes. `_left` and `_right` always come in pairs.
   `lfo`.
 - **Clocking.** The input that advances a step is `clock` (`step_sequencer`,
   `cell_sequencer`, `control_scheduler`). The `clock` module's outputs are
-  `beat`, `beat_d4`, `beat_d2`, `beat_x2` and `beat_x4`. The pattern extends
+  `beat`, `beat_d4`, `beat_d2`, `beat_x2`, `beat_x4` and `beat_x8`. The pattern extends
   to new rates without new words.
 - **Counts and arrays.** A plural names an array (`cells`, `samples`,
   `zones`). A count is `<noun>_count` (`step_count`, `voice_count`,
