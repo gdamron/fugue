@@ -165,6 +165,21 @@ impl WasmFugueEngine {
         self.inner.remove_module(id).map_err(to_graph_error)
     }
 
+    #[wasm_bindgen(js_name = applyEdits)]
+    /// Applies a JSON array of `apply_edits` operations (`add_module`,
+    /// `remove_module`, `connect`, `disconnect`) to the loaded graph as one
+    /// change, or refuses them all with nothing changed, naming the first
+    /// that cannot apply. Returns how many applied.
+    pub fn apply_edits(&self, edits_json: &str) -> Result<usize, JsValue> {
+        let edits: Vec<crate::rpc::StructuralEdit> =
+            serde_json::from_str(edits_json).map_err(|err| {
+                JsValue::from_str(&format!("invalid edits JSON: {err}; nothing was applied"))
+            })?;
+        self.inner
+            .apply_edits(&edits)
+            .map_err(|err| JsValue::from_str(&err.message))
+    }
+
     #[wasm_bindgen(js_name = setCodeModuleStatus)]
     /// Updates the runtime status string for a `code` module.
     pub fn set_code_module_status(&self, id: &str, status: &str) -> Result<(), JsValue> {
@@ -287,7 +302,7 @@ impl WasmFugueEngine {
     /// `[left0, right0, left1, right1, ...]`.
     pub fn render_interleaved_into(&mut self, output: &Float32Array) -> Result<usize, JsValue> {
         let samples = output.length() as usize;
-        if samples % 2 != 0 {
+        if !samples.is_multiple_of(2) {
             return Err(JsValue::from_str("output buffer length must be even"));
         }
         if self.render_buffer.len() != samples {

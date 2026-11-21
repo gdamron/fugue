@@ -355,6 +355,11 @@ impl GraphChange {
         Ok(())
     }
 
+    /// Whether the working topology has the connection `edge`.
+    pub(crate) fn has_edge(&self, edge: &RoutingConnection) -> bool {
+        self.mirror.edges.iter().any(|e| same_edge(e, edge))
+    }
+
     /// Removes a connection if present.
     pub(crate) fn disconnect(&mut self, edge: RoutingConnection) {
         let before = self.mirror.edges.len();

@@ -16,6 +16,7 @@ use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, Runti
 
 #[cfg(target_arch = "wasm32")]
 mod audio_file_sink;
+mod batch;
 mod code_modules;
 mod editing;
 mod levels;
@@ -505,6 +506,8 @@ impl OrchestrationRuntime for RenderEngine {
     }
 }
 
+#[cfg(test)]
+mod batch_tests;
 #[cfg(test)]
 mod clamp_tests;
 #[cfg(test)]
