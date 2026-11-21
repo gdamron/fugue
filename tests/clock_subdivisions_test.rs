@@ -56,7 +56,7 @@ mod tests {
     fn test_clock_subdivision_unknown_port_errors() {
         let sample_rate = 44100;
         let clock = Clock::new(sample_rate, 120.0);
-        assert!(clock.get_output("beat_x16").is_err());
+        assert!(clock.get_output("beat_x3").is_err());
         // The pre-convention names are gone (clean break).
         for old in ["gate", "gate_d4", "gate_d2", "gate_x2", "gate_x4"] {
             assert!(clock.get_output(old).is_err(), "{old}");
