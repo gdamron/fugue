@@ -338,7 +338,7 @@ impl SignalGraph {
         // `topology` now holds the previous derived state.
         let same_order = topology.connected_in_ports.len() == self.modules.len();
         if same_order {
-            self.settle_onsets(None);
+            self.settle_falling(&topology.out_prev, None);
         } else {
             self.releases.clear();
             self.onsets.clear();
@@ -387,17 +387,18 @@ impl SignalGraph {
     ///
     /// A port connected now is declared connected; routing fills it each
     /// block. One connected before and now glides out each cable it lost
-    /// (see [`super::releases`]), keeping the shares already gliding, and
-    /// ramps in any cable it gained where no cable was lost; one patched
-    /// anew ramps its cables in (see [`super::onsets`]) on a module that was
-    /// heard before, and is otherwise the routes' at once. Either way a port
-    /// that fades in and was still releasing glides that out beneath the
-    /// ramp. A port `was` shows connected that is unconnected now glides to
-    /// rest where it can, from all it last heard, and is otherwise cleared
-    /// and declared unconnected at once, as every port unconnected now is on
-    /// a module starting fresh. A port unconnected before and now is left as
-    /// it is, keeping any value written to it (see
-    /// [`crate::Module::set_input`]) or the release it is in.
+    /// (see [`super::releases`]), keeping the shares already gliding, and,
+    /// on a port that fades in, ramps in any cable it gained beneath them: a
+    /// crossfade; one patched anew ramps its cables in (see
+    /// [`super::onsets`]) on a module that was heard before, and is
+    /// otherwise the routes' at once. Either way a port that fades in and
+    /// was still releasing glides that out beneath the ramp. A port `was`
+    /// shows connected that is unconnected now glides to rest where it can,
+    /// from all it last heard, and is otherwise cleared and declared
+    /// unconnected at once, as every port unconnected now is on a module
+    /// starting fresh. A port unconnected before and now is left as it is,
+    /// keeping any value written to it (see [`crate::Module::set_input`]) or
+    /// the release it is in.
     ///
     /// Clearing covers the whole buffer, not just the active span, so an
     /// unconnected input never holds routed samples beyond it that a larger
@@ -423,9 +424,8 @@ impl SignalGraph {
             let mut held = 0.0;
             match was {
                 Some(was) if connected && was_connected => {
-                    if self.release_routes(mi, p, was) {
-                        self.ramp_in(mi, p, Some(was));
-                    }
+                    self.release_routes(mi, p, was);
+                    self.ramp_in(mi, p, Some(was));
                 }
                 _ => {
                     let shares = if self.releases.is_empty() {

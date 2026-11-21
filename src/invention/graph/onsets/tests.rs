@@ -4,7 +4,10 @@
 
 use serde_json::{json, Value};
 
+use super::order::ahead_in;
 use super::{Onsets, MAX_ONSETS};
+use crate::invention::graph::chunks::Chunks;
+use crate::invention::graph::ProcessGroup;
 use crate::rpc::StructuralEdit;
 use crate::RenderEngine;
 
@@ -127,6 +130,22 @@ fn a_cable_into_a_control_input_takes_at_once() {
 }
 
 #[test]
+fn a_swap_crossfades_whichever_edit_comes_first() {
+    for connect_first in [false, true] {
+        let mut engine = two_sources();
+        render(&mut engine, 1_024);
+        if connect_first {
+            engine.connect("cv", "audio", "dac", "audio").unwrap();
+        }
+        engine.disconnect("half", "audio", "dac", "audio").unwrap();
+        if !connect_first {
+            engine.connect("cv", "audio", "dac", "audio").unwrap();
+        }
+        assert_ramps(0.5, 0.25, &render(&mut engine, 2_048));
+    }
+}
+
+#[test]
 fn a_cable_unpatched_as_it_ramps_in_glides_out_from_where_it_was() {
     let mut engine = engine(json!([still("a")]), json!([]));
     render(&mut engine, 1_024);
@@ -163,6 +182,27 @@ fn a_ramp_carries_on_through_an_edit_that_moves_its_modules() {
 }
 
 #[test]
+fn a_swap_crossfades_on_through_an_edit_that_moves_its_modules() {
+    let mut engine = engine(
+        json!([still("z"), still("a"), still("b"),
+               { "id": "half", "type": "vca", "config": { "level": 0.5 } },
+               { "id": "cv", "type": "vca", "config": { "level": 0.25 } }]),
+        json!([
+            { "from": "a", "from_port": "audio", "to": "half", "to_port": "audio" },
+            { "from": "b", "from_port": "audio", "to": "cv", "to_port": "audio" },
+            { "from": "half", "from_port": "audio", "to": "dac", "to_port": "audio" }
+        ]),
+    );
+    render(&mut engine, 1_024);
+    engine.disconnect("half", "audio", "dac", "audio").unwrap();
+    engine.connect("cv", "audio", "dac", "audio").unwrap();
+    let mut out = render(&mut engine, 128);
+    engine.remove_module("z").unwrap();
+    out.extend(render(&mut engine, 2_048));
+    assert_ramps(0.5, 0.25, &out);
+}
+
+#[test]
 fn a_mixer_channel_unpatched_and_patched_again_before_it_plays_carries_on() {
     let mut engine = engine(
         json!([still("a"),
@@ -182,6 +222,38 @@ fn a_mixer_channel_unpatched_and_patched_again_before_it_plays_carries_on() {
         "{before} -> {:?}",
         &out[..4]
     );
+}
+
+/// A feedback group of modules 1, 2 and 3 (in that member order), played
+/// sample by sample or, with `cut`, in chunks cut at module 3, whose
+/// inputs are read as it emits when `emit_reads`.
+fn group(cut: bool, emit_reads: bool) -> ProcessGroup {
+    ProcessGroup {
+        members: vec![1, 2, 3],
+        feedback: true,
+        chunks: cut.then(|| Chunks {
+            frames: 48,
+            cuts: vec![3],
+            emit_reads: vec![emit_reads],
+            // The rest's own order, unlike the members'.
+            rest: vec![2, 1],
+        }),
+    }
+}
+
+#[test]
+fn a_member_plays_ahead_of_another_in_the_order_its_group_plays_in() {
+    let by_sample = group(false, false);
+    assert!(ahead_in(&by_sample, 1, 2));
+    assert!(!ahead_in(&by_sample, 2, 1));
+    let chunked = group(true, false);
+    // The rest play in their own order, the cut emits before them.
+    assert!(ahead_in(&chunked, 2, 1));
+    assert!(!ahead_in(&chunked, 1, 2));
+    assert!(ahead_in(&chunked, 3, 1));
+    // The cut reads its inputs once all have played, unless as it emits.
+    assert!(ahead_in(&chunked, 1, 3));
+    assert!(!ahead_in(&group(true, true), 1, 3));
 }
 
 #[test]

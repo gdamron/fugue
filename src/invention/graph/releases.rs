@@ -249,8 +249,9 @@ impl SignalGraph {
         let Some(to) = inst.module().input_rest(port) else {
             // Its module plays the departure, and carries on if the port is
             // patched again before it plays.
-            self.onsets.cancel_port(mi, port);
-            self.onsets.depart(mi, port, self.current_sample);
+            let now = self.current_sample;
+            self.onsets.cancel_port(mi, port, previous.carry, now);
+            self.onsets.depart(mi, port, now);
             return false;
         };
         // What the routes into `port` last summed to, as heard: a cable
@@ -263,13 +264,16 @@ impl SignalGraph {
                 .zip(previous.carried(route))
                 .map(|(sum, carried)| sum + carried * heard);
         }
+        let falling = self
+            .onsets
+            .cancel_port(mi, port, previous.carry, self.current_sample);
         let Some(from) = held else {
             return false;
         };
         self.releases.begin(Release {
             module: mi,
             port,
-            from: from + shares,
+            from: from + shares + falling,
             to,
             start: self.current_sample,
             share: false,
@@ -305,12 +309,14 @@ impl SignalGraph {
     /// module (by id, or by index when `previous` is in the graph's own
     /// order) and port, and one made twice counts twice. A share
     /// past the slots, or of a cable whose value is unknown, steps as
-    /// before. A cable still ramping in (see [`super::onsets`]) was heard
-    /// only in part, and glides out from there.
+    /// before.
     ///
-    /// Returns whether the edit only patched cables in, none lost and none
-    /// patched in again: only then may they ramp in.
-    pub(super) fn release_routes(&mut self, mi: usize, port: usize, previous: Previous) -> bool {
+    /// On a port that fades in (see [`crate::Module::input_fades_in`]) each
+    /// new cable ramps in instead (see [`super::onsets`]), a cable patched
+    /// in again included, so the cables it lost glide out beneath them: a
+    /// crossfade.
+    pub(super) fn release_routes(&mut self, mi: usize, port: usize, previous: Previous) {
+        let fades = self.fades_in(mi, port);
         let now: &[CompiledRoute] = self.compiled_routes.get(mi).map_or(&[], Vec::as_slice);
         let into = |route: &&CompiledRoute| route.to_port == port;
         // Where each route's source is now, if it still runs.
@@ -332,31 +338,45 @@ impl SignalGraph {
         // none lost, none patched in again.
         let mut pairs = then.clone().zip(now.clone());
         if then.clone().count() == now.clone().count() && pairs.all(|(old, new)| same(old, new)) {
-            return false;
+            return;
         }
         // A cable patched in again cuts its share short. Any other cable
         // patched in makes the edit a reroute, such as a module inserted
         // into the chain, which steps to the new routes as before: gliding
         // the old cables out on top of their replacements would double them.
-        let (mut rerouted, mut again) = (false, false);
+        let mut rerouted = false;
         for (k, new) in now.clone().enumerate() {
             let rank = now.clone().take(k).filter(|r| twin(new, r)).count();
-            if rank >= then.clone().filter(|old| same(old, new)).count() {
+            if rank >= then.clone().filter(|old| same(old, new)).count() && !fades {
                 let source = (new.from_module, new.from_port);
-                let cut = self.releases.cancel_share(mi, port, source);
-                (rerouted, again) = (rerouted || !cut, again || cut);
+                rerouted |= !self.releases.cancel_share(mi, port, source);
             }
         }
-        let mut lost = false;
+        if rerouted {
+            return;
+        }
         for (k, old) in then.clone().enumerate() {
             let rank = then.clone().take(k).filter(|r| twin(old, r)).count();
             if rank < now.clone().filter(|new| same(old, new)).count() {
                 continue;
             }
-            lost = true;
+            // A cable still ramping in was heard only in part.
             let source = (old.from_module, old.from_port);
             let heard = self.onsets.take(mi, port, source, self.current_sample);
-            if rerouted {
+            // On a port that fades in, it falls with its source playing.
+            let still = source_now(old).filter(|_| fades && !old.delayed);
+            let now = self.current_sample;
+            let falls = still.is_some_and(|from| {
+                let source = (from, old.from_port);
+                self.onsets.ramp_out(
+                    (&self.process_groups, &self.group_of),
+                    (mi, port),
+                    source,
+                    heard,
+                    now,
+                )
+            });
+            if falls {
                 continue;
             }
             let carried = previous.carried(old).map(|carried| carried * heard);
@@ -373,7 +393,6 @@ impl SignalGraph {
                 source: source_now(old).map_or(NO_SOURCE, |m| (m, old.from_port)),
             });
         }
-        !lost && !again
     }
 
     /// Writes frames `from..from + frames` of the segment into the inputs

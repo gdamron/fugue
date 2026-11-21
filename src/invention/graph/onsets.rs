@@ -4,12 +4,14 @@
 //! what its module hears, from what the input carried to that plus the new
 //! cable's signal: a click. So the graph ramps each such cable in, alone,
 //! from silence over [`RELEASE_SECONDS`]: the input hears the routes it
-//! had, and the new cable scaled by a gain rising linearly from 0 to 1.
-//! Only inputs whose module says they fade in do (see
-//! [`crate::Module::input_fades_in`]): a gate, a clock or a pitch takes its
-//! new cable at once, as before. An edit that also unpatches a cable from
-//! the port (a swap, or a module inserted into a chain) steps to its new
-//! cables, as before.
+//! had, and the new cable scaled by a gain rising linearly from 0 to 1. A
+//! cable the same edit unpatches from such a port falls the same way, its
+//! source still playing, so a swap or a module inserted into a chain
+//! crossfades. A falling cable whose source is gone, or no longer runs
+//! ahead of the input's module, glides out from what it last carried
+//! instead (see [`super::releases`]). Only inputs whose module says they
+//! fade in do (see [`crate::Module::input_fades_in`]): a gate, a clock or
+//! a pitch takes its new cable at once, as before.
 //!
 //! Onsets live in a fixed set of slots, as releases do, so starting,
 //! playing and ending one never allocates; a cable past them steps.
@@ -30,7 +32,7 @@ const MAX_DEPARTED: usize = 16;
 /// The ramp's length before a sample rate is known: 10 ms at 48 kHz.
 const DEFAULT_FRAMES: u64 = 480;
 
-/// One cable ramping into one input.
+/// One cable ramping into or out of one input.
 #[derive(Clone, Copy, Default)]
 struct Onset {
     module: usize,
@@ -42,6 +44,10 @@ struct Onset {
     /// Whether `source` indexes the installed topology's module order:
     /// false between an install's module remap and its source remap.
     current: bool,
+    /// Ramping out, from `level`, rather than in from 0.
+    falling: bool,
+    /// A falling cable's gain as it began to fall.
+    level: f32,
 }
 
 impl Onset {
@@ -50,16 +56,21 @@ impl Onset {
     #[inline]
     fn gain(&self, sample: u64, frames: u64) -> f32 {
         let taken = (sample.saturating_sub(self.start) + 1).min(frames);
-        taken as f32 / frames as f32
+        let risen = taken as f32 / frames as f32;
+        if self.falling {
+            self.level * (1.0 - risen)
+        } else {
+            risen
+        }
     }
 
     /// What of the cable the input last heard by sample `now`.
     #[inline]
     fn heard(&self, now: u64, frames: u64) -> f32 {
-        if now > self.start {
-            self.gain(now - 1, frames)
-        } else {
-            0.0
+        match (now > self.start, self.falling) {
+            (true, _) => self.gain(now - 1, frames),
+            (false, true) => self.level,
+            (false, false) => 0.0,
         }
     }
 }
@@ -110,6 +121,29 @@ impl Onsets {
             source,
             start: now,
             current: true,
+            falling: false,
+            level: 0.0,
+        })
+    }
+
+    /// Starts ramping the cable from `source` out of `port` of `module` at
+    /// sample `now`, from `level` of it, or reports there is no room.
+    fn fall(
+        &mut self,
+        module: usize,
+        port: usize,
+        source: (usize, usize),
+        level: f32,
+        now: u64,
+    ) -> bool {
+        self.push(Onset {
+            module,
+            port,
+            source,
+            start: now,
+            current: true,
+            falling: true,
+            level,
         })
     }
 
@@ -134,7 +168,7 @@ impl Onsets {
     ) -> f32 {
         let found = (0..self.len).find(|&i| {
             let onset = self.slots[i];
-            onset.module == module && onset.port == port && onset.source == source
+            !onset.falling && onset.module == module && onset.port == port && onset.source == source
         });
         match found {
             Some(i) => {
@@ -146,17 +180,30 @@ impl Onsets {
         }
     }
 
-    /// Forgets every ramp into `port` of `module`.
-    pub(super) fn cancel_port(&mut self, module: usize, port: usize) {
+    /// Forgets every ramp into or out of `port` of `module`, returning what
+    /// the input last heard by `now` of the cables falling out of it, by
+    /// what each last carried in `carry` (in the order their sources are).
+    pub(super) fn cancel_port(
+        &mut self,
+        module: usize,
+        port: usize,
+        carry: &[Vec<f32>],
+        now: u64,
+    ) -> f32 {
+        let mut falling = 0.0;
         let mut i = 0;
         while i < self.len {
             let onset = self.slots[i];
             if onset.module == module && onset.port == port {
+                if onset.falling {
+                    falling += carried(carry, onset.source) * onset.heard(now, self.frames);
+                }
                 self.swap_remove(i);
             } else {
                 i += 1;
             }
         }
+        falling
     }
 
     /// Notes that `port` of `module` was unpatched at sample `now` and its
@@ -243,13 +290,30 @@ impl Onsets {
     }
 }
 
+/// What output `port` of module `source` last carried, by `carry`.
+fn carried(carry: &[Vec<f32>], (source, port): (usize, usize)) -> f32 {
+    carry
+        .get(source)
+        .and_then(|ports| ports.get(port))
+        .copied()
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0)
+}
+
 impl SignalGraph {
-    /// Ends the ramp of each cable whose route an edit made a back edge,
-    /// which reads another frame than its ramp would, so it is heard whole.
-    /// The onsets' sources are in the order of `retired`, the modules an
-    /// install replaced, or the graph's own order without one. Before an
-    /// install resets any input.
-    pub(super) fn settle_onsets(&mut self, retired: Option<&IndexMap<String, ModuleInstance>>) {
+    /// Hands each falling cable whose source is gone, or no longer runs
+    /// ahead of its input's module, to a glide out from what it last
+    /// carried by `carry`, and ends the ramp of each rising one whose route
+    /// now reads another frame than its ramp would (a back edge), so it is
+    /// heard whole. The onsets' sources are in the order of `retired`, the
+    /// modules an install replaced, or the graph's own order without one.
+    /// Before an install resets any input.
+    pub(super) fn settle_falling(
+        &mut self,
+        carry: &[Vec<f32>],
+        retired: Option<&IndexMap<String, ModuleInstance>>,
+    ) {
+        let now = self.current_sample;
         let mut i = 0;
         while i < self.onsets.len {
             let onset = self.onsets.slots[i];
@@ -257,24 +321,38 @@ impl SignalGraph {
                 Some(retired) => moved_to(retired, &self.modules, onset.source.0),
                 None => Some(onset.source.0),
             };
-            // A cable unpatched, or whose source is gone, is lost with its
-            // route (see `take`).
-            let delayed = source.is_some_and(|source| {
-                self.compiled_routes
-                    .get(onset.module)
-                    .is_some_and(|routes| {
-                        routes.iter().any(|route| {
-                            route.to_port == onset.port
-                                && (route.from_module, route.from_port) == (source, onset.source.1)
-                                && route.delayed
-                        })
-                    })
-            });
-            if delayed {
-                self.onsets.swap_remove(i);
-            } else {
+            let (groups, group_of) = (&self.process_groups, &self.group_of);
+            let kept = match (onset.falling, source) {
+                (true, Some(source)) => runs_ahead(groups, group_of, source, onset.module),
+                (true, None) => false,
+                // A rising cable unpatched, or whose source is gone, is
+                // lost with its route (see `take`).
+                (false, Some(source)) => {
+                    let routed = self
+                        .compiled_routes
+                        .get(onset.module)
+                        .is_some_and(|routes| {
+                            routes.iter().any(|route| {
+                                route.to_port == onset.port
+                                    && (route.from_module, route.from_port)
+                                        == (source, onset.source.1)
+                            })
+                        });
+                    !routed || reads_alongside(groups, group_of, source, onset.module)
+                }
+                (false, None) => true,
+            };
+            if kept {
                 i += 1;
+                continue;
             }
+            if !onset.falling {
+                self.onsets.swap_remove(i);
+                continue;
+            }
+            let from = carried(carry, onset.source) * onset.heard(now, self.onsets.frames);
+            self.onsets.swap_remove(i);
+            self.glide_out(onset.module, onset.port, from);
         }
     }
 
@@ -324,7 +402,9 @@ impl SignalGraph {
                 continue;
             }
             // A back edge reads another frame than the ramp would play.
-            if !fades || new.delayed {
+            let alongside =
+                reads_alongside(&self.process_groups, &self.group_of, new.from_module, mi);
+            if !fades || !alongside {
                 stepped = true;
                 continue;
             }
@@ -335,9 +415,12 @@ impl SignalGraph {
     }
 
     /// Plays frames `from..from + frames` of the segment of each cable
-    /// ramping into module `module`'s inputs, at its frame 0: the routes
-    /// summed it whole, so what it is not yet heard at comes off. A port's
-    /// ramps are summed before they reach its input.
+    /// ramping into or out of module `module`'s inputs, at its frame 0: the
+    /// routes summed a rising cable whole, so what it is not yet heard at
+    /// comes off; a falling cable is no route, so what it is still heard at
+    /// goes on. A port's ramps are summed before they reach its input, so
+    /// two cables carrying the same signal, one rising as the other falls,
+    /// cancel exactly and the input is the routes' own sum, bit for bit.
     pub(super) fn play_onsets(&mut self, module: usize, from: usize, frames: usize) {
         let first = self.segment.start + from as u64;
         let length = self.onsets.frames;
@@ -365,7 +448,9 @@ impl SignalGraph {
                     let Some(&value) = self.out_bufs.get(source).and_then(|b| b.get(at)) else {
                         continue;
                     };
-                    ramps += value * (onset.gain(sample, length) - 1.0);
+                    // A rising cable is in the routes' sum, a falling one not.
+                    let gain = onset.gain(sample, length);
+                    ramps += value * if onset.falling { gain } else { gain - 1.0 };
                 }
                 *x += ramps;
             }
@@ -394,6 +479,10 @@ pub(super) fn moved_to(
 ) -> Option<usize> {
     id_at(retired, index).and_then(|id| modules.get_index_of(id))
 }
+
+mod order;
+
+use order::{reads_alongside, runs_ahead};
 
 #[cfg(test)]
 mod tests;
