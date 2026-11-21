@@ -181,9 +181,10 @@ fn a_connected_input_follows_its_source_and_resets_when_disconnected() {
     let mut rig = written();
     let osc1_to_vca = edge("osc1", "audio", "vca", "audio");
 
-    // Connecting the written port hands it to its source.
+    // Connecting the written port hands it to its source, once the cable
+    // has ramped in over ten milliseconds.
     rig.live.connect(osc1_to_vca.clone()).unwrap();
-    rig.render(1);
+    rig.render(9);
     let osc1 = output_block(&rig, "osc1");
     assert!(osc1.iter().any(|v| *v != 0.0));
     assert_eq!(output_block(&rig, "vca"), osc1);

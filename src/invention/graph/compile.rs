@@ -337,8 +337,11 @@ impl SignalGraph {
         }
         // `topology` now holds the previous derived state.
         let same_order = topology.connected_in_ports.len() == self.modules.len();
-        if !same_order {
+        if same_order {
+            self.settle_onsets(None);
+        } else {
             self.releases.clear();
+            self.onsets.clear();
         }
         for mi in 0..self.modules.len() {
             let was = topology.connected_in_ports.get(mi).filter(|_| same_order);
@@ -411,8 +414,14 @@ impl SignalGraph {
             if !connected && !was_connected {
                 continue;
             }
+            // What the port was heard at as it released, when patched again.
+            let mut held = 0.0;
             match was {
-                Some(was) if connected && was_connected => self.release_routes(mi, p, was),
+                Some(was) if connected && was_connected => {
+                    if self.release_routes(mi, p, was) {
+                        self.ramp_in(mi, p, Some(was));
+                    }
+                }
                 _ => {
                     let shares = if self.releases.is_empty() {
                         0.0
@@ -424,6 +433,7 @@ impl SignalGraph {
                     if released {
                         continue;
                     }
+                    held = shares;
                 }
             }
             let Some((_, inst)) = self.modules.get_index_mut(mi) else {
@@ -435,6 +445,14 @@ impl SignalGraph {
             } else {
                 module.input_block_mut(p).fill(0.0);
                 module.set_input_connected(p, false);
+            }
+            // Newly patched: its cables ramp in. Patched again as it
+            // released, on a port that fades in, where it was glides out
+            // beneath them, unless a cable steps in, which it then steps to.
+            let ramped =
+                !(connected && !was_connected && was.is_some() && self.ramp_in(mi, p, was));
+            if connected && held != 0.0 && ramped && self.fades_in(mi, p) {
+                self.glide_out(mi, p, held);
             }
         }
     }

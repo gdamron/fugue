@@ -66,7 +66,8 @@ fn sounding() -> (tempfile::TempDir, Rig) {
     };
     rig.live.edit(wire).unwrap();
     set(&rig, "note_on", 60.0.into()).unwrap();
-    let heard = rig.render(1);
+    // Past the ten milliseconds the new cable ramps in over.
+    let heard = rig.render(8);
     assert!((heard[heard.len() - 1] - 0.5).abs() < TOL);
     outcomes(&mut rig);
     (dir, rig)

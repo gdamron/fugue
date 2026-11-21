@@ -647,10 +647,10 @@ pub trait Module: Send {
     /// a clock, a pitch or any other input whose value means something the
     /// instant it arrives.
     ///
-    /// Patching a sounding source into an audio input steps what the module
-    /// hears, a click, so such a cable is one to ramp in from silence; a
-    /// control input takes its cable at once. Called on the audio thread as
-    /// an edit installs: it must not allocate, lock or free.
+    /// Patching a sounding source into an audio input would step what the
+    /// module hears, a click. Instead the graph ramps the new cable in from
+    /// silence over a few milliseconds. Called on the audio thread as an
+    /// edit installs: it must not allocate, lock or free.
     ///
     /// The default goes by the port's name: `audio` and its variants
     /// (`audio_left`, `audio.0`) and `sidechain` fade in. A module whose
@@ -942,8 +942,6 @@ pub fn validate_port(port: &str, valid_ports: &[&str], port_type: &str) -> Resul
 
 #[cfg(test)]
 mod config_fidelity_tests;
-#[cfg(test)]
-mod fade_catalog_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

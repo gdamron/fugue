@@ -33,7 +33,8 @@ fn sounding() -> (tempfile::TempDir, Rig, u64) {
         |change: &mut GraphChange| change.connect(edge("inst", "audio_left", "dac", "audio"));
     rig.live.edit(wire).unwrap();
     set(&rig, "note_on", 60.0.into()).unwrap();
-    assert!((last(&rig.render(1)) - 0.5).abs() < TOL);
+    // Past the ten milliseconds the new cable ramps in over.
+    assert!((last(&rig.render(8)) - 0.5).abs() < TOL);
     outcomes(&mut rig);
     let start = rig.graph.current_sample;
     (dir, rig, start)
