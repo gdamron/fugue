@@ -87,10 +87,12 @@ fn a_module_added_to_the_loop_is_heard_in_the_next_block() {
         right[0] != 0.0,
         "the probe is heard from the first frame after the reload"
     );
-    assert!(
-        POST * BLOCK > RAMP,
-        "the render must outlast the ramp to check the tail"
-    );
+    const {
+        assert!(
+            POST * BLOCK > RAMP,
+            "the render must outlast the ramp to check the tail"
+        )
+    };
     // The expected ramp is the unity probe (= left) scaled by (i + 1) / RAMP.
     // Tolerance: left peaks below 1, so one f32 rounding of the product, or of
     // the gain, is about 6e-8; 1e-6 absolute leaves headroom for a few such
