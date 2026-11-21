@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 mod asset;
 pub(crate) mod elastic;
 mod local;
+mod provided;
 
 #[cfg(test)]
 pub(crate) use asset::LOADS;
@@ -198,12 +199,11 @@ pub(crate) fn resolve_source(source: &str) -> Result<String, String> {
         return Ok(source.to_string());
     };
 
+    // No package cache here: a ref resolves only to a sample the host
+    // provided ([`provide_package_sample`]).
     #[cfg(target_arch = "wasm32")]
     {
-        Err(format!(
-            "package asset ref '{}' is not available on wasm32",
-            reference
-        ))
+        provided::resolve(&reference).ok_or_else(|| provided::unresolved(&reference))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -211,6 +211,34 @@ pub(crate) fn resolve_source(source: &str) -> Result<String, String> {
         let packages_dir = crate::pkg::default_packages_dir()?;
         let resolved = crate::pkg::resolve_package_asset(&reference, &packages_dir, None)?;
         Ok(resolved.file.to_string_lossy().into_owned())
+    }
+}
+
+/// Provides the file `path` of package `id` at `version` as `bytes`, for an
+/// engine with no package cache (the browser engine), and decodes it at
+/// `sample_rate` into the sample cache, so a load at that rate finds it.
+/// A document's package refs then resolve to provided files (see
+/// [`provided`]). Returns the source the file resolves to. Bytes that do not
+/// decode are refused, naming the sample, and are not kept. Control thread.
+#[cfg_attr(not(any(test, target_arch = "wasm32")), allow(dead_code))]
+pub(crate) fn provide_package_sample(
+    id: &str,
+    version: &str,
+    path: &str,
+    bytes: Vec<u8>,
+    sample_rate: u32,
+) -> Result<String, String> {
+    crate::audio_thread::debug_assert_control_thread("providing a sample");
+    let (source, new) = provided::record(id, version, path, bytes)?;
+    match load_cached_sample(&source, sample_rate) {
+        Ok(_) => Ok(source),
+        Err(err) => {
+            // A file another engine provided and decoded stays.
+            if new {
+                provided::withdraw(&source);
+            }
+            Err(format!("sample {source} did not load: {err}"))
+        }
     }
 }
 
@@ -404,10 +432,18 @@ fn source_extension(source: &str) -> Option<String> {
 }
 
 fn open_source(source: &str) -> Result<(Box<dyn Read>, bool), String> {
+    // Only the browser engine is provided samples; native loads read files.
+    #[cfg(any(test, target_arch = "wasm32"))]
+    if let Some(bytes) = provided::bytes(source) {
+        return Ok((Box::new(std::io::Cursor::new(bytes)), false));
+    }
+
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = source;
-        Err("Sample loading is not available on wasm32".to_string())
+        Err(format!(
+            "Sample loading is not available on wasm32 except for provided package samples, \
+             so '{source}' cannot load"
+        ))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
