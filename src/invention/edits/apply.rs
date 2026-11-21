@@ -35,7 +35,7 @@ mod timed;
 
 use std::collections::{HashMap, HashSet};
 
-use super::candidate::{unknown_module, Refusal};
+use super::refusals::{unknown_module, Refusal};
 use super::{apply_to_candidate, CandidateWrite, EditedCandidate};
 use crate::invention::authored_document;
 use crate::invention::builder::InventionBuilder;
@@ -106,7 +106,7 @@ pub(crate) fn graph_refusal(error: GraphCommandError) -> RpcError {
 
 /// A `module_build_failed` refusal, with the module's reason cut to about
 /// [`MODULE_ERROR_BYTES`].
-fn build_failed(what: &str, mut reason: String) -> RpcError {
+pub(crate) fn build_failed(what: &str, mut reason: String) -> RpcError {
     truncate_on_char_boundary(&mut reason, MODULE_ERROR_BYTES);
     RpcError::new(
         RpcErrorCode::ModuleBuildFailed,

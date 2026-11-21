@@ -165,6 +165,29 @@ impl WasmFugueEngine {
         self.inner.remove_module(id).map_err(to_graph_error)
     }
 
+    #[wasm_bindgen(js_name = applyEdits)]
+    /// Applies a JSON array of `apply_edits` operations (`add_module`,
+    /// `remove_module`, `connect`, `disconnect`) to the loaded graph as one
+    /// change, or refuses them all with nothing changed.
+    ///
+    /// A refusal throws the daemon's error as JSON text: `code`, `message`
+    /// and, when one edit is to blame, `edit` with its `index`, `op` and
+    /// `reason`. The edits build and install on the calling thread, between
+    /// renders: on an AudioWorklet that is the audio thread, so a batch
+    /// that builds heavy modules can delay the next render.
+    pub fn apply_edits(&self, edits_json: &str) -> Result<(), JsValue> {
+        let edits: Vec<crate::rpc::StructuralEdit> =
+            serde_json::from_str(edits_json).map_err(|err| {
+                rpc_error_value(&crate::rpc::RpcError::new(
+                    crate::rpc::RpcErrorCode::InvalidRequest,
+                    format!("invalid edits JSON: {err}; nothing was applied"),
+                ))
+            })?;
+        self.inner
+            .apply_edits(&edits)
+            .map_err(|err| rpc_error_value(&err))
+    }
+
     #[wasm_bindgen(js_name = setCodeModuleStatus)]
     /// Updates the runtime status string for a `code` module.
     pub fn set_code_module_status(&self, id: &str, status: &str) -> Result<(), JsValue> {
@@ -287,7 +310,7 @@ impl WasmFugueEngine {
     /// `[left0, right0, left1, right1, ...]`.
     pub fn render_interleaved_into(&mut self, output: &Float32Array) -> Result<usize, JsValue> {
         let samples = output.length() as usize;
-        if samples % 2 != 0 {
+        if !samples.is_multiple_of(2) {
             return Err(JsValue::from_str("output buffer length must be even"));
         }
         if self.render_buffer.len() != samples {
@@ -309,6 +332,12 @@ fn to_js_error(error: Box<dyn std::error::Error>) -> JsValue {
 
 fn to_graph_error(error: crate::GraphCommandError) -> JsValue {
     JsValue::from_str(&error.to_string())
+}
+
+/// `error` as JSON text a host can parse, or its message should it not
+/// serialize.
+fn rpc_error_value(error: &crate::rpc::RpcError) -> JsValue {
+    JsValue::from_str(&serde_json::to_string(error).unwrap_or_else(|_| error.message.clone()))
 }
 
 fn parse_config_json(config_json: Option<String>) -> Result<serde_json::Value, JsValue> {

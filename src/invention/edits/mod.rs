@@ -22,8 +22,9 @@
 //! [`authored_document`]: super::authored_document
 
 mod apply;
-pub(crate) use apply::{borrowed, saved_in};
+pub(crate) use apply::{borrowed, build_failed, graph_refusal, saved_in};
 mod candidate;
+pub(crate) mod refusals;
 #[cfg(test)]
 mod tests;
 
