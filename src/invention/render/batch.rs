@@ -11,6 +11,10 @@
 //! The checks and their refusals are the daemon's (see
 //! [`refusals`](crate::invention::edits::refusals)), made in the same
 //! order, so the same bad edit is refused with the same reason and message.
+//! A refusal of the batch as a whole, a schedule it leaves unable to
+//! resolve, has the daemon's code and names the same scheduler and reason;
+//! one whose schedule targets a module the batch removes also says to
+//! write the schedule in the same change.
 //!
 //! An offline render keeps no authored document, so the batch refuses the
 //! document operations (`set_control`, `move_modules`, `name_modules`) and
@@ -18,11 +22,11 @@
 //! those itself.
 
 use super::RenderEngine;
-use crate::invention::edits::graph_refusal;
 use crate::invention::edits::refusals::{
     already_connected, duplicate_module, no_input_port, no_output_port, not_connected,
     refused_config, unknown_module, unknown_module_type, Refusal,
 };
+use crate::invention::edits::{build_failed, graph_refusal};
 use crate::invention::publish::{edge, BuiltModule, GraphChange};
 use crate::invention::runtime::GraphCommandError;
 use crate::rpc::{
@@ -85,6 +89,11 @@ impl RenderEngine {
                 Ok(())
             }
             (Err(_), Some(failure)) => Err(RpcError::invalid_edit(failure)),
+            // A schedule the batch leaves unable to resolve, as building
+            // the edited invention refuses it in the daemon.
+            (Err(GraphCommandError::ModuleBuildFailed(reason)), None) => {
+                Err(build_failed("does not build", reason))
+            }
             (Err(error), None) => Err(graph_refusal(error)),
         }
     }
@@ -110,7 +119,8 @@ impl RenderEngine {
                 Some(built.map_err(|error| match error {
                     GraphCommandError::UnknownModuleType(_) => unknown_module_type(module_type),
                     GraphCommandError::ModuleBuildFailed(reason) => {
-                        // The factory's reason, without the id it was given.
+                        // The factory's reason, without the id
+                        // `GraphChange::build` puts before it.
                         let prefix = format!("module '{id}': ");
                         let reason = reason.strip_prefix(&prefix).unwrap_or(&reason);
                         refused_config(id, module_type, reason)
@@ -164,9 +174,10 @@ fn apply_one(
             if change.has_edge(&wire) {
                 return Err(already_connected(from, from_port, to, to_port));
             }
+            // Both ends and their ports were checked above.
             change
                 .connect(wire)
-                .map_err(|error| Refusal(EditFailureReason::UnknownPort, error.to_string()))?;
+                .expect("a connection between checked ports");
         }
         StructuralEdit::Disconnect {
             from,

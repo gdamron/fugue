@@ -427,8 +427,14 @@ impl GraphChange {
                 .iter()
                 .find(|(name, _)| name == "controls")
                 .map(|(_, handle)| handle);
-            attach_from_handle_resolving(id, handle, &self.directory, &self.surfaces)
-                .map_err(GraphCommandError::ModuleBuildFailed)?;
+            // Worded as building the invention words it.
+            attach_from_handle_resolving(id, handle, &self.directory, &self.surfaces).map_err(
+                |error| {
+                    GraphCommandError::ModuleBuildFailed(format!(
+                        "{CONTROL_SCHEDULER_TYPE_ID} '{id}': {error}"
+                    ))
+                },
+            )?;
         }
         self.rescheduling
             .rebinds(&self.surfaces, &self.built)
