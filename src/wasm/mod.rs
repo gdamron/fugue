@@ -244,6 +244,24 @@ impl WasmFugueEngine {
         Ok(output)
     }
 
+    #[wasm_bindgen(js_name = takeLevels)]
+    /// The output's levels since the last call (or since the piece loaded),
+    /// as JSON: `left_peak` and `right_peak` (linear, read before the
+    /// device clamp, so an over reads above 1.0), `left_rms` and `right_rms`
+    /// (before the clamp, absent with no frames or a non-finite sum),
+    /// `frames`, `left_overs` and `right_overs` (samples beyond ±1.0, which
+    /// the clamp cut) and `non_finite_samples` (NaN or ±inf samples the
+    /// sinks silenced; a sink rebuilt during the stretch takes its count
+    /// with it). Call it between renders to measure a stretch: the next
+    /// starts after it.
+    pub fn take_levels(&mut self) -> Result<String, JsValue> {
+        let levels = self
+            .inner
+            .take_levels()
+            .ok_or_else(|| JsValue::from_str("no invention loaded"))?;
+        serde_json::to_string(&levels).map_err(|err| JsValue::from_str(&err.to_string()))
+    }
+
     #[wasm_bindgen(js_name = finishAudioFileSink)]
     /// Finalizes an in-memory `audio_file_sink` and returns JSON stats.
     pub fn finish_audio_file_sink(&self, module_id: &str) -> Result<String, JsValue> {
