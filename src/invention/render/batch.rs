@@ -8,11 +8,21 @@
 //! then every edit goes into one [`GraphChange`], which commits whole or
 //! not at all (see [`edit_offline`](crate::invention::publish::edit_offline)).
 //!
+//! The checks and their refusals are the daemon's (see
+//! [`refusals`](crate::invention::edits::refusals)), made in the same
+//! order, so the same bad edit is refused with the same reason and message.
+//!
 //! An offline render keeps no authored document, so the batch refuses the
-//! document operations (`set_control`, `move_modules`, `name_modules`): a
-//! host that keeps the document writes those itself.
+//! document operations (`set_control`, `move_modules`, `name_modules`) and
+//! ignores an `add_module`'s `name`: a host that keeps the document writes
+//! those itself.
 
 use super::RenderEngine;
+use crate::invention::edits::graph_refusal;
+use crate::invention::edits::refusals::{
+    already_connected, duplicate_module, no_input_port, no_output_port, not_connected,
+    refused_config, unknown_module, unknown_module_type, Refusal,
+};
 use crate::invention::publish::{edge, BuiltModule, GraphChange};
 use crate::invention::runtime::GraphCommandError;
 use crate::rpc::{
@@ -20,16 +30,23 @@ use crate::rpc::{
     StructuralEdit,
 };
 
+/// What building an `add_module`'s module came to, kept until its edit's
+/// turn so a refusal names the first edit that cannot apply.
+type Build = Option<Result<BuiltModule, Refusal>>;
+
 impl RenderEngine {
     /// Applies `edits` to the loaded graph as one change, in order, or
-    /// refuses them all, naming the first edit that cannot apply. Returns
-    /// how many edits applied.
+    /// refuses them all, naming the first edit that cannot apply.
     ///
     /// The checks are those of `ApplyEdits`: an `add_module` id must not
-    /// name a module that exists at that point in the batch, a
-    /// `remove_module` id must name one, a `connect` must name existing
-    /// ports and a connection not yet made, a `disconnect` one that is.
-    pub fn apply_edits(&self, edits: &[StructuralEdit]) -> Result<usize, RpcError> {
+    /// name a module that exists at that point in the batch, and its type
+    /// and config must build; a `remove_module` id must name one; a
+    /// `connect` must name existing modules and ports and a connection not
+    /// yet made, a `disconnect` existing modules and a connection that is.
+    /// Such a refusal carries the edit's index, op and reason. A document
+    /// operation is refused for the whole batch, with no edit detail, as an
+    /// oversized batch is.
+    pub fn apply_edits(&self, edits: &[StructuralEdit]) -> Result<(), RpcError> {
         check_edit_batch(edits)?;
         for (index, edit) in edits.iter().enumerate() {
             edit.check_names(index).map_err(RpcError::invalid_edit)?;
@@ -47,28 +64,25 @@ impl RenderEngine {
                 ));
             }
         }
-        let graph = self.loaded().map_err(graph_refusal)?;
-        let mut built = self.build_added(edits)?;
+        let graph = self.loaded().map_err(RpcError::from)?;
+        let mut built = self.build_added(edits);
         let mut failure = None;
         let committed = self.edit(graph, |change| {
             for (index, edit) in edits.iter().enumerate() {
-                if let Err(refused) = apply_one(change, edit, built[index].take()) {
-                    let message = refused.to_string();
-                    failure = Some(EditFailure::new(
-                        index,
-                        edit.op(),
-                        reason(&refused),
-                        message,
-                    ));
-                    return Err(refused.into());
+                if let Err(Refusal(reason, message)) = apply_one(change, edit, &mut built[index]) {
+                    failure = Some(EditFailure::new(index, edit.op(), reason, message.clone()));
+                    return Err(GraphCommandError::ControlError(message));
                 }
             }
             Ok(())
         });
+        // A module built for an edit that never got its turn drops here,
+        // after the graph's lock.
+        drop(built);
         match (committed, failure) {
             (Ok(committed), _) => {
                 self.follow_up(committed);
-                Ok(edits.len())
+                Ok(())
             }
             (Err(_), Some(failure)) => Err(RpcError::invalid_edit(failure)),
             (Err(error), None) => Err(graph_refusal(error)),
@@ -76,62 +90,59 @@ impl RenderEngine {
     }
 
     /// Builds each added module from its config, in batch order, before
-    /// anything is touched; a module that does not build refuses the batch.
-    fn build_added(&self, edits: &[StructuralEdit]) -> Result<Vec<Option<BuiltModule>>, RpcError> {
-        let mut built = Vec::with_capacity(edits.len());
-        for (index, edit) in edits.iter().enumerate() {
-            let StructuralEdit::AddModule {
-                id,
-                module_type,
-                config,
-                ..
-            } = edit
-            else {
-                built.push(None);
-                continue;
-            };
-            let module =
-                GraphChange::build(&self.registry, self.sample_rate, id, module_type, config)
-                    .map_err(|error| {
-                        let reason = match error {
-                            GraphCommandError::UnknownModuleType(_) => {
-                                EditFailureReason::UnknownModuleType
-                            }
-                            _ => EditFailureReason::InvalidConfig,
-                        };
-                        RpcError::invalid_edit(EditFailure::new(
-                            index,
-                            EditOp::AddModule,
-                            reason,
-                            error.to_string(),
-                        ))
-                    })?;
-            built.push(Some(module));
-        }
-        Ok(built)
+    /// the graph is touched. A build that fails is kept, to refuse its edit
+    /// in its turn.
+    fn build_added(&self, edits: &[StructuralEdit]) -> Vec<Build> {
+        edits
+            .iter()
+            .map(|edit| {
+                let StructuralEdit::AddModule {
+                    id,
+                    module_type,
+                    config,
+                    ..
+                } = edit
+                else {
+                    return None;
+                };
+                let built =
+                    GraphChange::build(&self.registry, self.sample_rate, id, module_type, config);
+                Some(built.map_err(|error| match error {
+                    GraphCommandError::UnknownModuleType(_) => unknown_module_type(module_type),
+                    GraphCommandError::ModuleBuildFailed(reason) => {
+                        // The factory's reason, without the id it was given.
+                        let prefix = format!("module '{id}': ");
+                        let reason = reason.strip_prefix(&prefix).unwrap_or(&reason);
+                        refused_config(id, module_type, reason)
+                    }
+                    other => refused_config(id, module_type, &other.to_string()),
+                }))
+            })
+            .collect()
     }
 }
 
-/// Makes `edit` in `change`, with `built`, the module an `add_module` built;
-/// the change is dropped whole when any edit fails.
+/// Makes `edit` in `change`, with `built`, what building an `add_module`'s
+/// module came to, checking in the order `ApplyEdits` does. The change is
+/// dropped whole when any edit fails.
 fn apply_one(
     change: &mut GraphChange,
     edit: &StructuralEdit,
-    built: Option<BuiltModule>,
-) -> Result<(), Refused> {
+    built: &mut Build,
+) -> Result<(), Refusal> {
     match edit {
         StructuralEdit::AddModule { id, .. } => {
             if change.contains(id) {
-                return Err(Refused::Duplicate(id.clone()));
+                return Err(duplicate_module(id));
             }
-            change.upsert(
-                id,
-                built.expect("each added module is built before the change"),
-            );
+            let module = built
+                .take()
+                .expect("each added module is built before the change")?;
+            change.upsert(id, module);
         }
         StructuralEdit::RemoveModule { id } => {
             if !change.contains(id) {
-                return Err(Refused::Graph(GraphCommandError::UnknownModule(id.clone())));
+                return Err(unknown_module(id));
             }
             change.remove(id);
         }
@@ -141,13 +152,21 @@ fn apply_one(
             to,
             to_port,
         } => {
+            let source = change.ports(from).ok_or_else(|| unknown_module(from))?;
+            if !source.outputs.contains(from_port) {
+                return Err(no_output_port(from, from_port, &source.outputs));
+            }
+            let dest = change.ports(to).ok_or_else(|| unknown_module(to))?;
+            if !dest.inputs.contains(to_port) {
+                return Err(no_input_port(to, to_port, &dest.inputs));
+            }
             let wire = edge(from, from_port, to, to_port);
             if change.has_edge(&wire) {
-                return Err(Refused::Exists(format!(
-                    "{from}.{from_port} -> {to}.{to_port}"
-                )));
+                return Err(already_connected(from, from_port, to, to_port));
             }
-            change.connect(wire).map_err(Refused::Graph)?;
+            change
+                .connect(wire)
+                .map_err(|error| Refusal(EditFailureReason::UnknownPort, error.to_string()))?;
         }
         StructuralEdit::Disconnect {
             from,
@@ -155,11 +174,14 @@ fn apply_one(
             to,
             to_port,
         } => {
+            for id in [from, to] {
+                if !change.contains(id) {
+                    return Err(unknown_module(id));
+                }
+            }
             let wire = edge(from, from_port, to, to_port);
             if !change.has_edge(&wire) {
-                return Err(Refused::Missing(format!(
-                    "{from}.{from_port} -> {to}.{to_port}"
-                )));
+                return Err(not_connected(from, from_port, to, to_port));
             }
             change.disconnect(wire);
         }
@@ -167,58 +189,4 @@ fn apply_one(
         _ => unreachable!("document edits never reach the change"),
     }
     Ok(())
-}
-
-/// Why one edit of a batch cannot apply.
-#[derive(Debug)]
-enum Refused {
-    Duplicate(String),
-    Exists(String),
-    Missing(String),
-    Graph(GraphCommandError),
-}
-
-impl std::fmt::Display for Refused {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Duplicate(id) => write!(
-                f,
-                "module '{id}' already exists; remove_module it first to replace it"
-            ),
-            Self::Exists(wire) => write!(f, "connection {wire} already exists"),
-            Self::Missing(wire) => write!(f, "there is no connection {wire}"),
-            Self::Graph(error) => write!(f, "{error}"),
-        }
-    }
-}
-
-impl From<Refused> for GraphCommandError {
-    fn from(refused: Refused) -> Self {
-        match refused {
-            Refused::Graph(error) => error,
-            other => GraphCommandError::ControlError(other.to_string()),
-        }
-    }
-}
-
-/// A refusal no single edit caused, as `ApplyEdits` words one: a schedule
-/// that still targets a removed module, say, or nothing loaded.
-fn graph_refusal(error: GraphCommandError) -> RpcError {
-    match error {
-        GraphCommandError::AudioThreadStopped => RpcError::from(error),
-        other => RpcError::new(
-            RpcErrorCode::ModuleBuildFailed,
-            format!("the edited invention could not be prepared: {other}; nothing was applied"),
-        ),
-    }
-}
-
-fn reason(refused: &Refused) -> EditFailureReason {
-    match refused {
-        Refused::Duplicate(_) => EditFailureReason::DuplicateModule,
-        Refused::Exists(_) => EditFailureReason::ConnectionExists,
-        Refused::Missing(_) => EditFailureReason::ConnectionNotFound,
-        Refused::Graph(GraphCommandError::UnknownModule(_)) => EditFailureReason::UnknownModule,
-        Refused::Graph(_) => EditFailureReason::UnknownPort,
-    }
 }

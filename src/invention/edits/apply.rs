@@ -35,7 +35,7 @@ mod timed;
 
 use std::collections::{HashMap, HashSet};
 
-use super::candidate::{unknown_module, Refusal};
+use super::refusals::{unknown_module, Refusal};
 use super::{apply_to_candidate, CandidateWrite, EditedCandidate};
 use crate::invention::authored_document;
 use crate::invention::builder::InventionBuilder;

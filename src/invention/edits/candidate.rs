@@ -2,26 +2,23 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use super::refusals::{
+    already_connected, bounded, duplicate_module, listing, no_input_port, no_output_port,
+    not_connected, refused_config, unknown_module, unknown_module_type, Refusal,
+};
 use super::{CandidateWrite, EditFacts, EditedCandidate, ModuleFacts};
 use crate::invention::format::{Connection, Invention};
 use crate::invention::layout::Position;
 use crate::invention::names::PresentationChanges;
 use crate::invention::{audio_assets, authored_document};
 use crate::rpc::{
-    non_finite_refusal, truncate_on_char_boundary, ControlWrite, EditFailureReason, StructuralEdit,
-    MODULE_ERROR_BYTES,
+    non_finite_refusal, ControlWrite, EditFailureReason, StructuralEdit, MODULE_ERROR_BYTES,
 };
 use crate::traits::exact_number;
 use crate::{ControlKind, ControlValue};
 
-/// How many names a refusal lists when it shows what is available.
-const LISTED_NAMES: usize = 24;
-
 /// The most of a refused value a refusal echoes, in bytes.
 const ECHOED_VALUE_BYTES: usize = 64;
-
-/// Why an edit cannot apply; the caller adds its index and op.
-pub(super) struct Refusal(pub(super) EditFailureReason, pub(super) String);
 
 type Applied = Result<(), Refusal>;
 
@@ -145,29 +142,15 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
     ) -> Applied {
         self.named_modules.insert(id.to_string());
         if self.exists(id) {
-            return Err(Refusal(
-                EditFailureReason::DuplicateModule,
-                format!("module '{id}' already exists; remove it first to replace it"),
-            ));
+            return Err(duplicate_module(id));
         }
         if !self.facts.has_type(module_type) {
-            return Err(Refusal(
-                EditFailureReason::UnknownModuleType,
-                format!("unknown module type '{module_type}'"),
-            ));
+            return Err(unknown_module_type(module_type));
         }
         let facts = self
             .facts
             .describe(id, module_type, config)
-            .map_err(|error| {
-                Refusal(
-                    EditFailureReason::InvalidConfig,
-                    format!(
-                        "module '{id}' of type '{module_type}' refused the config: {}",
-                        bounded(&error, MODULE_ERROR_BYTES)
-                    ),
-                )
-            })?;
+            .map_err(|error| refused_config(id, module_type, &error))?;
         authored_document::upsert_module(&mut self.document, id, module_type, config);
         let name = name.map(str::to_string);
         authored_document::name_module(&mut self.document, id, name.clone());
@@ -205,23 +188,11 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         self.name_endpoints(from, to);
         let source = self.module_facts(from)?;
         if !source.outputs.iter().any(|port| port == from_port) {
-            return Err(Refusal(
-                EditFailureReason::UnknownPort,
-                format!(
-                    "module '{from}' has no output port '{from_port}' (available: {})",
-                    listing(&source.outputs)
-                ),
-            ));
+            return Err(no_output_port(from, from_port, &source.outputs));
         }
         let dest = self.module_facts(to)?;
         if !dest.inputs.iter().any(|port| port == to_port) {
-            return Err(Refusal(
-                EditFailureReason::UnknownPort,
-                format!(
-                    "module '{to}' has no input port '{to_port}' (available: {})",
-                    listing(&dest.inputs)
-                ),
-            ));
+            return Err(no_input_port(to, to_port, &dest.inputs));
         }
         if self
             .document
@@ -229,10 +200,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             .iter()
             .any(|conn| same_connection(conn, from, from_port, to, to_port))
         {
-            return Err(Refusal(
-                EditFailureReason::ConnectionExists,
-                format!("{from}.{from_port} is already connected to {to}.{to_port}"),
-            ));
+            return Err(already_connected(from, from_port, to, to_port));
         }
         self.document.connections.push(Connection {
             from: from.to_string(),
@@ -255,10 +223,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             .connections
             .retain(|conn| !same_connection(conn, from, from_port, to, to_port));
         if self.document.connections.len() == before {
-            return Err(Refusal(
-                EditFailureReason::ConnectionNotFound,
-                format!("{from}.{from_port} is not connected to {to}.{to_port}"),
-            ));
+            return Err(not_connected(from, from_port, to, to_port));
         }
         Ok(())
     }
@@ -432,13 +397,6 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
     }
 }
 
-pub(super) fn unknown_module(id: &str) -> Refusal {
-    Refusal(
-        EditFailureReason::UnknownModule,
-        format!("no module '{id}' exists at this point in the batch"),
-    )
-}
-
 /// Matches the way the retained document spells a connection: a missing
 /// port name is the empty port, as `RuntimeState::document` writes it.
 fn same_connection(
@@ -482,29 +440,5 @@ fn echo(value: &ControlValue) -> String {
         ControlValue::Number(number) => number.to_string(),
         ControlValue::Bool(flag) => flag.to_string(),
         ControlValue::String(text) => format!("{:?}", bounded(text, ECHOED_VALUE_BYTES)),
-    }
-}
-
-/// `text` cut at a character boundary to at most `max` bytes, marked with
-/// `…` when cut.
-fn bounded(text: &str, max: usize) -> String {
-    let mut cut = text.to_string();
-    truncate_on_char_boundary(&mut cut, max);
-    if cut.len() < text.len() {
-        cut.push('…');
-    }
-    cut
-}
-
-fn listing(names: &[String]) -> String {
-    if names.is_empty() {
-        return "none".to_string();
-    }
-    let shown = names.iter().take(LISTED_NAMES).cloned().collect::<Vec<_>>();
-    let more = names.len().saturating_sub(LISTED_NAMES);
-    if more == 0 {
-        shown.join(", ")
-    } else {
-        format!("{}, and {more} more", shown.join(", "))
     }
 }

@@ -360,6 +360,11 @@ impl GraphChange {
         self.mirror.edges.iter().any(|e| same_edge(e, edge))
     }
 
+    /// The port names of module `id` in the working topology.
+    pub(crate) fn ports(&self, id: &str) -> Option<&ModulePorts> {
+        self.mirror.modules.get(id).map(|module| &module.ports)
+    }
+
     /// Removes a connection if present.
     pub(crate) fn disconnect(&mut self, edge: RoutingConnection) {
         let before = self.mirror.edges.len();

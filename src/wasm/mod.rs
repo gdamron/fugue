@@ -168,16 +168,24 @@ impl WasmFugueEngine {
     #[wasm_bindgen(js_name = applyEdits)]
     /// Applies a JSON array of `apply_edits` operations (`add_module`,
     /// `remove_module`, `connect`, `disconnect`) to the loaded graph as one
-    /// change, or refuses them all with nothing changed, naming the first
-    /// that cannot apply. Returns how many applied.
-    pub fn apply_edits(&self, edits_json: &str) -> Result<usize, JsValue> {
+    /// change, or refuses them all with nothing changed.
+    ///
+    /// A refusal throws the daemon's error as JSON text: `code`, `message`
+    /// and, when one edit is to blame, `edit` with its `index`, `op` and
+    /// `reason`. The edits build and install on the calling thread, between
+    /// renders: on an AudioWorklet that is the audio thread, so a batch
+    /// that builds heavy modules can delay the next render.
+    pub fn apply_edits(&self, edits_json: &str) -> Result<(), JsValue> {
         let edits: Vec<crate::rpc::StructuralEdit> =
             serde_json::from_str(edits_json).map_err(|err| {
-                JsValue::from_str(&format!("invalid edits JSON: {err}; nothing was applied"))
+                rpc_error_value(&crate::rpc::RpcError::new(
+                    crate::rpc::RpcErrorCode::InvalidRequest,
+                    format!("invalid edits JSON: {err}; nothing was applied"),
+                ))
             })?;
         self.inner
             .apply_edits(&edits)
-            .map_err(|err| JsValue::from_str(&err.message))
+            .map_err(|err| rpc_error_value(&err))
     }
 
     #[wasm_bindgen(js_name = setCodeModuleStatus)]
@@ -324,6 +332,12 @@ fn to_js_error(error: Box<dyn std::error::Error>) -> JsValue {
 
 fn to_graph_error(error: crate::GraphCommandError) -> JsValue {
     JsValue::from_str(&error.to_string())
+}
+
+/// `error` as JSON text a host can parse, or its message should it not
+/// serialize.
+fn rpc_error_value(error: &crate::rpc::RpcError) -> JsValue {
+    JsValue::from_str(&serde_json::to_string(error).unwrap_or_else(|_| error.message.clone()))
 }
 
 fn parse_config_json(config_json: Option<String>) -> Result<serde_json::Value, JsValue> {

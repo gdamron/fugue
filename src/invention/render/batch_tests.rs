@@ -51,11 +51,15 @@ const ADD_VOICE: &str = r#"[
 #[test]
 fn a_batch_adds_and_wires_a_module_in_order() {
     let engine = loaded();
-    assert_eq!(engine.apply_edits(&edits(ADD_VOICE)).unwrap(), 2);
+    engine.apply_edits(&edits(ADD_VOICE)).unwrap();
     let (modules, connections) = shape(&engine);
     assert!(modules.contains(&"osc2".to_string()));
     assert!(connections.contains(&"osc2.audio>mix.audio.1".to_string()));
 }
+
+/// Frames that hold no whole number of the 220 Hz tone's cycles, so a
+/// restarted oscillator would be heard out of phase.
+const FRAMES: usize = 1000;
 
 #[test]
 fn survivors_keep_playing_through_an_edit() {
@@ -64,12 +68,27 @@ fn survivors_keep_playing_through_an_edit() {
     // before and after the edits is the same, sample for sample.
     let mut kept = loaded();
     let mut edited = loaded();
-    let before = render(&mut kept, 4800);
-    assert_eq!(render(&mut edited, 4800), before);
+    let before = render(&mut kept, FRAMES);
+    assert_eq!(render(&mut edited, FRAMES), before);
     edited.apply_edits(&edits(ADD_VOICE)).unwrap();
     let removed = r#"[{"op":"remove_module","id":"osc2"}]"#;
     edited.apply_edits(&edits(removed)).unwrap();
-    assert_eq!(render(&mut edited, 4800), render(&mut kept, 4800));
+    assert_eq!(render(&mut edited, FRAMES), render(&mut kept, FRAMES));
+}
+
+#[test]
+fn survivors_keep_playing_through_one_batch_that_adds_and_removes() {
+    let mut kept = loaded();
+    let mut edited = loaded();
+    render(&mut kept, FRAMES);
+    render(&mut edited, FRAMES);
+    let batch = r#"[
+        {"op":"add_module","id":"osc2","module_type":"oscillator"},
+        {"op":"connect","from":"osc2","from_port":"audio","to":"mix","to_port":"audio.1"},
+        {"op":"remove_module","id":"osc2"}]"#;
+    edited.apply_edits(&edits(batch)).unwrap();
+    assert_eq!(shape(&edited), shape(&kept));
+    assert_eq!(render(&mut edited, FRAMES), render(&mut kept, FRAMES));
 }
 
 #[test]
@@ -129,8 +148,25 @@ fn each_check_names_its_edit() {
             EditFailureReason::UnknownModule,
         ),
         (
+            r#"[{"op":"connect","from":"osc","from_port":"nowhere","to":"mix","to_port":"audio.1"}]"#,
+            EditFailureReason::UnknownPort,
+        ),
+        (
             r#"[{"op":"disconnect","from":"osc","from_port":"audio","to":"mix","to_port":"audio.1"}]"#,
             EditFailureReason::ConnectionNotFound,
+        ),
+        (
+            r#"[{"op":"disconnect","from":"nobody","from_port":"audio","to":"mix","to_port":"audio.1"}]"#,
+            EditFailureReason::UnknownModule,
+        ),
+        // An existing id is a duplicate before its type is looked up.
+        (
+            r#"[{"op":"add_module","id":"osc","module_type":"no_such_type"}]"#,
+            EditFailureReason::DuplicateModule,
+        ),
+        (
+            r#"[{"op":"add_module","id":"","module_type":"oscillator"}]"#,
+            EditFailureReason::InvalidName,
         ),
     ];
     for (batch, expected) in cases {
@@ -160,6 +196,77 @@ fn a_module_removed_and_added_again_in_one_batch_is_replaced() {
         {"op":"connect","from":"osc","from_port":"audio","to":"mix","to_port":"audio.0"}]"#;
     engine.apply_edits(&edits(batch)).unwrap();
     assert_eq!(shape(&engine), shape(&loaded()));
+    let frequency = engine.get_control("osc", "frequency").unwrap();
+    assert_eq!(frequency.as_number(), Ok(440.0));
+}
+
+#[test]
+fn the_first_edit_that_cannot_apply_is_named_whatever_follows() {
+    // Each later edit would fail too, and builds before the graph is
+    // touched, but the refusal names the first.
+    let cases = [
+        (
+            r#"[{"op":"remove_module","id":"nobody"},
+                {"op":"add_module","id":"x","module_type":"no_such_type"}]"#,
+            (0, EditFailureReason::UnknownModule),
+        ),
+        (
+            r#"[{"op":"remove_module","id":"osc"},
+                {"op":"connect","from":"osc","from_port":"audio","to":"mix","to_port":"audio.0"}]"#,
+            (1, EditFailureReason::UnknownModule),
+        ),
+        (
+            r#"[{"op":"add_module","id":"osc2","module_type":"oscillator"},
+                {"op":"add_module","id":"osc2","module_type":"oscillator","config":{"waveform":"bogus"}}]"#,
+            (1, EditFailureReason::DuplicateModule),
+        ),
+    ];
+    for (batch, expected) in cases {
+        let engine = loaded();
+        let before = shape(&engine);
+        let error = engine.apply_edits(&edits(batch)).unwrap_err();
+        let failure = error.edit.as_deref().expect("names the failing edit");
+        assert_eq!(
+            (failure.index, failure.reason),
+            expected,
+            "{}",
+            error.message
+        );
+        assert_eq!(shape(&engine), before, "{batch}");
+    }
+}
+
+#[test]
+fn a_batch_refused_after_every_edit_applied_changes_nothing() {
+    // Each edit applies in turn, but the change as a whole cannot be
+    // prepared: the scheduler it adds targets the module it removes.
+    let mut engine = loaded();
+    let mut reference = loaded();
+    let before = shape(&engine);
+    let batch = r#"[
+        {"op":"add_module","id":"sched","module_type":"control_scheduler",
+         "config":{"schedule":[{"at_step":1,"module":"osc","control":"frequency","value":330.0}]}},
+        {"op":"remove_module","id":"osc"}]"#;
+    let error = engine.apply_edits(&edits(batch)).unwrap_err();
+    assert!(error.edit.is_none(), "{error:?}");
+    assert!(
+        error.message.contains("nothing was applied"),
+        "{}",
+        error.message
+    );
+    assert_eq!(shape(&engine), before);
+    assert_eq!(render(&mut engine, FRAMES), render(&mut reference, FRAMES));
+}
+
+#[test]
+fn an_oversized_batch_is_refused() {
+    let one = r#"{"op":"remove_module","id":"nobody"}"#;
+    let batch = format!(
+        "[{}]",
+        vec![one; crate::rpc::MAX_EDITS_PER_BATCH + 1].join(",")
+    );
+    let error = loaded().apply_edits(&edits(&batch)).unwrap_err();
+    assert!(error.edit.is_none(), "{error:?}");
 }
 
 #[test]
