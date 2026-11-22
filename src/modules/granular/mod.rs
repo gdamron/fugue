@@ -390,6 +390,12 @@ impl Module for Granular {
         }
     }
 
+    fn input_fades_in(&self, index: usize) -> bool {
+        // Unpatched, the right input plays the left, so a cable patched in
+        // steps from that rather than from silence: only the left fades in.
+        index == 0
+    }
+
     fn input_rest(&self, index: usize) -> Option<f32> {
         // An unpatched right input falls back to the left, and a clock
         // stops syncing: neither has a value to glide to.
