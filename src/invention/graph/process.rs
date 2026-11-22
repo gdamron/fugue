@@ -87,6 +87,9 @@ impl SignalGraph {
         if !self.releases.is_empty() {
             self.finish_releases();
         }
+        if !self.onsets.is_empty() {
+            self.finish_onsets();
+        }
         // Every module has processed; what a zero-length block, or a module
         // that did not, left staged applies before the block is read back.
         self.flush_all_staged();
@@ -294,6 +297,9 @@ impl SignalGraph {
                 }
             }
         }
+        if !self.onsets.is_empty() {
+            self.play_onsets(module_idx, from, frames);
+        }
         if !self.releases.is_empty() {
             self.play_releases(module_idx, from, frames);
         }
@@ -380,6 +386,9 @@ impl SignalGraph {
                 if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
                     inst.module_mut().input_block_mut(route.to_port)[0] += value;
                 }
+            }
+            if !self.onsets.is_empty() {
+                self.play_onsets(module_idx, s, 1);
             }
             if !self.releases.is_empty() {
                 self.play_releases(module_idx, s, 1);

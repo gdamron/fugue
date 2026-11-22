@@ -14,6 +14,8 @@ use super::*;
 
 const PRE: usize = 40;
 const POST: usize = 20;
+/// A newly patched audio cable ramps in over 10 ms: 480 frames at 48 kHz.
+const RAMP: usize = 480;
 
 fn sine_loop(max_time: Option<f64>, dry_on_right: bool) -> Doc {
     let mut cfg = json!({ "time": 0.001, "min_time": 0.001, "feedback": 0.0 });
@@ -61,7 +63,10 @@ fn baseline(doc: &Doc, blocks: usize) -> (Vec<f32>, Vec<f32>) {
 }
 
 /// Adding a module to the loop is heard in the first block after the reload,
-/// and not before.
+/// and not before. The probe's cable into the dac is new, so the right channel
+/// ramps in linearly over `RAMP` frames (from `1/RAMP` at the first frame to
+/// full level at the last) instead of stepping in, then follows the left
+/// channel exactly.
 #[test]
 fn a_module_added_to_the_loop_is_heard_in_the_next_block() {
     let mut live = Live::start(&sine_loop(None, false));
@@ -78,10 +83,34 @@ fn a_module_added_to_the_loop_is_heard_in_the_next_block() {
         left[first].iter().any(|v| v.abs() > 1e-3),
         "the loop is sounding"
     );
+    assert!(
+        right[0] != 0.0,
+        "the probe is heard from the first frame after the reload"
+    );
+    const {
+        assert!(
+            POST * BLOCK > RAMP,
+            "the render must outlast the ramp to check the tail"
+        )
+    };
+    // The expected ramp is the unity probe (= left) scaled by (i + 1) / RAMP.
+    // Tolerance: left peaks below 1, so one f32 rounding of the product, or of
+    // the gain, is about 6e-8; 1e-6 absolute leaves headroom for a few such
+    // roundings while staying far below the smallest ramp step (left * 1/480,
+    // about 1e-3 for an audible signal), so a wrong slope or offset fails.
+    let expected: Vec<f32> = (0..RAMP)
+        .map(|i| left[i] * ((i + 1) as f32 / RAMP as f32))
+        .collect();
+    assert_close(
+        &right[..RAMP],
+        &expected,
+        1e-6,
+        "the probe ramps in linearly over 10 ms",
+    );
     assert_bits(
-        &right[first],
-        &left[first],
-        "the probe (unity) passes the delay's output in block 1",
+        &right[RAMP - 1..],
+        &left[RAMP - 1..],
+        "from the ramp's last frame the probe (unity) passes the delay's output",
     );
 }
 

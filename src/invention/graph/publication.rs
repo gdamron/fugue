@@ -30,6 +30,7 @@ use std::sync::Arc;
 
 use super::compile::CompiledTopology;
 use super::notes::NoteTaps;
+use super::onsets::moved_to;
 use super::releases::{id_at, Previous};
 use super::{RoutingConnection, SignalGraph};
 use crate::control_request::RampRoom;
@@ -595,8 +596,13 @@ impl SignalGraph {
                 |old| remap.get(old),
                 |old| id_at(retired_modules, old).and_then(|id| modules.get_index_of(id)),
             );
+            // Their sources stay in the retired order until every input is
+            // reset, so what each lost cable was heard at is found by it.
+            self.onsets.remap_modules(|old| remap.get(old));
+            self.settle_onsets(Some(&retired.modules));
         } else {
             self.releases.clear();
+            self.onsets.clear();
         }
         for mi in 0..self.modules.len() {
             let survivor = retired.survivor.get(mi).copied().unwrap_or(false);
@@ -611,10 +617,15 @@ impl SignalGraph {
                     ports,
                     routes: topology.compiled_routes.get(old).map_or(&[], Vec::as_slice),
                     carry: &topology.out_prev,
+                    everyone: &topology.compiled_routes,
+                    index: old,
                     modules: Some(&retired.modules),
                 });
                 self.reset_module_inputs(new, was);
             }
+            let (modules, retired_modules) = (&self.modules, &retired.modules);
+            self.onsets
+                .remap_sources(|old| moved_to(retired_modules, modules, old));
         }
     }
 
