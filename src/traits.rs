@@ -649,8 +649,10 @@ pub trait Module: Send {
     ///
     /// Patching a sounding source into an audio input would step what the
     /// module hears, a click. Instead the graph ramps the new cable in from
-    /// silence over a few milliseconds. Called on the audio thread as an
-    /// edit installs: it must not allocate, lock or free.
+    /// silence over a few milliseconds (and, when the same edit unpatches
+    /// another cable from the port, glides that one out meanwhile: a
+    /// crossfade). Called on the audio thread as an edit installs: it must
+    /// not allocate, lock or free.
     ///
     /// The default goes by the port's name: `audio` and its variants
     /// (`audio_left`, `audio.0`) and `sidechain` fade in. A module whose

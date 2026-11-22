@@ -599,7 +599,7 @@ impl SignalGraph {
             // Their sources stay in the retired order until every input is
             // reset, so what each lost cable was heard at is found by it.
             self.onsets.remap_modules(|old| remap.get(old));
-            self.settle_onsets(Some(&retired.modules));
+            self.settle_falling(&retired.topology.out_prev, Some(&retired.modules));
         } else {
             self.releases.clear();
             self.onsets.clear();
