@@ -1083,6 +1083,7 @@ dependencies = [
  "claxon",
  "cpal",
  "flacenc",
+ "flate2",
  "fs2",
  "getrandom 0.4.3",
  "hound",

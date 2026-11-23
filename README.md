@@ -210,6 +210,28 @@ without touching the audio, a name that is blank or holds a control character
 is dropped with a load warning, and an older core plays the piece and drops
 the names when it saves. Commands always address a module by its id.
 
+#### Compressed documents (`.fyug`)
+
+A `.fyug` file is an invention document compressed with gzip (RFC 1952), and
+nothing else: the same UTF-8 JSON, gzipped. Anyone can read one without Fyug:
+
+```sh
+gunzip -c piece.fyug
+```
+
+and make one from a JSON document with `gzip -c piece.json > piece.fyug`.
+
+`Invention::from_file`, and everything that reads a document from a file
+(developments by `path`, content discovery, package examples), tells the two
+apart by content, not name: a file that starts with the gzip magic bytes
+`1f 8b` is decompressed, and anything else is read as JSON. So a plain JSON
+file named `.fyug` and a gzipped one named `.json` both load. A document is
+limited to 16 MiB as read, whether on disk or once decompressed; a compressed
+file that expands past that, or that isn't valid gzip, is refused with a
+message naming the file and the reason. Fugue writes documents to disk as plain
+JSON, and arranges a development's layout only in a plain JSON file. The
+reader is `fugue::invention::file`.
+
 Load and run it:
 
 ```rust

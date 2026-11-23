@@ -123,3 +123,47 @@ fn oversized_documents_name_the_file_and_the_limit() {
         "{diagnostic}"
     );
 }
+
+fn gzip(bytes: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(bytes).unwrap();
+    encoder.finish().unwrap()
+}
+
+#[test]
+fn a_compressed_document_lists_and_loads() {
+    let (_temp, roots) = roots();
+    write(&roots.workspace.join("long.wav"), b"RIFF");
+    write(
+        &roots.workspace.join("song.json"),
+        &gzip(&uses_sample("long.wav")),
+    );
+    let mut catalog = ContentCatalog::new(roots, "session");
+    let page = catalog.list(&ContentListQuery::default()).unwrap();
+    assert_eq!(page.items.len(), 1, "{:?}", page.diagnostics);
+    let reference = page.items[0].reference.clone();
+    let loaded = catalog
+        .load_invention(&ContentDetailQuery {
+            schema_version: 1,
+            reference,
+        })
+        .unwrap();
+    assert_eq!(loaded.modules[0].module_type, "sample_player");
+}
+
+#[test]
+fn a_document_that_expands_past_the_limit_names_the_file() {
+    let (_temp, roots) = roots();
+    write(
+        &roots.workspace.join("bomb.json"),
+        &gzip(&vec![b' '; DOCUMENT_READ_LIMIT as usize + 1]),
+    );
+    let page = ContentCatalog::new(roots, "session")
+        .list(&ContentListQuery::default())
+        .unwrap();
+    assert_eq!(page.diagnostics.len(), 1);
+    let diagnostic = &page.diagnostics[0];
+    assert!(diagnostic.message.contains("bomb.json"), "{diagnostic}");
+    assert!(diagnostic.message.contains("16 MiB"), "{diagnostic}");
+}

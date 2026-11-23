@@ -23,6 +23,7 @@ pub(crate) mod development_file;
 // is built on it; remove this allowance then.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod edits;
+pub mod file;
 pub mod format;
 pub mod graph;
 pub mod handles;

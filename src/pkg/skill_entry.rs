@@ -211,7 +211,12 @@ pub fn is_host_safe_name(name: &str) -> bool {
 fn check_example(package_root: &Path, example: &str) -> Result<(), SkillPackageError> {
     let path = package_file::locate(package_root, Path::new(example))
         .map_err(SkillPackageError::Example)?;
-    let text = read_text(&path)?;
+    let text = crate::invention::file::read(&path)
+        .map_err(|err| SkillPackageError::Unreadable {
+            path: path.clone(),
+            reason: err.to_string(),
+        })?
+        .text;
     crate::invention::Invention::from_json(&text).map_err(|err| {
         SkillPackageError::InvalidExample {
             path,

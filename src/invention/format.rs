@@ -98,13 +98,26 @@ impl Invention {
         Ok(invention)
     }
 
+    /// Loads an invention from a document file: JSON, or JSON gzipped (a
+    /// `.fyug` file), told apart by content and held to the 16 MiB document
+    /// limit (see [`super::file`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let file = Path::new(path);
+        let bytes = crate::pkg::read_limit::read_document(file)?;
+        // A document in a package a frozen session's lockfile locks loads
+        // only as verified, by the bytes on disk, before they are decoded.
+        crate::pkg::lock::check_bytes(file, &bytes)?;
+        let text = super::file::text(file, super::file::decode(file, &bytes)?.into_owned())?;
+        let mut invention = Self::from_json(&text)?;
+        invention.source_path = Some(Path::new(path).to_path_buf());
+        Ok(invention)
+    }
+
     /// Loads an invention from a JSON file.
+    #[cfg(target_arch = "wasm32")]
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let json = std::fs::read_to_string(path)?;
-        // A document in a package a frozen session's lockfile locks loads
-        // only as verified.
-        #[cfg(not(target_arch = "wasm32"))]
-        crate::pkg::lock::check_bytes(Path::new(path), json.as_bytes())?;
         let mut invention = Self::from_json(&json)?;
         invention.source_path = Some(Path::new(path).to_path_buf());
         Ok(invention)
