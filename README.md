@@ -228,9 +228,9 @@ apart by content, not name: a file that starts with the gzip magic bytes
 file's name. Content discovery lists a workspace's `.json` files, compressed
 or not. A document is limited to 16 MiB as read, whether on disk or once
 decompressed; a compressed file that expands past that, or that isn't valid
-gzip, is refused with a message naming the file and the reason. Fugue writes documents to disk as plain
-JSON, and arranges a development's layout only in a plain JSON file. The
-reader is `fugue::invention::file`.
+gzip, is refused with a message naming the file and the reason. Fugue
+writes documents to disk as plain JSON, and arranges a development's layout
+only in a plain JSON file. The reader is `fugue::invention::file`.
 
 Load and run it:
 
