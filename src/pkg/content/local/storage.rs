@@ -86,11 +86,7 @@ pub(super) fn workspace_refs(
         let kind = entry.file_type().map_err(io_error)?;
         if kind.is_dir() {
             workspace_refs(root, &entry.path(), out, depth + 1)?;
-        } else if entry
-            .path()
-            .extension()
-            .is_some_and(|e| e == "json" || e == crate::invention::file::COMPRESSED_EXTENSION)
-        {
+        } else if entry.path().extension().is_some_and(|e| e == "json") {
             let path = entry.path();
             // JSON assets are not inventions. Malformed invention candidates remain diagnostics.
             if let Ok(bytes) = contained(root, &path).and_then(|path| read_file(&path)) {

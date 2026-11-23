@@ -98,9 +98,9 @@ impl Invention {
         Ok(invention)
     }
 
-    /// Loads an invention from a document file: JSON, or JSON gzipped (a
-    /// `.fyug` file), told apart by content and held to the 16 MiB document
-    /// limit (see [`super::file`]).
+    /// Loads an invention from a document file: JSON, or JSON gzipped, told
+    /// apart by content and held to the 16 MiB document limit (see
+    /// [`super::file`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let file = Path::new(path);

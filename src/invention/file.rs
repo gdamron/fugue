@@ -1,19 +1,18 @@
 //! Reading an invention document from a file.
 //!
 //! A document file holds the invention JSON either as is or gzip-compressed
-//! (RFC 1952). A compressed document is a `.fyug` file: the JSON document,
-//! gzipped, and nothing else, so `gunzip -c piece.fyug` prints it. Readers
-//! tell the two apart by content, never by name: a file that starts with the
-//! gzip magic bytes `1f 8b` is decompressed (JSON cannot start with them), and
-//! any other file is read as JSON. A plain JSON file named `.fyug` and a
-//! gzipped one named `.json` both load.
+//! (RFC 1952): the JSON document, gzipped, and nothing else, so `gunzip -c`
+//! prints it. Readers tell the two apart by content, never by name: a file
+//! that starts with the gzip magic bytes `1f 8b` is decompressed (JSON cannot
+//! start with them), and any other file is read as JSON, whatever its
+//! extension.
 //!
 //! The document a file decompresses to is held to the same 16 MiB limit as a
 //! plain one ([`DOCUMENT_READ_LIMIT`]), so a small file that expands without
 //! end is refused once it passes the limit, not after.
 //!
-//! Fugue writes documents as plain JSON on disk; `.fyug` is what a player
-//! hands a person to keep.
+//! Fugue writes documents as plain JSON on disk; a compressed one comes from
+//! elsewhere, such as a host that hands a person a piece to keep.
 //!
 //! [`DOCUMENT_READ_LIMIT`]: crate::pkg::read_limit::DOCUMENT_READ_LIMIT
 //!
@@ -29,9 +28,6 @@ use std::fmt;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::Read;
 use std::path::{Path, PathBuf};
-
-/// The extension of a compressed document file.
-pub const COMPRESSED_EXTENSION: &str = "fyug";
 
 /// Whether `bytes` are gzip-compressed: they start with its magic bytes.
 pub fn is_compressed(bytes: &[u8]) -> bool {

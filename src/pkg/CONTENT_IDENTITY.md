@@ -147,7 +147,7 @@ what the file is read for, never on which path reached it:
 
 - **Documents** (inventions, developments, JSON/text assets) are parsed, so they
   are read whole and capped at 16 MiB. An invention or development file may be
-  gzip-compressed (a `.fyug` file, told apart by content); it is capped at
+  gzip-compressed (told apart by content, whatever its name); it is capped at
   16 MiB on disk and again once decompressed, and hashed by its bytes on disk.
 - **Audio assets** are only hashed. They are streamed through SHA-256 in fixed
   chunks, never held in memory, and capped at 1 GiB per file: about 100 minutes
