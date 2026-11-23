@@ -52,7 +52,7 @@ impl ReadKind {
         }
     }
 
-    fn remedy(self) -> &'static str {
+    pub(crate) fn remedy(self) -> &'static str {
         match self {
             ReadKind::Document => {
                 "split the document, or move bulky data into a separate asset file"
@@ -137,7 +137,7 @@ pub fn find_too_large<'a>(
     None
 }
 
-fn human_bytes(bytes: u64) -> String {
+pub(crate) fn human_bytes(bytes: u64) -> String {
     const MIB: u64 = 1024 * 1024;
     const GIB: u64 = 1024 * MIB;
     match bytes {

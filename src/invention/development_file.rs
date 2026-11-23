@@ -93,8 +93,17 @@ pub(crate) fn stage_layout(
         .write(true)
         .open(path)
         .map_err(|error| failed(format!("cannot be written: {error}")))?;
-    let text =
-        fs::read_to_string(path).map_err(|error| failed(format!("cannot be read: {error}")))?;
+    let bytes = fs::read(path).map_err(|error| failed(format!("cannot be read: {error}")))?;
+    if super::file::is_compressed(&bytes) {
+        return Err(failed(
+            "is compressed (gzip), and a layout is arranged only in plain JSON; save it \
+             uncompressed (gunzip -c it to a new file), point the piece at that file and \
+             load it again to arrange it"
+                .to_string(),
+        ));
+    }
+    let text = String::from_utf8(bytes)
+        .map_err(|_| failed("cannot be read: it is not UTF-8 text".to_string()))?;
     let on_disk = Invention::from_json(&text).map_err(|_| changed(path))?;
     if on_disk != without_source(loaded) {
         return Err(changed(path));

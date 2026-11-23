@@ -107,6 +107,41 @@ fn a_read_only_file_is_refused_and_nothing_changes() {
     assert_eq!(mode, 0o444);
 }
 
+// A compressed (.fyug) development file loads, but its layout is written
+// back as JSON only: it is refused with what to do, and left as it was.
+#[test]
+fn a_compressed_file_is_refused_with_how_to_arrange_it() {
+    use std::io::Write;
+
+    let (_dir, dir) = temp();
+    let file = dir.join("pad.json");
+    let text = serde_json::to_string_pretty(&voice(110.0, 165.0)).unwrap();
+    let mut packed = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    packed.write_all(text.as_bytes()).unwrap();
+    let mut piece = mixed_piece(&dir);
+    std::fs::write(&file, packed.finish().unwrap()).unwrap();
+    let document = fugue::Invention::from_file(dir.join("piece.json").to_str().unwrap()).unwrap();
+    piece
+        .running
+        .reload(document)
+        .expect("a compressed development loads");
+    let untouched = Untouched::record(&piece, &dir);
+
+    let error = piece
+        .arrange(&["pad"], &[("osc_a", Some((1.0, 2.0)))])
+        .unwrap_err();
+    assert_eq!(
+        refused_edit(&error),
+        (0, EditFailureReason::DevelopmentNotWritten)
+    );
+    assert!(
+        error.message.contains("save it uncompressed"),
+        "{}",
+        error.message
+    );
+    untouched.check(&piece, "compressed file");
+}
+
 // The design's other unwritable file: one changed on disk since the piece
 // loaded it, or gone. Reloading takes the change and the move then applies.
 #[test]
