@@ -107,7 +107,7 @@ fn a_read_only_file_is_refused_and_nothing_changes() {
     assert_eq!(mode, 0o444);
 }
 
-// A compressed (.fyug) development file loads, but its layout is written
+// A compressed (gzip) development file loads, but its layout is written
 // back as JSON only: it is refused with what to do, and left as it was.
 #[test]
 fn a_compressed_file_is_refused_with_how_to_arrange_it() {

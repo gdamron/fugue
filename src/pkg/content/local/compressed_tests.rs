@@ -1,4 +1,4 @@
-//! Compressed (gzip, `.fyug`) documents are listed, loaded, capped and
+//! Compressed (gzip) documents are listed, loaded, capped and
 //! verified like plain ones.
 
 use super::*;
@@ -50,20 +50,16 @@ fn query(reference: ContentRef) -> ContentDetailQuery {
 }
 
 #[test]
-fn compressed_workspace_documents_list_and_load_by_either_name() {
+fn compressed_workspace_documents_list_and_load_beside_plain_ones() {
     let (_temp, roots) = roots();
-    write(
-        &roots.workspace.join("song.fyug"),
-        &gzip(&document(220.0, false)),
-    );
     write(
         &roots.workspace.join("packed.json"),
         &gzip(&document(330.0, false)),
     );
-    write(&roots.workspace.join("plain.fyug"), &document(440.0, false));
+    write(&roots.workspace.join("plain.json"), &document(440.0, false));
     let mut catalog = ContentCatalog::new(roots, "session");
     let page = catalog.list(&ContentListQuery::default()).unwrap();
-    assert_eq!(page.items.len(), 3, "{:?}", page.diagnostics);
+    assert_eq!(page.items.len(), 2, "{:?}", page.diagnostics);
     for item in page.items {
         let loaded = catalog.load_invention(&query(item.reference)).unwrap();
         assert_eq!(loaded.modules[0].module_type, "oscillator");
@@ -74,7 +70,7 @@ fn compressed_workspace_documents_list_and_load_by_either_name() {
 fn a_document_that_expands_past_the_limit_is_too_large_naming_the_file() {
     let (_temp, roots) = roots();
     write(
-        &roots.workspace.join("bomb.fyug"),
+        &roots.workspace.join("bomb.json"),
         &gzip(&vec![b' '; DOCUMENT_READ_LIMIT as usize + 1]),
     );
     let page = ContentCatalog::new(roots, "session")
@@ -83,7 +79,7 @@ fn a_document_that_expands_past_the_limit_is_too_large_naming_the_file() {
     assert_eq!(page.diagnostics.len(), 1);
     let diagnostic = &page.diagnostics[0];
     assert_eq!(diagnostic.code, "file_too_large");
-    assert!(diagnostic.message.contains("bomb.fyug"), "{diagnostic}");
+    assert!(diagnostic.message.contains("bomb.json"), "{diagnostic}");
     assert!(diagnostic.message.contains("16 MiB"), "{diagnostic}");
 }
 
