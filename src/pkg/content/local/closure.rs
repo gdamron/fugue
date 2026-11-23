@@ -30,8 +30,12 @@ impl ContentRoots {
             crate::pkg::lock::check_bytes(&path, &bytes)
                 .map_err(|e| err("integrity_mismatch", e))?;
         }
-        let text =
-            crate::invention::file::decode(&path, &bytes).map_err(|e| err("invalid_content", e))?;
+        let text = crate::invention::file::decode(&path, &bytes).map_err(|e| match e {
+            crate::invention::file::DocumentFileError::ExpandsTooFar { .. } => {
+                err("file_too_large", e)
+            }
+            e => err("invalid_content", e),
+        })?;
         let mut document: Invention = serde_json::from_slice(&text)
             .map_err(|e| err("invalid_content", format!("{}: {e}", path.display())))?;
         document.source_path = Some(path.clone());

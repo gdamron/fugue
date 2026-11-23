@@ -12,7 +12,7 @@
 //! plain one ([`DOCUMENT_READ_LIMIT`]), so a small file that expands without
 //! end is refused once it passes the limit, not after.
 //!
-//! Fyug writes documents as plain JSON on disk; `.fyug` is what a player
+//! Fugue writes documents as plain JSON on disk; `.fyug` is what a player
 //! hands a person to keep.
 //!
 //! [`DOCUMENT_READ_LIMIT`]: crate::pkg::read_limit::DOCUMENT_READ_LIMIT
@@ -20,9 +20,7 @@
 //! Reading needs a file system and the gzip decoder, which the wasm engine
 //! does without: there, only [`is_compressed`] and [`text`] are built.
 
-use crate::pkg::read_limit::ReadError;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::pkg::read_limit::{self, ReadKind};
+use crate::pkg::read_limit::{self, ReadError, ReadKind};
 #[cfg(not(target_arch = "wasm32"))]
 use flate2::read::MultiGzDecoder;
 #[cfg(not(target_arch = "wasm32"))]
@@ -40,7 +38,8 @@ pub fn is_compressed(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0x1f, 0x8b])
 }
 
-/// Why a document file could not be read. Each message names the file.
+/// Why a document file could not be read. Each message names the file,
+/// except an I/O error's, which is the system's own.
 #[derive(Debug)]
 pub enum DocumentFileError {
     /// The file could not be read, or is over the limit on disk.
@@ -59,10 +58,10 @@ impl fmt::Display for DocumentFileError {
             DocumentFileError::Read(e) => e.fmt(f),
             DocumentFileError::ExpandsTooFar { path, limit } => write!(
                 f,
-                "{} is compressed and expands past the {} MiB limit on documents; \
-                 split the document, or move bulky data into a separate asset file",
+                "{} is compressed and expands past the {} limit on documents; {}",
                 path.display(),
-                limit / (1024 * 1024)
+                read_limit::human_bytes(*limit),
+                ReadKind::Document.remedy()
             ),
             DocumentFileError::Corrupt { path, reason } => write!(
                 f,

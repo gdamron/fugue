@@ -86,11 +86,19 @@ pub(super) fn workspace_refs(
         let kind = entry.file_type().map_err(io_error)?;
         if kind.is_dir() {
             workspace_refs(root, &entry.path(), out, depth + 1)?;
-        } else if entry.path().extension().is_some_and(|e| e == "json") {
+        } else if entry
+            .path()
+            .extension()
+            .is_some_and(|e| e == "json" || e == crate::invention::file::COMPRESSED_EXTENSION)
+        {
             let path = entry.path();
             // JSON assets are not inventions. Malformed invention candidates remain diagnostics.
             if let Ok(bytes) = contained(root, &path).and_then(|path| read_file(&path)) {
-                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                let document = crate::invention::file::decode(&path, &bytes);
+                if let Ok(value) = document
+                    .map_err(|_| ())
+                    .and_then(|d| serde_json::from_slice::<serde_json::Value>(&d).map_err(|_| ()))
+                {
                     if value.get("modules").is_none() || value.get("connections").is_none() {
                         continue;
                     }

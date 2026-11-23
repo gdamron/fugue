@@ -225,7 +225,8 @@ and make one from a JSON document with `gzip -c piece.json > piece.fyug`.
 (developments by `path`, content discovery, package examples), tells the two
 apart by content, not name: a file that starts with the gzip magic bytes
 `1f 8b` is decompressed, and anything else is read as JSON. So a plain JSON
-file named `.fyug` and a gzipped one named `.json` both load. A document is
+file named `.fyug` and a gzipped one named `.json` both load, and content
+discovery lists a workspace's `.fyug` files beside its `.json` ones. A document is
 limited to 16 MiB as read, whether on disk or once decompressed; a compressed
 file that expands past that, or that isn't valid gzip, is refused with a
 message naming the file and the reason. Fugue writes documents to disk as plain

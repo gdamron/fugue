@@ -96,8 +96,9 @@ pub(crate) fn stage_layout(
     let bytes = fs::read(path).map_err(|error| failed(format!("cannot be read: {error}")))?;
     if super::file::is_compressed(&bytes) {
         return Err(failed(
-            "is compressed (gzip) and is only arranged as JSON; save it as a .json file \
-             and load that to arrange it"
+            "is compressed (gzip), and a layout is arranged only in plain JSON; save it \
+             uncompressed (gunzip -c it to a new file), point the piece at that file and \
+             load it again to arrange it"
                 .to_string(),
         ));
     }

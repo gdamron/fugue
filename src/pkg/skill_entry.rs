@@ -213,8 +213,13 @@ fn check_example(package_root: &Path, example: &str) -> Result<(), SkillPackageE
         .map_err(SkillPackageError::Example)?;
     let text = crate::invention::file::read(&path)
         .map_err(|err| SkillPackageError::Unreadable {
+            reason: match err {
+                crate::invention::file::DocumentFileError::NotText { .. } => {
+                    "not UTF-8 text".to_string()
+                }
+                err => err.to_string(),
+            },
             path: path.clone(),
-            reason: err.to_string(),
         })?
         .text;
     crate::invention::Invention::from_json(&text).map_err(|err| {

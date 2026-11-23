@@ -309,3 +309,26 @@ fn refuses_a_package_of_another_kind() {
         Err(SkillPackageError::NotSkillPackage { .. })
     ));
 }
+
+#[test]
+fn a_compressed_example_is_checked_and_a_corrupt_one_refused() {
+    use std::io::Write;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(INVENTION.as_bytes()).unwrap();
+    let packed = encoder.finish().unwrap();
+    let dir = package(&[("SKILL.md", SKILL)]);
+    std::fs::create_dir_all(dir.path().join("examples")).unwrap();
+    std::fs::write(dir.path().join("examples/piece.fyug"), &packed).unwrap();
+    let examples = serde_json::json!({"examples": ["examples/piece.fyug"]});
+    check_skill_package(dir.path(), &manifest(examples.clone())).unwrap();
+
+    std::fs::write(
+        dir.path().join("examples/piece.fyug"),
+        &packed[..packed.len() / 2],
+    )
+    .unwrap();
+    let err = check_skill_package(dir.path(), &manifest(examples)).unwrap_err();
+    assert!(matches!(err, SkillPackageError::Unreadable { .. }), "{err}");
+    assert!(err.to_string().contains("piece.fyug"), "{err}");
+    assert!(err.to_string().contains("cannot be decompressed"), "{err}");
+}

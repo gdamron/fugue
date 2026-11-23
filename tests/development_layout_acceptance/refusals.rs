@@ -135,7 +135,7 @@ fn a_compressed_file_is_refused_with_how_to_arrange_it() {
         (0, EditFailureReason::DevelopmentNotWritten)
     );
     assert!(
-        error.message.contains("save it as a .json file"),
+        error.message.contains("save it uncompressed"),
         "{}",
         error.message
     );
