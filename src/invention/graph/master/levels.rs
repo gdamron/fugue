@@ -191,7 +191,6 @@ fn rms(sum_of_squares: f64, frames: u64, peak: f32) -> Option<f32> {
 
 /// The meter shared by the audio thread, which folds blocks in, and the
 /// sampler, which drains windows out. See the module docs for the handoff.
-#[derive(Default)]
 pub(crate) struct LevelMeter {
     ctl: AtomicU64,
     slots: [Slot; 2],
@@ -200,6 +199,22 @@ pub(crate) struct LevelMeter {
     /// The sinks' latest total of replaced non-finite samples. A running
     /// total, so a drain reads it as is rather than per window.
     non_finite_samples: AtomicU64,
+}
+
+impl Default for LevelMeter {
+    fn default() -> Self {
+        let meter = Self {
+            ctl: AtomicU64::default(),
+            slots: Default::default(),
+            drain: Mutex::default(),
+            non_finite_samples: AtomicU64::default(),
+        };
+        // Some platforms' locks (macOS's pthread mutex) allocate on their
+        // first use: take it once here, so the first drain, which a player
+        // may make from its audio thread, allocates nothing.
+        drop(meter.drain.lock());
+        meter
+    }
 }
 
 impl LevelMeter {

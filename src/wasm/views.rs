@@ -37,7 +37,9 @@ impl WasmFugueEngine {
     /// nothing, so a player may call it from its audio thread.
     pub fn take_views_into(&mut self, out: &Float64Array) -> Result<bool, JsValue> {
         if out.length() as usize != VIEWS_LEN {
-            return Err(JsValue::from_str("views buffer length must be viewsLength()"));
+            return Err(JsValue::from_str(
+                "views buffer length must be viewsLength()",
+            ));
         }
         let Some(reading) = self.inner.take_view_reading(self.views_clock.as_deref()) else {
             return Ok(false);

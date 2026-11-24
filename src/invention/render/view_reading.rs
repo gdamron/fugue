@@ -34,7 +34,7 @@ impl RenderEngine {
     /// [`Self::get_control`] builds for a module that is missing. (A module
     /// that exists but counts no beats still answers with a message, so a
     /// player names only a clock.)
-    fn elapsed_beats(&self, id: &str) -> Option<f64> {
+    pub(super) fn elapsed_beats(&self, id: &str) -> Option<f64> {
         let surfaces = self.control_surfaces.lock().ok()?;
         match surfaces.get(id)?.get_control("elapsed") {
             Ok(ControlValue::Number(beats)) => Some(f64::from(beats)),
