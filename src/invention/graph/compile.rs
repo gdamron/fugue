@@ -113,6 +113,7 @@ impl CompiledTopology {
         std::mem::swap(&mut self.chunked, &mut graph.chunked);
         // Its modules or routes changed: their tables are found again.
         graph.tables_stale = true;
+        graph.clock_steps_stale = true;
     }
 }
 

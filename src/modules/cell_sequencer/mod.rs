@@ -156,6 +156,10 @@ pub struct CellSequencer {
     step_duration_samples: u32,
     samples_since_gate: u32,
     first_gate_received: bool,
+    /// Whether `step_duration_samples` was measured between two clock
+    /// edges; until then it is the clock's expected step, when the graph
+    /// knows it (see [`Module::expect_clock_step`]), or a guess.
+    step_measured: bool,
     active_note: Option<i8>,
     /// One-shot playback of the bank has completed; `ended` latches high and
     /// clock edges are ignored until reset or an explicit cell selection.
@@ -246,6 +250,7 @@ impl CellSequencer {
             step_duration_samples: sample_rate / 2,
             samples_since_gate: 0,
             first_gate_received: false,
+            step_measured: false,
             active_note: None,
             finished: false,
             retrigger_dip: false,
@@ -811,6 +816,7 @@ impl CellSequencer {
         if gate_rising && !self.finished {
             if self.first_gate_received && self.samples_since_gate > 0 {
                 self.step_duration_samples = self.samples_since_gate;
+                self.step_measured = true;
             }
 
             if self.first_gate_received {
@@ -945,6 +951,16 @@ impl Module for CellSequencer {
             self.process_sample(i, one_shot);
         }
         true
+    }
+
+    fn measured_clock_input(&self) -> Option<&'static str> {
+        Some("clock")
+    }
+
+    fn expect_clock_step(&mut self, samples: u32) {
+        if !self.step_measured {
+            self.step_duration_samples = samples;
+        }
     }
 
     fn inputs(&self) -> &[&str] {
