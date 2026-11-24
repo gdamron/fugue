@@ -63,9 +63,6 @@ impl SignalGraph {
         // while held and then resumed applies before the first frame plays.
         let paused = self.transport.pause_requested();
         self.ensure_process_order();
-        if std::mem::take(&mut self.clock_steps_stale) {
-            self.expect_clock_steps();
-        }
 
         let frames = left.len().min(right.len()).min(self.block_capacity);
         // A paused graph plays only what is left of its fade out, and holds
@@ -79,6 +76,12 @@ impl SignalGraph {
         let mut start = 0;
         while start < frames {
             let end = start + self.apply_due_requests(frames - start);
+            // After the segment's requests: an edit that landed on its
+            // first sample (a timed one, on a bar line and so on a clock
+            // edge) or a tempo written there is heard by the first gate.
+            if std::mem::take(&mut self.clock_steps_stale) {
+                self.expect_clock_steps();
+            }
             self.process_segment(&mut left[start..end], &mut right[start..end]);
             self.tap_notes(end - start);
             self.tap_outputs(end - start);
