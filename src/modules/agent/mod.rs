@@ -47,9 +47,9 @@ use crate::{ControlMeta, Module};
 use self::controls::{Edges, COOLDOWN as COOLDOWN_CONTROL, ENABLED, RESET, TABLE, TRIGGER};
 
 pub use self::controls::AgentControls;
-pub(crate) use self::definition::{
-    names_definition, plays_unrecorded, unauthorable, unstated_keys,
-};
+#[cfg(any(test, not(target_arch = "wasm32")))]
+pub(crate) use self::definition::names_definition;
+pub(crate) use self::definition::{plays_unrecorded, unauthorable, unstated_keys};
 
 mod controls;
 mod definition;

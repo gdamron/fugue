@@ -33,6 +33,7 @@ pub(crate) struct AgentDefinition {
 
 impl AgentDefinition {
     /// The definition's default model, if it names one.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn model(&self) -> Option<&str> {
         self.model.as_deref()
     }

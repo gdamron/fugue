@@ -154,6 +154,9 @@ pub(crate) enum Intent {
 pub(crate) enum Source {
     User,
     Agent,
+    // Scripts run in the host on wasm, so nothing there submits as `Script`;
+    // the tier stays so ranks order the same on every target.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Script,
     Automation,
 }
