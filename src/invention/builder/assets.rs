@@ -49,14 +49,7 @@ pub(crate) fn resolve_json_assets(
     let mut assets = HashMap::new();
     for (name, asset) in &invention.assets {
         let resolved = resolve_asset_path(invention.source_path.as_deref(), &asset.path)?;
-        let contents = std::fs::read_to_string(&resolved).map_err(|err| {
-            format!(
-                "Failed to read asset '{}' from '{}': {}",
-                name,
-                resolved.display(),
-                err
-            )
-        })?;
+        let contents = read_asset_text(name, &resolved)?;
         #[cfg(not(target_arch = "wasm32"))]
         crate::pkg::lock::check_bytes(&resolved, contents.as_bytes())?;
         let is_json = resolved
@@ -96,6 +89,46 @@ pub(crate) fn resolve_json_assets(
     }
 
     Ok(())
+}
+
+/// Reads an asset whole, held to the document read limit: the size is
+/// checked from metadata before any byte is read, so an oversized file is
+/// refused with its path and the limit instead of filling memory.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_asset_text(name: &str, path: &Path) -> Result<String, String> {
+    use crate::pkg::read_limit::{human_bytes, read_document, size_against, ReadError};
+    let failed = |err: &dyn std::fmt::Display| {
+        format!(
+            "Failed to read asset '{}' from '{}': {}",
+            name,
+            path.display(),
+            err
+        )
+    };
+    let bytes = read_document(path).map_err(|err| match err {
+        ReadError::TooLarge(too_large) => format!(
+            "Asset '{}' at '{}' is {}, over the {} limit on assets; split it into \
+             smaller asset files",
+            name,
+            path.display(),
+            size_against(too_large.size, too_large.limit),
+            human_bytes(too_large.limit)
+        ),
+        ReadError::Io(err) => failed(&err),
+    })?;
+    String::from_utf8(bytes).map_err(|err| failed(&err))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_asset_text(name: &str, path: &Path) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|err| {
+        format!(
+            "Failed to read asset '{}' from '{}': {}",
+            name,
+            path.display(),
+            err
+        )
+    })
 }
 
 /// Returns true when a parsed JSON asset declares itself a `fugue.score.v1`
@@ -183,5 +216,31 @@ pub(super) fn resolve_asset_refs(
             }
         }
         _ => Ok(value.clone()),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::pkg::read_limit::DOCUMENT_READ_LIMIT;
+
+    #[test]
+    fn an_asset_past_the_document_limit_is_refused_with_its_path_and_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        // Sparse, so the test costs no disk; refused from metadata, so it
+        // costs no memory either.
+        std::fs::File::create(dir.path().join("huge.json"))
+            .unwrap()
+            .set_len(DOCUMENT_READ_LIMIT + 1)
+            .unwrap();
+        let mut invention = Invention::from_json(
+            r#"{"version": "1.0.0", "assets": {"score": {"path": "huge.json"}}, "modules": [], "connections": []}"#,
+        )
+        .unwrap();
+        invention.source_path = Some(dir.path().join("piece.json"));
+
+        let message = resolve_json_assets(&mut invention).unwrap_err().to_string();
+        assert!(message.contains("huge.json"), "{message}");
+        assert!(message.contains("16 MiB"), "{message}");
     }
 }
