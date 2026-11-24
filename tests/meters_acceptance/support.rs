@@ -49,17 +49,6 @@ pub fn tone(waveform: &str, frequency: f64, decibels: f64) -> String {
     )
 }
 
-/// A sine through the dac's default soft clip, no gain stage.
-pub fn soft_clipped_sine() -> String {
-    document(
-        vec![
-            osc("sine", 440.0),
-            json!({ "id": "dac", "type": "dac", "config": {} }),
-        ],
-        vec![wire("osc", "dac")],
-    )
-}
-
 /// A sine into 33 gain stages at +24 dB: the last overflows to infinity over
 /// the loud part of each cycle and is silenced by the dac, while samples
 /// near each zero crossing stay finite but enormous.
