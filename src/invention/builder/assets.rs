@@ -49,14 +49,7 @@ pub(crate) fn resolve_json_assets(
     let mut assets = HashMap::new();
     for (name, asset) in &invention.assets {
         let resolved = resolve_asset_path(invention.source_path.as_deref(), &asset.path)?;
-        let contents = read_asset_text(&resolved).map_err(|err| {
-            format!(
-                "Failed to read asset '{}' from '{}': {}",
-                name,
-                resolved.display(),
-                err
-            )
-        })?;
+        let contents = read_asset_text(name, &resolved)?;
         #[cfg(not(target_arch = "wasm32"))]
         crate::pkg::lock::check_bytes(&resolved, contents.as_bytes())?;
         let is_json = resolved
@@ -102,14 +95,40 @@ pub(crate) fn resolve_json_assets(
 /// checked from metadata before any byte is read, so an oversized file is
 /// refused with its path and the limit instead of filling memory.
 #[cfg(not(target_arch = "wasm32"))]
-fn read_asset_text(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    let bytes = crate::pkg::read_limit::read_document(path)?;
-    Ok(String::from_utf8(bytes)?)
+fn read_asset_text(name: &str, path: &Path) -> Result<String, String> {
+    use crate::pkg::read_limit::{human_bytes, read_document, ReadError};
+    let failed = |err: &dyn std::fmt::Display| {
+        format!(
+            "Failed to read asset '{}' from '{}': {}",
+            name,
+            path.display(),
+            err
+        )
+    };
+    let bytes = read_document(path).map_err(|err| match err {
+        ReadError::TooLarge(too_large) => format!(
+            "Asset '{}' at '{}' is {} bytes, over the {} limit on assets; split it into \
+             smaller asset files",
+            name,
+            path.display(),
+            too_large.size,
+            human_bytes(too_large.limit)
+        ),
+        ReadError::Io(err) => failed(&err),
+    })?;
+    String::from_utf8(bytes).map_err(|err| failed(&err))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn read_asset_text(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    Ok(std::fs::read_to_string(path)?)
+fn read_asset_text(name: &str, path: &Path) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|err| {
+        format!(
+            "Failed to read asset '{}' from '{}': {}",
+            name,
+            path.display(),
+            err
+        )
+    })
 }
 
 /// Returns true when a parsed JSON asset declares itself a `fugue.score.v1`
