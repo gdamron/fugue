@@ -23,9 +23,11 @@ mod levels;
 mod options;
 mod pause;
 mod replay;
+mod view_reading;
 
 pub use code_modules::CodeModuleRuntimeInfo;
 pub use levels::OfflineLevels;
+pub use view_reading::ViewReading;
 
 /// Offline renderer for inventions.
 ///
@@ -526,3 +528,5 @@ mod remap_tests;
 mod retarget_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod view_reading_tests;

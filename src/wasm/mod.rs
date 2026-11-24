@@ -6,6 +6,7 @@ use wasm_bindgen::prelude::*;
 use crate::{ControlValue, RenderEngine};
 
 mod preview;
+mod views;
 
 #[wasm_bindgen(js_name = FugueEngine)]
 /// wasm-bindgen wrapper around `RenderEngine`.
@@ -16,6 +17,8 @@ mod preview;
 pub struct WasmFugueEngine {
     inner: RenderEngine,
     render_buffer: Vec<f32>,
+    /// The clock whose beats `takeViewsInto` reads.
+    views_clock: Option<String>,
 }
 
 #[wasm_bindgen(js_class = FugueEngine)]
@@ -26,6 +29,7 @@ impl WasmFugueEngine {
         WasmFugueEngine {
             inner: RenderEngine::new(sample_rate),
             render_buffer: Vec::new(),
+            views_clock: None,
         }
     }
 
