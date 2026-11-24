@@ -15,6 +15,7 @@
 //! keep their guess.
 
 use super::SignalGraph;
+use crate::control_request::{flush_staged, take_automation};
 
 impl SignalGraph {
     /// Hands every module with a measured clock input the step length of
@@ -33,9 +34,21 @@ impl SignalGraph {
     }
 
     /// Whether any clock's tempo changed since the step lengths were last
-    /// handed out. One call per module that keeps a timeline; allocation-,
-    /// free- and lock-free.
+    /// handed out. A tempo written to a clock is taken first, staged or
+    /// automated, as it is before beats are placed on it, so a write due at
+    /// this sample counts before the sequencers process it. One call per
+    /// module that keeps a timeline; allocation-, free- and lock-free.
     pub(super) fn tempo_changed(&mut self) -> bool {
+        self.with_drain(|graph, drain| {
+            for (_, instance) in graph.modules.iter_mut() {
+                if instance.module().timeline().is_some() {
+                    if drain.pending.outcomes.staged() > 0 {
+                        flush_staged(instance.module_mut(), &mut drain.pending.outcomes);
+                    }
+                    take_automation(instance.module_mut());
+                }
+            }
+        });
         let changes = self
             .modules
             .values()
