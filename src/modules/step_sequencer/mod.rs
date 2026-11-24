@@ -192,11 +192,12 @@ pub struct StepSequencer {
     samples_since_gate: u32,
     /// Whether we've received at least one gate.
     first_gate_received: bool,
-    /// Whether `step_duration_samples` is the clock's expected step, handed
-    /// over since the last clock edge (see [`Module::expect_clock_step`]):
-    /// the next edge keeps it rather than measuring the gap it closes,
-    /// which a tempo change since the edge before would have mixed.
-    step_hinted: bool,
+    /// The clock's expected step, handed over since the last clock edge
+    /// (see [`Module::expect_clock_step`]): the next edge takes it rather
+    /// than measuring the gap it closes, which a tempo change since the edge
+    /// before would have mixed. It waits for that edge so the step under
+    /// way (a held note's bridge among it) keeps its length.
+    step_hint: Option<u32>,
     /// Frequency for the current active note, retained across held steps.
     active_note: Option<i8>,
     /// Velocity of the active principal note.
@@ -276,7 +277,7 @@ impl StepSequencer {
             step_duration_samples: sample_rate / 2, // Default ~120 BPM
             samples_since_gate: 0,
             first_gate_received: false,
-            step_hinted: false,
+            step_hint: None,
             active_note: None,
             active_velocity: 1.0,
             velocity: 1.0,
@@ -612,8 +613,9 @@ impl StepSequencer {
         if gate_rising && !self.finished {
             // Measure step duration from previous gate, unless the graph
             // handed over the clock's step since then.
-            let hinted = std::mem::take(&mut self.step_hinted);
-            if self.first_gate_received && self.samples_since_gate > 0 && !hinted {
+            if let Some(hint) = self.step_hint.take() {
+                self.step_duration_samples = hint;
+            } else if self.first_gate_received && self.samples_since_gate > 0 {
                 self.step_duration_samples = self.samples_since_gate;
             }
 
@@ -759,8 +761,7 @@ impl Module for StepSequencer {
     }
 
     fn expect_clock_step(&mut self, samples: u32) {
-        self.step_duration_samples = samples;
-        self.step_hinted = true;
+        self.step_hint = Some(samples);
     }
 
     fn inputs(&self) -> &[&str] {
