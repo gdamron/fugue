@@ -9,8 +9,9 @@ use super::RenderEngine;
 /// What an offline render's output held since the last
 /// [`RenderEngine::take_levels`] (or since the piece loaded).
 ///
-/// Peaks and RMS are linear amplitude, 1.0 being full scale, measured on the
-/// mix before the device clamp, so a peak above 1.0 is an over. The samples
+/// Peaks and RMS are linear amplitude, 1.0 being full scale. Peaks are
+/// measured on the mix before the device clamp, so a peak above 1.0 is an
+/// over; RMS on the samples rendered (clamped, non-finite silenced). The samples
 /// rendered are clamped: `left_overs` and `right_overs` count those the
 /// clamp cut, beyond ±1.0.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
