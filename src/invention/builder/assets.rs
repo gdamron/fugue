@@ -96,7 +96,7 @@ pub(crate) fn resolve_json_assets(
 /// refused with its path and the limit instead of filling memory.
 #[cfg(not(target_arch = "wasm32"))]
 fn read_asset_text(name: &str, path: &Path) -> Result<String, String> {
-    use crate::pkg::read_limit::{human_bytes, read_document, ReadError};
+    use crate::pkg::read_limit::{human_bytes, read_document, size_against, ReadError};
     let failed = |err: &dyn std::fmt::Display| {
         format!(
             "Failed to read asset '{}' from '{}': {}",
@@ -107,11 +107,11 @@ fn read_asset_text(name: &str, path: &Path) -> Result<String, String> {
     };
     let bytes = read_document(path).map_err(|err| match err {
         ReadError::TooLarge(too_large) => format!(
-            "Asset '{}' at '{}' is {} bytes, over the {} limit on assets; split it into \
+            "Asset '{}' at '{}' is {}, over the {} limit on assets; split it into \
              smaller asset files",
             name,
             path.display(),
-            too_large.size,
+            size_against(too_large.size, too_large.limit),
             human_bytes(too_large.limit)
         ),
         ReadError::Io(err) => failed(&err),

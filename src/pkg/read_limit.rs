@@ -149,7 +149,7 @@ pub(crate) fn human_bytes(bytes: u64) -> String {
 }
 
 /// A size next to its limit: exact bytes when rounding would make them match.
-fn size_against(size: u64, limit: u64) -> String {
+pub(crate) fn size_against(size: u64, limit: u64) -> String {
     let (size_text, limit_text) = (human_bytes(size), human_bytes(limit));
     if size_text == limit_text || size_text == format!("{:.1} MiB", limit as f64 / 1048576.0) {
         format!("{size} bytes")
