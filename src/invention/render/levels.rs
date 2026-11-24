@@ -9,8 +9,9 @@ use super::RenderEngine;
 /// What an offline render's output held since the last
 /// [`RenderEngine::take_levels`] (or since the piece loaded).
 ///
-/// Peaks and RMS are linear amplitude, 1.0 being full scale, measured on the
-/// mix before the device clamp, so a peak above 1.0 is an over. The samples
+/// Peaks and RMS are linear amplitude, 1.0 being full scale. Peaks are
+/// measured on the mix before the device clamp, so a peak above 1.0 is an
+/// over; RMS on the samples rendered (clamped, non-finite silenced). The samples
 /// rendered are clamped: `left_overs` and `right_overs` count those the
 /// clamp cut, beyond ±1.0.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -19,11 +20,11 @@ pub struct OfflineLevels {
     pub left_peak: f32,
     /// Largest absolute sample of the mix, right channel.
     pub right_peak: f32,
-    /// RMS of the mix before the clamp, left channel; absent with no frames
-    /// or a sum of squares that is not finite.
+    /// RMS of the samples rendered (after the clamp, non-finite silenced),
+    /// left channel: the loudness heard. Absent with no frames.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub left_rms: Option<f32>,
-    /// RMS of the mix before the clamp, right channel.
+    /// RMS of the samples rendered, right channel.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub right_rms: Option<f32>,
     /// Frames rendered.

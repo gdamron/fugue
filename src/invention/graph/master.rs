@@ -7,6 +7,8 @@
 
 use std::sync::Arc;
 
+use crate::modules::dac::device_sample;
+
 #[cfg(test)]
 mod level_tests;
 mod levels;
@@ -89,21 +91,27 @@ impl MasterObservers {
 /// let the compiler vectorize it.
 const LANES: usize = 8;
 
-/// One channel's peak magnitude and sum of squares over a block. Two tight
-/// loops over the block, which is already in cache: each vectorizes, where
-/// one loop doing both measured over twice as slow. A NaN sample is skipped
-/// by the peak and poisons the sum, so the window reports no RMS rather than
-/// a wrong one.
+/// One channel's peak magnitude and sum of squares over a block. The peak
+/// reads the mix before the output stage, so overs show above 1.0, and
+/// skips a NaN sample. The sum of squares reads what the DAC sends, each
+/// sample through [`device_sample`] (clamped, non-finite silenced), so the
+/// RMS is the loudness heard, as a player measuring the device samples
+/// reads it. Two tight loops over the block, which is already in cache:
+/// each vectorizes, where one loop doing both measured over twice as slow.
 fn channel_levels(samples: &[f32]) -> (f32, f32) {
     let peak = samples
         .iter()
         .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+    let heard = |sample: &f32| {
+        let sample = device_sample(*sample);
+        sample * sample
+    };
     let (chunks, rest) = samples.as_chunks::<LANES>();
-    let tail: f32 = rest.iter().map(|sample| sample * sample).sum();
+    let tail: f32 = rest.iter().map(heard).sum();
     let mut sums = [0.0f32; LANES];
     for chunk in chunks {
         for (sum, sample) in sums.iter_mut().zip(chunk) {
-            *sum += sample * sample;
+            *sum += heard(sample);
         }
     }
     (peak, sums.iter().sum::<f32>() + tail)

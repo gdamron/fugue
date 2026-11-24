@@ -64,17 +64,19 @@ pub(crate) struct BlockLevels {
 /// The master output's levels over one meter window: everything the audio
 /// thread rendered between the previous drain and this one.
 ///
-/// Values are linear amplitude, where 1.0 is full scale (0 dBFS), measured
-/// on the mixed block before the output stage clamps it, so overs show above
-/// 1.0. Channels are the stereo mix's left and right.
+/// Values are linear amplitude, where 1.0 is full scale (0 dBFS). Peaks are
+/// measured on the mixed block before the output stage clamps it, so overs
+/// show above 1.0; RMS on the samples the DAC sends, each clamped to ±1 with
+/// non-finite samples silenced, so it is the loudness heard. Channels are
+/// the stereo mix's left and right.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MasterLevels {
     /// Largest absolute sample in the window, left channel.
     pub left_peak: f32,
     /// Largest absolute sample in the window, right channel.
     pub right_peak: f32,
-    /// Root mean square over the same window, left channel. `None` when the
-    /// window holds no frames or its sum of squares was not finite.
+    /// Root mean square over the same window of the samples the DAC sends,
+    /// left channel. `None` when the window holds no frames.
     pub left_rms: Option<f32>,
     /// Root mean square over the same window, right channel.
     pub right_rms: Option<f32>,
