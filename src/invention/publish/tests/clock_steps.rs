@@ -1,7 +1,7 @@
 //! A sequencer clocked by a clock's gate output sizes its first gate from
 //! the clock's tempo, which the graph hands it on the audio thread without
-//! allocating, freeing or waiting, at the first block and after an edit
-//! changes the routes.
+//! allocating, freeing or waiting, at the first block, after an edit
+//! changes the routes and after a tempo change.
 
 use super::requests::counted_block;
 use super::*;
@@ -111,4 +111,23 @@ fn a_sequencer_a_timed_edit_lands_on_a_clock_edge_gets_a_full_first_gate() {
     let landing = landing as usize;
     assert!(first_end.abs_diff(landing + STEP / 2) <= 2, "{first_end}");
     assert!(gates(&out)[1].abs_diff(STEP / 2) <= 2);
+}
+
+#[test]
+fn a_tempo_written_on_an_edge_sizes_that_steps_gate_without_allocating() {
+    use super::requests::submit;
+    use crate::control_request::When;
+    let mut rig = Rig::new(CLOCKED);
+    // Up to the block holding the clock's third edge, which rises a sample
+    // before 2 x STEP (the clock's first beat is a sample short).
+    rig.render(2 * STEP / 64 - 1);
+    // The clock's bpm, halved on that edge: a live write stages on the
+    // clock, so it is taken before the sequencer measures the edge.
+    submit(&rig, "clock", 0, 30.0, When::AtSample(2 * STEP as u64 - 1));
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    let runs = gates(&rig.render(4 * STEP / 64));
+    // The first run lost its first sample to the counted block.
+    assert!(runs.len() >= 2, "{runs:?}");
+    assert!(runs[0].abs_diff(STEP) <= 2, "{runs:?}");
+    assert!(runs[1].abs_diff(STEP) <= 2, "{runs:?}");
 }
