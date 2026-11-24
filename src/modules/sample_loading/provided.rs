@@ -48,6 +48,7 @@ fn provided() -> std::sync::MutexGuard<'static, Provided> {
 /// Providing a file again with the same bytes changes nothing; other bytes
 /// for a file already provided are refused, since a published version's
 /// files never change and its decode may already be cached.
+#[cfg(test)]
 pub(crate) fn provide(
     id: &str,
     version: &str,
@@ -57,8 +58,8 @@ pub(crate) fn provide(
     record(id, version, path, bytes).map(|(source, _)| source)
 }
 
-/// [`provide`], also saying whether the file is new here (`false` when the
-/// same bytes were already provided).
+/// Records a file as `provide` does, also saying whether the file is new here
+/// (`false` when the same bytes were already provided).
 pub(crate) fn record(
     id: &str,
     version: &str,

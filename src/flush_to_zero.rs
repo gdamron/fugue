@@ -94,6 +94,13 @@ mod arch {
 /// is set on the current thread. It is while a block renders, live or
 /// offline, so a module's `process` sees `true` on aarch64 and x86_64.
 /// Always `false` on other targets.
+// Where there is no mode to set, `arch::FLUSH` is 0 and `& arch::FLUSH` is
+// a constant by construction, not a mistake; the lint stays on for the
+// targets that set a mode.
+#[cfg_attr(
+    not(any(target_arch = "aarch64", target_arch = "x86_64")),
+    allow(clippy::bad_bit_mask)
+)]
 #[inline]
 pub fn flush_to_zero_enabled() -> bool {
     arch::FLUSH != 0 && arch::read() & arch::FLUSH == arch::FLUSH
@@ -111,6 +118,11 @@ pub(crate) struct FlushToZeroScope {
 }
 
 impl FlushToZeroScope {
+    // The no-op `arch` masks with 0 on purpose (see `flush_to_zero_enabled`).
+    #[cfg_attr(
+        not(any(target_arch = "aarch64", target_arch = "x86_64")),
+        allow(clippy::bad_bit_mask)
+    )]
     #[inline]
     pub(crate) fn enter() -> Self {
         let word = arch::read();

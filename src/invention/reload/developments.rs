@@ -326,6 +326,7 @@ impl LoadedDevelopments {
     /// developments this tree never loaded (see [`Self::named`]). A name is
     /// matched wherever it is declared, so two declarations under one alias
     /// count as one: it errs toward including a name.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
     pub(crate) fn holding_packages(&self, loaders: &[&str]) -> HashSet<String> {
         let mut declared = Vec::new();
         self.named(&mut Vec::new(), &HashSet::new(), &mut declared);
@@ -355,6 +356,7 @@ impl LoadedDevelopments {
     /// an alias declared again inside a development of that name has its
     /// scope left empty (see `load_within`), and the builder then loads what
     /// it declares, unless the development inherits one under that name.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
     fn named<'a>(
         &'a self,
         enclosing: &mut Vec<&'a str>,

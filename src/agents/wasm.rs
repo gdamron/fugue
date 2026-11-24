@@ -1,7 +1,9 @@
 use crate::invention::{RuntimeController, RuntimeModuleInfo};
 
+// Braces, not a unit struct, so `AgentManager::default()` reads the same as
+// the native manager's constructor at its call sites.
 #[derive(Default)]
-pub struct AgentManager;
+pub struct AgentManager {}
 
 impl AgentManager {
     pub fn set_stubbed(&self, _stubbed: bool) {}

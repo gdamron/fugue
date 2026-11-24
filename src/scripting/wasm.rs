@@ -5,8 +5,10 @@
 
 use crate::invention::{RuntimeController, RuntimeModuleInfo};
 
+// Braces, not a unit struct, so `ScriptManager::default()` reads the same as
+// the native manager's constructor at its call sites.
 #[derive(Default)]
-pub struct ScriptManager;
+pub struct ScriptManager {}
 
 impl ScriptManager {
     /// wasm hosts run scripts externally, so there is nothing to start here.
