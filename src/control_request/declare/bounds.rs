@@ -5,7 +5,7 @@
 //! control thread resolves a key. Below a count a client writes (a melody's
 //! `degree_count`), every index still exists, listed or not.
 
-use super::{ControlIndex, ControlTable, RtValue, Writer};
+use super::{ControlIndex, ControlTable, DeclKind, RtValue, Writer};
 
 impl ControlTable {
     /// The control `key` names, unless it does not exist: unknown, or an
@@ -33,19 +33,9 @@ impl ControlTable {
         index: ControlIndex,
         current: impl Fn(ControlIndex) -> Option<RtValue>,
     ) -> Option<String> {
+        let count = self.fixed_count_reached(index, current)?;
         let (decl, position) = self.decl(index)?;
-        let count_key = decl.listed_below?;
-        let count_index = self.resolve(count_key)?;
-        let (count_decl, _) = self.decl(count_index)?;
-        if count_decl.writer != Writer::Telemetry {
-            return None;
-        }
-        let count = self.value(count_index, current(count_index)?)?;
-        let count = count.as_number().ok()?;
-        if f32::from(position) < count {
-            return None;
-        }
-        let key = &decl.key;
+        let (key, count_key) = (&decl.key, decl.listed_below?);
         let has = match count as u32 {
             0 => format!("no '{key}' exists"),
             1 => format!("only '{key}.0' exists"),
@@ -54,6 +44,40 @@ impl ControlTable {
         Some(format!(
             "Unknown control: {key}.{position}: {count_key} is {count}, so {has}"
         ))
+    }
+
+    /// The read-only count `index` is at or past, without building the
+    /// message: `None` when it is below it, listed below none, or the count
+    /// cannot be read. Allocates nothing.
+    pub(crate) fn fixed_count_reached(
+        &self,
+        index: ControlIndex,
+        current: impl Fn(ControlIndex) -> Option<RtValue>,
+    ) -> Option<f32> {
+        let (decl, position) = self.decl(index)?;
+        let count_index = self.resolve(decl.listed_below?)?;
+        let (count_decl, _) = self.decl(count_index)?;
+        if count_decl.writer != Writer::Telemetry {
+            return None;
+        }
+        let count = self.number(count_index, current(count_index)?)?;
+        (f32::from(position) >= count).then_some(count)
+    }
+
+    /// The number a whole control holds as `value`, as `value()` reads it,
+    /// without building a string: `None` for a choice, a flag, a payload, a
+    /// part or a control its module reads. Allocates nothing.
+    pub(crate) fn number(&self, index: ControlIndex, value: RtValue) -> Option<f32> {
+        let (decl, _) = self.decl(index)?;
+        if decl.reader.is_some() || decl.part.is_some() {
+            return None;
+        }
+        match (decl.kind, value) {
+            (DeclKind::Payload | DeclKind::Choice(_), _) | (_, RtValue::Bool(_)) => None,
+            (_, RtValue::F32(number)) => Some(number),
+            (_, RtValue::I32(number)) => Some(number as f32),
+            (_, RtValue::U32(number)) => Some(number as f32),
+        }
     }
 }
 

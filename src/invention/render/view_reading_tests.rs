@@ -65,3 +65,44 @@ fn a_module_that_counts_no_beats_has_none() {
         .beats
         .is_some());
 }
+
+const MIXED: &str = r#"{
+    "version": "1.0.0",
+    "modules": [
+        { "id": "osc", "type": "oscillator", "config": { "waveform": "saw" } },
+        { "id": "mix", "type": "mixer", "config": { "channel_count": 2, "levels": [0.5, 0.25] } },
+        { "id": "dac", "type": "dac" }
+    ],
+    "connections": [
+        { "from": "osc", "from_port": "audio", "to": "mix", "to_port": "audio.0" },
+        { "from": "mix", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
+        { "from": "mix", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
+    ]
+}"#;
+
+#[test]
+fn a_number_read_agrees_with_get_control() {
+    let mut engine = RenderEngine::new(48_000);
+    engine.load_json(MIXED).unwrap();
+    let surfaces = engine.control_surfaces.lock().unwrap();
+    let read = |id: &str, key: &str| {
+        let surface = surfaces.get(id).unwrap();
+        let shown = surface
+            .get_control(key)
+            .ok()
+            .and_then(|v| v.as_number().ok());
+        let (number, allocs, frees) = allocator_events(|| surface.read_number(key));
+        assert_eq!((allocs, frees), (0, 0), "{id} {key}");
+        assert_eq!(number, shown, "{id} {key}");
+        number
+    };
+    assert_eq!(read("mix", "level.0"), Some(0.5));
+    assert_eq!(read("mix", "level.1"), Some(0.25));
+    // Past the mixer's two channels, a level is never listed or heard.
+    assert_eq!(read("mix", "level.2"), None);
+    assert_eq!(read("mix", "level.99"), None);
+    assert_eq!(read("mix", "channel_count"), Some(2.0));
+    // A choice names its option; it holds no number.
+    assert_eq!(read("osc", "waveform"), None);
+    assert!(read("osc", "frequency").is_some());
+}

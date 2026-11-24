@@ -158,13 +158,14 @@ impl ControlSurface for DeclaredSurface {
     }
 
     fn read_number(&self, key: &str) -> Option<f32> {
-        // A whole control's value, found without the messages a miss builds.
+        // What `get_control` answers for a whole number control, found
+        // without the strings a miss or a choice builds.
         let index = self.table.resolve(key)?;
-        let value = self.cells.load(index)?;
-        match self.table.value(index, value)? {
-            ControlValue::Number(number) => Some(number),
-            _ => None,
+        let current = |index| self.cells.load(index);
+        if self.table.fixed_count_reached(index, current).is_some() {
+            return None;
         }
+        self.table.number(index, current(index)?)
     }
 
     fn set_undeclared(&self, key: &str, _value: ControlValue) -> Result<(), String> {

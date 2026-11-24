@@ -375,10 +375,12 @@ pub trait ControlSurface: Send + Sync {
     #[doc(hidden)]
     fn retire(&self) {}
 
-    /// The number control `key` holds, or `None` when it holds no number or
-    /// the surface has no such control. A declared surface answers without
-    /// allocating, whether the control exists or not; the default reads
-    /// [`Self::get_control`], whose refusal is a message.
+    /// The number control `key` holds, as [`Self::get_control`] reads it, or
+    /// `None` when it holds no number (a choice, a flag, a payload) or the
+    /// surface has no such control. A declared surface answers without
+    /// allocating, whether the control exists or not, and reads a part as
+    /// `None`; the default reads [`Self::get_control`], whose refusal is a
+    /// message.
     #[doc(hidden)]
     fn read_number(&self, key: &str) -> Option<f32> {
         match self.get_control(key) {
