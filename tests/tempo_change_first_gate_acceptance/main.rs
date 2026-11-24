@@ -1,4 +1,4 @@
-//! The first step after a tempo change, from the spec alone.
+//! The first step after a tempo change.
 //!
 //! A `step_sequencer` or `cell_sequencer` whose `clock` input is fed directly
 //! by a clock module's gate output times the first step after a tempo change
