@@ -159,8 +159,11 @@ jobs:
   # Formatting, lints and rustdoc links stay clean because a PR that breaks any
   # of them fails here. Clippy runs with every feature on and over tests,
   # examples and benches, with warnings denied; the default lint set only (no
-  # pedantic or nursery). The docs build covers private items too, since most
-  # of the module documentation lives on them.
+  # pedantic or nursery). It runs again for wasm32, the browser engine's
+  # target, where cfg-gated code differs; that pass covers the library only,
+  # since the loom dev-dependency does not build for wasm32. The docs build
+  # covers private items too, since most of the module documentation lives on
+  # them.
   lint:
     name: Check Format, Lints and Docs
     needs: changes
@@ -183,6 +186,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.99.0
         with:
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
 
       - name: Cache Cargo Artifacts
         uses: Swatinem/rust-cache@v2
@@ -194,6 +198,9 @@ jobs:
 
       - name: Check Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Check Clippy on wasm32
+        run: cargo clippy --workspace --lib --all-features --target wasm32-unknown-unknown -- -D warnings
 
       - name: Check Rustdoc Links
         env:
