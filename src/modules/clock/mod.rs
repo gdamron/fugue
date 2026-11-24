@@ -152,6 +152,8 @@ pub struct Clock {
     latch: Option<(u64, f64, f32)>,
     // Its bars, counted from the latest reset.
     meter: Meter,
+    // Counts tempo changes (see `Timeline::tempo_changes`).
+    tempo_changes: u64,
     // Cached output for modular routing
     outputs: outputs::ClockOutputs,
     // Tells this clock from every other built in the process (see
@@ -186,6 +188,7 @@ impl Clock {
             beats_before: 0,
             latch: None,
             meter: Meter::default(),
+            tempo_changes: 0,
             outputs: outputs::ClockOutputs::new(),
             instance: NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed),
         };
@@ -361,7 +364,12 @@ impl Module for Clock {
     #[allow(private_interfaces)]
     fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
         match (control, value) {
-            (BPM, RtValue::F32(bpm)) => self.bpm = bpm,
+            (BPM, RtValue::F32(bpm)) => {
+                if bpm != self.bpm {
+                    self.tempo_changes = self.tempo_changes.wrapping_add(1);
+                }
+                self.bpm = bpm;
+            }
             (GATE_LENGTH, RtValue::F32(length)) => self.gate_length = length.clamp(0.0, 1.0),
             (BEATS_PER_BAR, RtValue::I32(beats)) => {
                 let beats = beats.clamp(0, MAX_BEATS_PER_BAR) as u32;

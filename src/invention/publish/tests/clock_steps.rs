@@ -1,7 +1,7 @@
 //! A sequencer clocked by a clock's gate output sizes its first gate from
 //! the clock's tempo, which the graph hands it on the audio thread without
-//! allocating, freeing or waiting, at the first block and after an edit
-//! changes the routes.
+//! allocating, freeing or waiting, at the first block, after an edit
+//! changes the routes and after a tempo change.
 
 use super::requests::counted_block;
 use super::*;
@@ -111,4 +111,75 @@ fn a_sequencer_a_timed_edit_lands_on_a_clock_edge_gets_a_full_first_gate() {
     let landing = landing as usize;
     assert!(first_end.abs_diff(landing + STEP / 2) <= 2, "{first_end}");
     assert!(gates(&out)[1].abs_diff(STEP / 2) <= 2);
+}
+
+#[test]
+fn a_tempo_written_on_an_edge_sizes_that_steps_gate_without_allocating() {
+    use super::requests::submit;
+    use crate::control_request::When;
+    let mut rig = Rig::new(CLOCKED);
+    // Up to the block holding the clock's third edge, which rises a sample
+    // before 2 x STEP (the clock's first beat is a sample short).
+    rig.render(2 * STEP / 64 - 1);
+    // The clock's bpm, halved on that edge: a live write stages on the
+    // clock, so it is taken before the sequencer measures the edge.
+    submit(&rig, "clock", 0, 30.0, When::AtSample(2 * STEP as u64 - 1));
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    let runs = gates(&rig.render(4 * STEP / 64));
+    // The first run lost its first sample to the counted block.
+    assert!(runs.len() >= 2, "{runs:?}");
+    assert!(runs[0].abs_diff(STEP) <= 2, "{runs:?}");
+    assert!(runs[1].abs_diff(STEP) <= 2, "{runs:?}");
+}
+
+/// A note held through the two steps after it: its gate bridges across
+/// both edges.
+const HELD: &str = r#"{
+    "version": "1.0.0",
+    "modules": [
+        { "id": "clock", "type": "clock", "config": { "bpm": 60.0 } },
+        { "id": "seq", "type": "step_sequencer", "config": {
+            "step_count": 3, "gate_length": 0.5,
+            "pattern": [{ "note": 0 }, { "held": true }, { "held": true }] } },
+        { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+    ],
+    "connections": [
+        { "from": "clock", "from_port": "beat_x4", "to": "seq", "to_port": "clock" },
+        { "from": "seq", "from_port": "gate", "to": "dac", "to_port": "audio" }
+    ]
+}"#;
+
+#[test]
+fn a_tempo_rise_mid_step_keeps_a_held_note_sounding() {
+    use super::requests::submit;
+    use crate::control_request::When;
+    let mut rig = Rig::new(HELD);
+    // Three quarters into the first held step, the tempo quadruples: the
+    // new step (3,000 samples) is shorter than half of what has passed.
+    let write = STEP + 3 * STEP / 4;
+    rig.render(write / 64);
+    let start = rig.graph.current_sample as usize;
+    submit(&rig, "clock", 0, 240.0, When::AtSample(write as u64));
+    let out = rig.render(STEP / 64);
+    let after = &out[write - start..];
+    assert!(
+        after[0] > 0.5,
+        "the held note sounds when the tempo changes"
+    );
+    // It sounds on through the rest of this step and the next held one
+    // (a quarter and a whole new step) before the pattern starts again.
+    let held = after
+        .iter()
+        .position(|&s| s <= 0.5)
+        .expect("the held note never ended");
+    assert!(
+        held >= STEP / 4,
+        "the held note fell {held} samples after the tempo change"
+    );
+    // And no later than the edge that starts step 0 again: the rest of
+    // this step (a quarter of the old one at the new tempo) and the next.
+    assert!(
+        held <= STEP / 4 + STEP / 16 + 64,
+        "the held note sounded {held} samples, past its re-attack"
+    );
 }

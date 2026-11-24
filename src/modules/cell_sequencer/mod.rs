@@ -156,10 +156,12 @@ pub struct CellSequencer {
     step_duration_samples: u32,
     samples_since_gate: u32,
     first_gate_received: bool,
-    /// Whether `step_duration_samples` was measured between two clock
-    /// edges; until then it is the clock's expected step, when the graph
-    /// knows it (see [`Module::expect_clock_step`]), or a guess.
-    step_measured: bool,
+    /// The clock's expected step, handed over since the last clock edge
+    /// (see [`Module::expect_clock_step`]): the next edge takes it rather
+    /// than measuring the gap it closes, which a tempo change since the edge
+    /// before would have mixed. It waits for that edge so the step under
+    /// way (a held note's bridge among it) keeps its length.
+    step_hint: Option<u32>,
     active_note: Option<i8>,
     /// One-shot playback of the bank has completed; `ended` latches high and
     /// clock edges are ignored until reset or an explicit cell selection.
@@ -250,7 +252,7 @@ impl CellSequencer {
             step_duration_samples: sample_rate / 2,
             samples_since_gate: 0,
             first_gate_received: false,
-            step_measured: false,
+            step_hint: None,
             active_note: None,
             finished: false,
             retrigger_dip: false,
@@ -814,9 +816,10 @@ impl CellSequencer {
         // Once a one-shot bank has finished, clock edges are ignored until
         // reset or an explicit cell selection.
         if gate_rising && !self.finished {
-            if self.first_gate_received && self.samples_since_gate > 0 {
+            if let Some(hint) = self.step_hint.take() {
+                self.step_duration_samples = hint;
+            } else if self.first_gate_received && self.samples_since_gate > 0 {
                 self.step_duration_samples = self.samples_since_gate;
-                self.step_measured = true;
             }
 
             if self.first_gate_received {
@@ -958,9 +961,7 @@ impl Module for CellSequencer {
     }
 
     fn expect_clock_step(&mut self, samples: u32) {
-        if !self.step_measured {
-            self.step_duration_samples = samples;
-        }
+        self.step_hint = Some(samples);
     }
 
     fn inputs(&self) -> &[&str] {

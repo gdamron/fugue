@@ -61,6 +61,12 @@ pub(crate) trait Timeline {
     fn bar_lines_moved(&self) -> u64 {
         0
     }
+
+    /// Changes whenever the tempo does, by any write, so a step length
+    /// handed out at the old tempo can be handed out again.
+    fn tempo_changes(&self) -> u64 {
+        0
+    }
 }
 
 /// The least `k >= 1` with `position_after(k) >= beat`, given `estimate`,

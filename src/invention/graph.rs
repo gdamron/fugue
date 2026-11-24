@@ -222,6 +222,9 @@ pub(crate) struct SignalGraph {
     /// The modules or their routes changed since the modules measuring a
     /// clock input were told its step length (see `clock_steps`).
     pub(crate) clock_steps_stale: bool,
+    /// The sum of every clock's tempo-change count when the modules
+    /// measuring a clock input were last told its step length.
+    pub(crate) tempo_changes_seen: u64,
     /// The publication of an immediate edit while the requests due as it
     /// installs apply (see `requests`); none otherwise.
     pub(crate) installing: Option<Box<Publication>>,
@@ -303,6 +306,7 @@ impl SignalGraph {
             topo_dirty: true,
             tables_stale: true,
             clock_steps_stale: true,
+            tempo_changes_seen: 0,
             installing: None,
             failed: false,
             unwound: None,
