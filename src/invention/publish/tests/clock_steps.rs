@@ -168,9 +168,18 @@ fn a_tempo_rise_mid_step_keeps_a_held_note_sounding() {
     );
     // It sounds on through the rest of this step and the next held one
     // (a quarter and a whole new step) before the pattern starts again.
-    let held = after.iter().position(|&s| s <= 0.5).unwrap();
+    let held = after
+        .iter()
+        .position(|&s| s <= 0.5)
+        .expect("the held note never ended");
     assert!(
         held >= STEP / 4,
         "the held note fell {held} samples after the tempo change"
+    );
+    // And no later than the edge that starts step 0 again: the rest of
+    // this step (a quarter of the old one at the new tempo) and the next.
+    assert!(
+        held <= STEP / 4 + STEP / 16 + 64,
+        "the held note sounded {held} samples, past its re-attack"
     );
 }
