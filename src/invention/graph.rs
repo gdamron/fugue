@@ -48,8 +48,8 @@ use crate::MAX_BLOCK;
 use super::runtime::ModuleInstance;
 
 mod beats;
-mod clock_steps;
 pub(crate) mod chunks;
+mod clock_steps;
 mod compile;
 mod conditions;
 mod edges;
