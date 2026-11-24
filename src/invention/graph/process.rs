@@ -63,6 +63,9 @@ impl SignalGraph {
         // while held and then resumed applies before the first frame plays.
         let paused = self.transport.pause_requested();
         self.ensure_process_order();
+        if std::mem::take(&mut self.clock_steps_stale) {
+            self.expect_clock_steps();
+        }
 
         let frames = left.len().min(right.len()).min(self.block_capacity);
         // A paused graph plays only what is left of its fade out, and holds

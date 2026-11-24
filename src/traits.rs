@@ -795,6 +795,25 @@ pub trait Module: Send {
         None
     }
 
+    /// For a module that times its gates by measuring the gap between its
+    /// clock input's edges (a sequencer): that input, so the graph can tell
+    /// it how far apart the edges will be before it has measured two.
+    /// `None` for any other module.
+    #[doc(hidden)]
+    fn measured_clock_input(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// For a module with a [`Module::measured_clock_input`] fed by a
+    /// clock's gate output: how many samples apart that output's gates rise
+    /// at the clock's tempo, which the module uses until it has measured an
+    /// edge-to-edge gap of its own. Called on the audio thread between
+    /// [`Module::process`] calls; allocation- and lock-free.
+    #[doc(hidden)]
+    fn expect_clock_step(&mut self, samples: u32) {
+        let _ = samples;
+    }
+
     /// The table this module plays automation from (a scheduler's), for
     /// the graph's request drain to play in place, at the sample each
     /// step's beat falls on (see `crate::control_request::BeatTable`).

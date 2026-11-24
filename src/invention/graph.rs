@@ -48,6 +48,7 @@ use crate::MAX_BLOCK;
 use super::runtime::ModuleInstance;
 
 mod beats;
+mod clock_steps;
 pub(crate) mod chunks;
 mod compile;
 mod conditions;
@@ -218,6 +219,9 @@ pub(crate) struct SignalGraph {
     /// The modules or their routes changed since the request drain last
     /// looked for the modules' tables (see `beats`).
     pub(crate) tables_stale: bool,
+    /// The modules or their routes changed since the modules measuring a
+    /// clock input were told its step length (see `clock_steps`).
+    pub(crate) clock_steps_stale: bool,
     /// The publication of an immediate edit while the requests due as it
     /// installs apply (see `requests`); none otherwise.
     pub(crate) installing: Option<Box<Publication>>,
@@ -298,6 +302,7 @@ impl SignalGraph {
             block_size: crate::DEFAULT_BLOCK_SIZE,
             topo_dirty: true,
             tables_stale: true,
+            clock_steps_stale: true,
             installing: None,
             failed: false,
             unwound: None,
