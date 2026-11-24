@@ -212,9 +212,12 @@ observers then shape it as the output stage does:
   channel peak, and an out-of-phase pair cancels.
 - **The master level meter** is the exception
   ([`src/invention/graph/master/levels.rs`](../src/invention/graph/master/levels.rs)).
-  Its peak and RMS read the mix before the clamp, per channel, so an over
-  shows as a value above 1.0. A meter that stopped at 1.0 could not warn
-  anyone that they are clipping.
+  Its peak reads the mix before the clamp, per channel, so an over shows
+  as a value above 1.0. A meter that stopped at 1.0 could not warn anyone
+  that they are clipping. Its RMS reads what the DAC sends a stereo device,
+  each channel clamped and non-finite samples silenced, so it says how loud
+  the piece is heard, as the browser player measuring its device samples
+  does.
 
 Two small differences from the device path are deliberate:
 

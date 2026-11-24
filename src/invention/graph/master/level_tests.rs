@@ -111,16 +111,24 @@ fn silence_measures_as_zero_not_as_missing() {
 }
 
 #[test]
-fn rms_is_measured_before_the_clamp_and_absent_for_non_finite_audio() {
+fn peak_reads_before_the_clamp_and_rms_reads_what_the_dac_sends() {
     let observers = MasterObservers::live();
-    let over = vec![2.0f32; FRAMES];
+    let mut over = vec![2.0f32; FRAMES];
+    over[0] = f32::INFINITY;
     let mut broken = vec![0.5f32; FRAMES];
     broken[1] = f32::NAN;
     observe(&observers, &over, &broken, FRAMES as u64);
     let levels = drain(&observers);
-    assert_eq!((levels.left_peak, levels.left_rms), (2.0, Some(2.0)));
-    // The peak skips a NaN sample; the RMS cannot, so it is not reported.
-    assert_eq!((levels.right_peak, levels.right_rms), (0.5, None));
+    // The over shows in the peak; the DAC sends it at full scale, and the
+    // infinite sample as silence.
+    assert_eq!(levels.left_peak, f32::INFINITY);
+    let heard = ((FRAMES - 1) as f64 / FRAMES as f64).sqrt() as f32;
+    let left = levels.left_rms.unwrap();
+    assert!((left - heard).abs() < 1e-6, "{levels:?}");
+    // The peak skips a NaN sample; the DAC silences it.
+    assert_eq!(levels.right_peak, 0.5);
+    let right = levels.right_rms.unwrap();
+    assert!((right - 0.5 * heard).abs() < 1e-6, "{levels:?}");
 }
 
 #[test]

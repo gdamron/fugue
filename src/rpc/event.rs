@@ -123,14 +123,16 @@ pub trait RpcEventSink: Send + Sync {
 /// returns the same window again, with the same `audio_clock_frame`.
 ///
 /// Channels are `left` and `right` of the stereo mix. Levels are linear
-/// amplitude, where 1.0 is full scale (0 dBFS), measured on the mixed block
-/// before the output stage clamps it, so overs read above 1.0. Peak and RMS
-/// cover the same window: every frame rendered since the previous reading.
+/// amplitude, where 1.0 is full scale (0 dBFS). Peaks are measured on the
+/// mixed block before the output stage clamps it, so overs read above 1.0;
+/// RMS on the samples the DAC sends a stereo device (each clamped to ±1,
+/// non-finite silenced), so it is the loudness heard. Peak and RMS cover
+/// the same window: every frame rendered since the previous reading.
 ///
 /// Fields after the peaks were added later and are optional on the wire: a
 /// daemon that predates them omits them, and a client that predates them
 /// ignores them. A window with no audio in it reads peaks of 0.0 and no
-/// RMS; RMS is also absent when the window's sum of squares was not finite.
+/// RMS.
 ///
 /// [`GetMeters`]: super::RpcRequestPayload::GetMeters
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

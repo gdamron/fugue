@@ -271,7 +271,7 @@ impl WasmFugueEngine {
     /// The output's levels since the last call (or since the piece loaded),
     /// as JSON: `left_peak` and `right_peak` (linear, read before the
     /// device clamp, so an over reads above 1.0), `left_rms` and `right_rms`
-    /// (before the clamp, absent with no frames or a non-finite sum),
+    /// (of the samples rendered, after the clamp; absent with no frames),
     /// `frames`, `left_overs` and `right_overs` (samples beyond ±1.0, which
     /// the clamp cut) and `non_finite_samples` (NaN or ±inf samples the
     /// sinks silenced; a sink rebuilt during the stretch takes its count

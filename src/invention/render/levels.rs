@@ -19,11 +19,11 @@ pub struct OfflineLevels {
     pub left_peak: f32,
     /// Largest absolute sample of the mix, right channel.
     pub right_peak: f32,
-    /// RMS of the mix before the clamp, left channel; absent with no frames
-    /// or a sum of squares that is not finite.
+    /// RMS of the samples rendered (after the clamp, non-finite silenced),
+    /// left channel: the loudness heard. Absent with no frames.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub left_rms: Option<f32>,
-    /// RMS of the mix before the clamp, right channel.
+    /// RMS of the samples rendered, right channel.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub right_rms: Option<f32>,
     /// Frames rendered.
