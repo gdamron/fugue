@@ -64,7 +64,7 @@ pub use notes::{NoteChange, NoteChanges, NoteTime, Playhead};
 pub use orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
 pub use preview::NotePreview;
 pub use reload::{DevelopmentDefinitions, ReloadError, ReloadReport};
-pub use render::{CodeModuleRuntimeInfo, OfflineLevels, RenderEngine};
+pub use render::{CodeModuleRuntimeInfo, OfflineLevels, RenderEngine, ViewReading};
 pub use request_log::{
     LoggedBeat, LoggedConnection, LoggedEdit, LoggedEditOutcome, LoggedLatch, LoggedModule,
     LoggedRequest, LoggedSetting, LoggedValue, LoggedWhen, RequestLog, REQUEST_LOG_CAPACITY,
