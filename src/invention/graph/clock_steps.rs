@@ -3,10 +3,16 @@
 //!
 //! A sequencer learns its step length from the gap between two clock
 //! edges, so on the first edge it has measured nothing and would size the
-//! first step's gate from a guess. The clock already knows its tempo: the
-//! graph hands the expected gap over whenever its modules or routes change,
-//! before the next block plays, so the first gate is as long as every
-//! later pass of the same step.
+//! first step's gate from a guess, and on the first edge after a tempo
+//! change it has measured the old tempo. The clock already knows its tempo:
+//! the graph hands the expected gap over whenever its modules, routes or a
+//! clock's tempo change, before the next sample plays, so that step's gate
+//! is as long as every later step's at the same tempo.
+//!
+//! Only a sequencer whose clock input a clock's gate output feeds directly
+//! is told; one fed through another module (a vca, a divider, a script)
+//! still measures, so its first gate, and its first after a tempo change,
+//! keep their guess.
 
 use super::SignalGraph;
 
@@ -24,6 +30,20 @@ impl SignalGraph {
                 instance.module_mut().expect_clock_step(samples);
             }
         }
+    }
+
+    /// Whether any clock's tempo changed since the step lengths were last
+    /// handed out. One call per module that keeps a timeline; allocation-,
+    /// free- and lock-free.
+    pub(super) fn tempo_changed(&mut self) -> bool {
+        let changes = self
+            .modules
+            .values()
+            .filter_map(|instance| instance.module().timeline())
+            .fold(0u64, |sum, timeline| {
+                sum.wrapping_add(timeline.tempo_changes())
+            });
+        changes != std::mem::replace(&mut self.tempo_changes_seen, changes)
     }
 
     /// How many samples apart the gates feeding module `index`'s measured

@@ -820,8 +820,10 @@ pub trait Module: Send {
 
     /// For a module with a [`Module::measured_clock_input`] fed by a
     /// clock's gate output: how many samples apart that output's gates rise
-    /// at the clock's tempo, which the module uses until it has measured an
-    /// edge-to-edge gap of its own. Called on the audio thread between
+    /// at the clock's tempo, handed over when the modules, their routes or
+    /// the clock's tempo change. The module times its next step by it
+    /// rather than by the gap that edge closes, then measures again. Called
+    /// on the audio thread between
     /// [`Module::process`] calls; allocation- and lock-free.
     #[doc(hidden)]
     fn expect_clock_step(&mut self, samples: u32) {

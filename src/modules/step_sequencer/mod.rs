@@ -192,10 +192,11 @@ pub struct StepSequencer {
     samples_since_gate: u32,
     /// Whether we've received at least one gate.
     first_gate_received: bool,
-    /// Whether `step_duration_samples` was measured between two clock
-    /// edges; until then it is the clock's expected step, when the graph
-    /// knows it (see [`Module::expect_clock_step`]), or a guess.
-    step_measured: bool,
+    /// Whether `step_duration_samples` is the clock's expected step, handed
+    /// over since the last clock edge (see [`Module::expect_clock_step`]):
+    /// the next edge keeps it rather than measuring the gap it closes,
+    /// which a tempo change since the edge before would have mixed.
+    step_hinted: bool,
     /// Frequency for the current active note, retained across held steps.
     active_note: Option<i8>,
     /// Velocity of the active principal note.
@@ -275,7 +276,7 @@ impl StepSequencer {
             step_duration_samples: sample_rate / 2, // Default ~120 BPM
             samples_since_gate: 0,
             first_gate_received: false,
-            step_measured: false,
+            step_hinted: false,
             active_note: None,
             active_velocity: 1.0,
             velocity: 1.0,
@@ -609,10 +610,11 @@ impl StepSequencer {
         // Handle clock gate. Once a one-shot pattern has finished, clock
         // edges are ignored until reset.
         if gate_rising && !self.finished {
-            // Measure step duration from previous gate
-            if self.first_gate_received && self.samples_since_gate > 0 {
+            // Measure step duration from previous gate, unless the graph
+            // handed over the clock's step since then.
+            let hinted = std::mem::take(&mut self.step_hinted);
+            if self.first_gate_received && self.samples_since_gate > 0 && !hinted {
                 self.step_duration_samples = self.samples_since_gate;
-                self.step_measured = true;
             }
 
             // Advance step on every gate EXCEPT the first one
@@ -757,9 +759,8 @@ impl Module for StepSequencer {
     }
 
     fn expect_clock_step(&mut self, samples: u32) {
-        if !self.step_measured {
-            self.step_duration_samples = samples;
-        }
+        self.step_duration_samples = samples;
+        self.step_hinted = true;
     }
 
     fn inputs(&self) -> &[&str] {

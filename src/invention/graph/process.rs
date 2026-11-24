@@ -76,11 +76,10 @@ impl SignalGraph {
         let mut start = 0;
         while start < frames {
             let end = start + self.apply_due_requests(frames - start);
-            // After the segment's requests, so an edit that landed on its
-            // first sample (a timed one, on a bar line and so on a clock
-            // edge), and a tempo written with it, size the first gate. A
-            // tempo change alone does not re-hint a sequencer.
-            if std::mem::take(&mut self.clock_steps_stale) {
+            // After the segment's requests, so an edit or a tempo change
+            // that landed on its first sample (a timed one, on a bar line
+            // and so on a clock edge) sizes the next gate.
+            if std::mem::take(&mut self.clock_steps_stale) | self.tempo_changed() {
                 self.expect_clock_steps();
             }
             self.process_segment(&mut left[start..end], &mut right[start..end]);

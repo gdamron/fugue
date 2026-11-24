@@ -98,6 +98,10 @@ impl Timeline for Clock {
         self.meter.lines_moved()
     }
 
+    fn tempo_changes(&self) -> u64 {
+        self.tempo_changes
+    }
+
     fn latch(&mut self) {
         let next = self.sample_count + 1;
         if self.latch.is_none_or(|(at, ..)| at != next) {
