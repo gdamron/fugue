@@ -68,17 +68,17 @@ fn check(case: &Case, module: Module, delivery: Delivery) -> Vec<String> {
     }
 
     // `unit` is the step length at the tempo the step's gate was sized at.
-    // Spec point 4: steps before the change are unchanged (the one a mid-step
+    // Steps before the change are unchanged (the one a mid-step
     // write lands in has its gate sized at its start, from the old tempo, and
     // the gate had ended before the write).
-    for k in 0..first_new {
+    for (k, step) in steps.iter().enumerate().take(first_new) {
         let in_change = matches!(case.landing, Landing::MidStep { .. }) && k == change;
-        problems.extend(gate_problem(case, &steps[k], k, old_len, in_change));
+        problems.extend(gate_problem(case, step, k, old_len, in_change));
     }
     // The first step after the change, and every one after it, at the new
     // tempo.
-    for k in first_new..first_new + AFTER {
-        problems.extend(gate_problem(case, &steps[k], k, new_len, false));
+    for (k, step) in steps.iter().enumerate().skip(first_new).take(AFTER) {
+        problems.extend(gate_problem(case, step, k, new_len, false));
     }
     problems
 }
@@ -141,8 +141,8 @@ fn mid_step(from_bpm: f64, to_bpm: f64, gate_length: f64, step: usize) -> Case {
     }
 }
 
-/// Spec point 1: a write on a bar line (a clock edge), 120 to 60 bpm. On
-/// main the first gate is about half as long as later ones.
+/// A write on a bar line (a clock edge), 120 to 60 bpm, where the first
+/// gate at the new tempo was once about half as long as later ones.
 fn slowing_on_edge(step: usize) -> Vec<Case> {
     vec![
         on_edge(120.0, 60.0, 0.5, step),
@@ -150,8 +150,9 @@ fn slowing_on_edge(step: usize) -> Vec<Case> {
     ]
 }
 
-/// Spec point 1: a write on a bar line, 60 to 120 bpm. On main the first
-/// gate is sized from the old, doubled step: too long, into the next edge.
+/// A write on a bar line, 60 to 120 bpm, where the first gate at the new
+/// tempo was once sized from the old, doubled step and ran into the next
+/// edge.
 fn speeding_on_edge(step: usize) -> Vec<Case> {
     vec![
         on_edge(60.0, 120.0, 0.5, step),
@@ -167,7 +168,7 @@ fn fractional_on_edge(step: usize) -> Vec<Case> {
     ]
 }
 
-/// Spec point 2: a write landing mid-step.
+/// A write landing mid-step.
 fn mid_step_cases() -> Vec<Case> {
     vec![
         mid_step(120.0, 60.0, 0.5, 5),
