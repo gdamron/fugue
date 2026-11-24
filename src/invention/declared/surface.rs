@@ -157,6 +157,16 @@ impl ControlSurface for DeclaredSurface {
         self.index(key).is_ok()
     }
 
+    fn read_number(&self, key: &str) -> Option<f32> {
+        // A whole control's value, found without the messages a miss builds.
+        let index = self.table.resolve(key)?;
+        let value = self.cells.load(index)?;
+        match self.table.value(index, value)? {
+            ControlValue::Number(number) => Some(number),
+            _ => None,
+        }
+    }
+
     fn set_undeclared(&self, key: &str, _value: ControlValue) -> Result<(), String> {
         self.index(key).map(drop)
     }

@@ -375,6 +375,18 @@ pub trait ControlSurface: Send + Sync {
     #[doc(hidden)]
     fn retire(&self) {}
 
+    /// The number control `key` holds, or `None` when it holds no number or
+    /// the surface has no such control. A declared surface answers without
+    /// allocating, whether the control exists or not; the default reads
+    /// [`Self::get_control`], whose refusal is a message.
+    #[doc(hidden)]
+    fn read_number(&self, key: &str) -> Option<f32> {
+        match self.get_control(key) {
+            Ok(ControlValue::Number(value)) => Some(value),
+            _ => None,
+        }
+    }
+
     /// Whether `key` is one of this surface's declared controls. Such a
     /// control is never written through [`Self::set_control`] from the
     /// audio thread: automation writes it, or it cannot be scheduled.

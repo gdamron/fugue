@@ -2,8 +2,6 @@
 //! and the beats a clock has counted, in one call that neither allocates
 //! nor frees, so a player can ask from its audio thread many times a second.
 
-use crate::ControlValue;
-
 use super::{OfflineLevels, RenderEngine};
 
 /// One read of the views: the output levels since the last read, as
@@ -30,15 +28,11 @@ impl RenderEngine {
         Some(ViewReading { levels, beats })
     }
 
-    /// The `elapsed` control of module `id`, without the error message
-    /// [`Self::get_control`] builds for a module that is missing. (A module
-    /// that exists but counts no beats still answers with a message, so a
-    /// player names only a clock.)
+    /// The `elapsed` control of module `id`, read without the messages
+    /// [`Self::get_control`] builds for a module that is missing or that
+    /// counts no beats.
     pub(super) fn elapsed_beats(&self, id: &str) -> Option<f64> {
         let surfaces = self.control_surfaces.lock().ok()?;
-        match surfaces.get(id)?.get_control("elapsed") {
-            Ok(ControlValue::Number(beats)) => Some(f64::from(beats)),
-            _ => None,
-        }
+        surfaces.get(id)?.read_number("elapsed").map(f64::from)
     }
 }

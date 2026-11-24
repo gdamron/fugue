@@ -15,8 +15,9 @@ const VIEWS_LEN: usize = 9;
 #[wasm_bindgen(js_class = FugueEngine)]
 impl WasmFugueEngine {
     #[wasm_bindgen(js_name = setViewsClock)]
-    /// Names the clock whose beats `takeViewsInto` reads, or none. Call it
-    /// off the audio thread, when the piece loads; it copies the id.
+    /// Names the clock whose beats `takeViewsInto` reads, or none. It copies
+    /// the id, so call it when the clock changes (a load or an edit), never
+    /// per read.
     pub fn set_views_clock(&mut self, clock: Option<String>) {
         self.views_clock = clock;
     }
@@ -34,7 +35,8 @@ impl WasmFugueEngine {
     /// right_peak, left_rms, right_rms, frames, left_overs, right_overs,
     /// non_finite_samples, beats]`. An absent RMS or beats count is NaN.
     /// Returns false, writing nothing, with no piece loaded. Allocates
-    /// nothing, so a player may call it from its audio thread.
+    /// nothing on the wasm heap, so a player may call it from its audio
+    /// thread; the copy out makes one short-lived typed-array view in JS.
     pub fn take_views_into(&mut self, out: &Float64Array) -> Result<bool, JsValue> {
         if out.length() as usize != VIEWS_LEN {
             return Err(JsValue::from_str(

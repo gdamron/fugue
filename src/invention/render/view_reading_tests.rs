@@ -41,9 +41,27 @@ fn the_first_read_of_a_clocks_beats_costs_nothing() {
 #[test]
 fn every_read_costs_nothing() {
     let mut engine = engine();
-    for clock in [Some("clock"), Some("missing"), None, Some("clock")] {
+    for clock in [
+        Some("clock"),
+        Some("missing"),
+        Some("osc"),
+        None,
+        Some("clock"),
+    ] {
         let (reading, allocs, frees) = allocator_events(|| engine.take_view_reading(clock));
         assert!(reading.is_some());
         assert_eq!((allocs, frees), (0, 0), "{clock:?}");
     }
+}
+
+#[test]
+fn a_module_that_counts_no_beats_has_none() {
+    let mut engine = engine();
+    let reading = engine.take_view_reading(Some("osc")).unwrap();
+    assert_eq!(reading.beats, None);
+    assert!(engine
+        .take_view_reading(Some("clock"))
+        .unwrap()
+        .beats
+        .is_some());
 }
