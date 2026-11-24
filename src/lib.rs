@@ -102,8 +102,8 @@ pub use invention::{
     NoteChange, NoteChanges, NotePreview, NoteTime, OfflineLevels, OrchestrationRuntime,
     OutputBins, OutputTap, Playhead, ReloadError, ReloadReport, RenderEngine, RequestLog,
     RunningInvention, RuntimeConnectionInfo, RuntimeController, RuntimeModuleInfo, RuntimeSnapshot,
-    RuntimeState, RuntimeStatus, Score, TimeSignature, FEEDBACK_CHUNKS_ENV, MAX_OUTPUT_TAPS,
-    MAX_TAP_BINS, REQUEST_LOG_CAPACITY, SCORE_SCHEMA_V1, TIMED_EDIT_LOG_CAPACITY, ViewReading,
+    RuntimeState, RuntimeStatus, Score, TimeSignature, ViewReading, FEEDBACK_CHUNKS_ENV,
+    MAX_OUTPUT_TAPS, MAX_TAP_BINS, REQUEST_LOG_CAPACITY, SCORE_SCHEMA_V1, TIMED_EDIT_LOG_CAPACITY,
 };
 
 // Re-export music theory
