@@ -49,7 +49,7 @@ pub(crate) fn resolve_json_assets(
     let mut assets = HashMap::new();
     for (name, asset) in &invention.assets {
         let resolved = resolve_asset_path(invention.source_path.as_deref(), &asset.path)?;
-        let contents = std::fs::read_to_string(&resolved).map_err(|err| {
+        let contents = read_asset_text(&resolved).map_err(|err| {
             format!(
                 "Failed to read asset '{}' from '{}': {}",
                 name,
@@ -96,6 +96,20 @@ pub(crate) fn resolve_json_assets(
     }
 
     Ok(())
+}
+
+/// Reads an asset whole, held to the document read limit: the size is
+/// checked from metadata before any byte is read, so an oversized file is
+/// refused with its path and the limit instead of filling memory.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_asset_text(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let bytes = crate::pkg::read_limit::read_document(path)?;
+    Ok(String::from_utf8(bytes)?)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_asset_text(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(std::fs::read_to_string(path)?)
 }
 
 /// Returns true when a parsed JSON asset declares itself a `fugue.score.v1`
@@ -183,5 +197,31 @@ pub(super) fn resolve_asset_refs(
             }
         }
         _ => Ok(value.clone()),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::pkg::read_limit::DOCUMENT_READ_LIMIT;
+
+    #[test]
+    fn an_asset_past_the_document_limit_is_refused_with_its_path_and_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        // Sparse, so the test costs no disk; refused from metadata, so it
+        // costs no memory either.
+        std::fs::File::create(dir.path().join("huge.json"))
+            .unwrap()
+            .set_len(DOCUMENT_READ_LIMIT + 1)
+            .unwrap();
+        let mut invention = Invention::from_json(
+            r#"{"version": "1.0.0", "assets": {"score": {"path": "huge.json"}}, "modules": [], "connections": []}"#,
+        )
+        .unwrap();
+        invention.source_path = Some(dir.path().join("piece.json"));
+
+        let message = resolve_json_assets(&mut invention).unwrap_err().to_string();
+        assert!(message.contains("huge.json"), "{message}");
+        assert!(message.contains("16 MiB"), "{message}");
     }
 }
