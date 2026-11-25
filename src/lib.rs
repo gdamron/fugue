@@ -93,17 +93,18 @@ pub use modules::{
 
 // Re-export invention system
 pub use invention::{
-    feedback_chunks, set_feedback_chunks, validate_score, AssetSpec, ChannelBins,
+    feedback_chunks, set_feedback_chunks, validate_score, AssetSpec, AuthoredConfig, ChannelBins,
     CodeModuleRuntimeInfo, Connection, ControlAcks, ControlOverride, ControlRange, CoreVersion,
     DevelopmentControl, DevelopmentDefinitions, DevelopmentInput, DevelopmentOutput,
     DevelopmentSpec, GraphCommandError, Invention, InventionBuilder, InventionHandles,
     InventionRuntime, LoggedBeat, LoggedConnection, LoggedEdit, LoggedEditOutcome, LoggedLatch,
     LoggedModule, LoggedRequest, LoggedSetting, LoggedValue, LoggedWhen, MasterLevels, ModuleSpec,
     NoteChange, NoteChanges, NotePreview, NoteTime, OfflineLevels, OrchestrationRuntime,
-    OutputBins, OutputTap, Playhead, ReloadError, ReloadReport, RenderEngine, RequestLog,
-    RunningInvention, RuntimeConnectionInfo, RuntimeController, RuntimeModuleInfo, RuntimeSnapshot,
-    RuntimeState, RuntimeStatus, Score, TimeSignature, ViewReading, FEEDBACK_CHUNKS_ENV,
-    MAX_OUTPUT_TAPS, MAX_TAP_BINS, REQUEST_LOG_CAPACITY, SCORE_SCHEMA_V1, TIMED_EDIT_LOG_CAPACITY,
+    OutputBins, OutputTap, Playhead, ReloadError, ReloadReport, RenderEditsReport, RenderEngine,
+    RequestLog, RunningInvention, RuntimeConnectionInfo, RuntimeController, RuntimeModuleInfo,
+    RuntimeSnapshot, RuntimeState, RuntimeStatus, Score, TimeSignature, ViewReading,
+    FEEDBACK_CHUNKS_ENV, MAX_OUTPUT_TAPS, MAX_TAP_BINS, REQUEST_LOG_CAPACITY, SCORE_SCHEMA_V1,
+    TIMED_EDIT_LOG_CAPACITY,
 };
 
 // Re-export music theory

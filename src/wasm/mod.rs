@@ -171,15 +171,23 @@ impl WasmFugueEngine {
 
     #[wasm_bindgen(js_name = applyEdits)]
     /// Applies a JSON array of `apply_edits` operations (`add_module`,
-    /// `remove_module`, `connect`, `disconnect`) to the loaded graph as one
-    /// change, or refuses them all with nothing changed.
+    /// `remove_module`, `connect`, `disconnect`, `set_control`) to the
+    /// loaded graph as one change, or refuses them all with nothing changed.
+    ///
+    /// Returns the batch's report as JSON text (see [`RenderEditsReport`]):
+    /// `controls_written`, `controls_failed` when a write failed as it was
+    /// made, and `configs`, each written module's config as the engine's
+    /// document now holds it, for a host that keeps its own copy.
     ///
     /// A refusal throws the daemon's error as JSON text: `code`, `message`
     /// and, when one edit is to blame, `edit` with its `index`, `op` and
     /// `reason`. The edits build and install on the calling thread, between
     /// renders: on an AudioWorklet that is the audio thread, so a batch
-    /// that builds heavy modules can delay the next render.
-    pub fn apply_edits(&self, edits_json: &str) -> Result<(), JsValue> {
+    /// that builds heavy modules, or checks `set_control` writes on
+    /// throwaway copies of their modules, can delay the next render.
+    ///
+    /// [`RenderEditsReport`]: crate::RenderEditsReport
+    pub fn apply_edits(&self, edits_json: &str) -> Result<String, JsValue> {
         let edits: Vec<crate::rpc::StructuralEdit> =
             serde_json::from_str(edits_json).map_err(|err| {
                 rpc_error_value(&crate::rpc::RpcError::new(
@@ -187,9 +195,8 @@ impl WasmFugueEngine {
                     format!("invalid edits JSON: {err}; nothing was applied"),
                 ))
             })?;
-        self.inner
-            .apply_edits(&edits)
-            .map_err(|err| rpc_error_value(&err))
+        let report = (self.inner.apply_edits(&edits)).map_err(|err| rpc_error_value(&err))?;
+        serde_json::to_string(&report).map_err(|err| JsValue::from_str(&err.to_string()))
     }
 
     #[wasm_bindgen(js_name = setCodeModuleStatus)]

@@ -228,7 +228,7 @@ impl RunningInvention {
 /// key its module is built from (a filter's `type`, say), so the config
 /// alone may not carry the value. A write the module refuses refuses the
 /// batch at its edit, with nothing published.
-fn write_built(
+pub(crate) fn write_built(
     module: &mut BuiltModule,
     id: &str,
     candidate: &EditedCandidate,

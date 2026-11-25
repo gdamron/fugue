@@ -27,7 +27,11 @@
 mod arrange;
 pub(crate) use arrange::{borrowed, saved_in};
 mod commit;
+pub(crate) use commit::write_built;
 mod facts;
+pub(crate) use facts::GraphFacts;
+mod offline;
+pub(crate) use offline::check_offline;
 mod plan;
 #[cfg(test)]
 mod tests;
