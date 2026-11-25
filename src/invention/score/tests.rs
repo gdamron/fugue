@@ -1,14 +1,15 @@
 use super::*;
 use serde_json::json;
 
-/// The shipped In C score asset must validate against the schema it generalizes.
+/// An imported score asset (Bach's public-domain BWV 772) must validate
+/// against the schema it generalizes.
 #[test]
-fn in_c_score_asset_validates() {
-    let json = include_str!("../../../examples/in_c/score.json");
-    let value: Value = serde_json::from_str(json).expect("in_c score.json parses");
-    validate_score(&value).expect("in_c score.json validates");
+fn bwv772_score_asset_validates() {
+    let json = include_str!("../../../tests/fixtures/preview_notes/bwv772.score.json");
+    let value: Value = serde_json::from_str(json).expect("bwv772 score parses");
+    validate_score(&value).expect("bwv772 score validates");
 
-    let score = Score::from_json(json).expect("in_c score.json deserializes");
+    let score = Score::from_json(json).expect("bwv772 score deserializes");
     assert_eq!(score.root_note, Some(60));
     assert_eq!(score.rhythm_grid.as_deref(), Some("32nd_note"));
     assert!(!score.cells.is_empty());

@@ -167,4 +167,4 @@ Fix mismatches and repeat from step 3 until the guards pass.
 ## Output
 
 Write the validated document to where the caller wants it — for an example piece,
-`examples/<piece>/score.json` (mirroring `examples/in_c/score.json`).
+`examples/<piece>/score.json`.

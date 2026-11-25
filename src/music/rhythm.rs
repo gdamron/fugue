@@ -116,7 +116,7 @@ fn gcd_i64(mut a: u64, mut b: u64) -> u64 {
 
 /// Names a duration (in quarter notes) as a note value, e.g. `16th_note` or
 /// `8th_triplet` — the vocabulary `fugue.score.v1` uses for `rhythm_grid`
-/// (cf. `examples/in_c/score.json`'s `32nd_note`).
+/// (cf. `tests/fixtures/preview_notes/bwv772.score.json`'s `32nd_note`).
 ///
 /// Durations that are not a unit fraction of a whole note fall back to
 /// `{num}/{den}_whole_note`.

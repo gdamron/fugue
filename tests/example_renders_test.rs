@@ -19,21 +19,22 @@ const SECONDS: usize = 3;
 /// example (a melody at 60 bpm) pick a dozen notes, so they all but never
 /// match by chance.
 const PROBE_SECONDS: usize = 12;
-/// Examples whose `code` or `agent` modules run on wall-clock time, so no
-/// seed makes their renders repeat.
-const WALL_CLOCK: [&str; 1] = ["in_c.json"];
-
 fn engine(example: ExampleDefinition, seed: Option<u64>) -> RenderEngine {
     let path = example.path();
     let invention = Invention::from_file(path.to_str().unwrap())
         .unwrap_or_else(|err| panic!("{}: {err}", example.file_name));
+    stubbed_engine(invention, seed).unwrap_or_else(|err| panic!("{}: {err}", example.file_name))
+}
+
+/// A render engine under `seed` whose agents reach no backend.
+fn stubbed_engine(invention: Invention, seed: Option<u64>) -> Result<RenderEngine, String> {
     let mut engine = RenderEngine::new(SAMPLE_RATE);
     engine.set_seed(seed);
     engine.stub_agent_backends(true);
     engine
         .load_invention(invention)
-        .unwrap_or_else(|err| panic!("{}: {err}", example.file_name));
-    engine
+        .map_err(|err| err.to_string())?;
+    Ok(engine)
 }
 
 /// The rendered samples' bits, folded into one FNV-1a hash.
@@ -73,9 +74,6 @@ fn each_example(check: impl Fn(ExampleDefinition) + Sync) {
 #[test]
 fn a_seeded_render_of_every_example_repeats() {
     each_example(|example| {
-        if WALL_CLOCK.contains(&example.file_name) {
-            return;
-        }
         let first = render(example, Some(1));
         let again = render(example, Some(1));
         assert_eq!(first, again, "{} varies under seed 1", example.file_name);
@@ -86,9 +84,6 @@ fn a_seeded_render_of_every_example_repeats() {
 fn unseeded_examples_still_vary_and_each_seed_plays_its_own_performance() {
     let varying = std::sync::Mutex::new(Vec::new());
     each_example(|example| {
-        if WALL_CLOCK.contains(&example.file_name) {
-            return;
-        }
         let name = example.file_name;
         let render = |seed| render_for(example, seed, PROBE_SECONDS);
         let unseeded = render(None);
@@ -122,10 +117,33 @@ fn unseeded_examples_still_vary_and_each_seed_plays_its_own_performance() {
     );
 }
 
+/// A pulse whose agent is asked to vary it every four beats.
+fn agent_piece() -> Invention {
+    serde_json::from_value(serde_json::json!({
+        "version": "1.0.0",
+        "modules": [
+            {"id": "clock", "type": "clock", "config": {"bpm": 240}},
+            {"id": "osc", "type": "oscillator", "config": {"frequency": 220}},
+            {"id": "conductor", "type": "agent", "config": {
+                "enabled": true,
+                "backend": "local:codex",
+                "cooldown": 4,
+                "system_prompt": "You conduct a pulse.",
+                "prompt": "Keep the pulse steady.",
+            }},
+            {"id": "dac", "type": "dac"},
+        ],
+        "connections": [
+            {"from": "clock", "from_port": "beat_d4", "to": "conductor", "to_port": "trigger"},
+            {"from": "osc", "from_port": "audio", "to": "dac", "to_port": "audio"},
+        ],
+    }))
+    .unwrap()
+}
+
 #[test]
-fn an_example_agent_contacts_no_backend_in_a_test_render() {
-    let in_c = example_catalog::resolve_example("in_c.json").unwrap();
-    let mut engine = engine(in_c, Some(1));
+fn an_agent_contacts_no_backend_in_a_test_render() {
+    let mut engine = stubbed_engine(agent_piece(), Some(1)).unwrap();
     let mut block = vec![0.0f32; 1024];
     let deadline = Instant::now() + Duration::from_secs(60);
     // The conductor is triggered every four beats; render until its worker
