@@ -87,10 +87,10 @@ impl RenderEngine {
     /// Makes the checked batch's writes once its graph change committed, as
     /// the daemon's commit does: the candidate becomes the retained
     /// document, and each module that survived the change is written, in
-    /// batch order, unrecorded unless `contested` says a timed authored write
-    /// contests it, as the daemon writes them. Modules the batch added or
-    /// rebuilt were built with their writes. A write that fails as it is made is reported, and the
-    /// document takes back what it held for the control.
+    /// batch order, unrecorded unless `contested` says a timed authored
+    /// write contests it. Modules the batch added or rebuilt were built
+    /// with their writes. A write that fails as it is made is reported, and
+    /// the document takes back what it held for the control.
     pub(super) fn commit_writes(
         &self,
         edits: &[StructuralEdit],
