@@ -2,7 +2,7 @@ use std::sync::LazyLock;
 
 /// Precomputed Hz for every MIDI note 0..=127.
 ///
-/// `Note::frequency` does ~600k calls/sec across 13 In C voices on the audio
+/// `Note::frequency` does ~600k calls/sec across a 13-voice piece on the audio
 /// thread; the table replaces a `powf` per call with a single array load.
 static MIDI_FREQUENCIES: LazyLock<[f32; 128]> = LazyLock::new(|| {
     let mut table = [0.0f32; 128];

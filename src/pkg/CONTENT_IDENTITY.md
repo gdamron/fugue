@@ -17,7 +17,7 @@ binds its reference to an invention-local module type name.
 Ship the five instruments currently in `examples/developments`: piano, marimba,
 vibraphone, pluck, and pad. Ship BWV 772 as the starter invention, using the
 MusicXML and score fixture in the Fugue CLI's `tests/fixtures/bwv772` as its
-source. Do not bundle In C, the demo pulse packages, or the remaining repository
+source. Do not bundle the demo pulse packages or the remaining repository
 examples by default. `voice_library_trio.json` is an invention, not an instrument.
 
 Draft arrangement assumption: use the bundled piano for both Bach parts, with
@@ -460,7 +460,7 @@ start the daemon from an unrelated directory. The five development packages and
 Bach starter closure must already be available in its selected package cache.
 Discover pad, inspect its four aliases, import via the returned reference, and
 save/reload successfully. Discover and load Bach with all assets/dependencies.
-Confirm In C and the unselected examples are absent from bundled discovery.
+Confirm the unselected examples are absent from bundled discovery.
 
 Development discovery work includes reference import support in the shared
 loader. Package installation work includes catalog refresh and coordinating

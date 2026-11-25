@@ -48,7 +48,7 @@ impl ModuleFactory for CodeFactory {
                 ConfigKey::text("script"),
                 ConfigKey::text("entrypoint"),
                 ConfigKey::boolean("enabled"),
-                // The script's own parameters (In C's `mixer_id`, say), an
+                // The script's own parameters (a `mixer_id`, say), an
                 // object it reads from its module's config.
                 ConfigKey::json("params"),
             ]
