@@ -270,15 +270,15 @@ fn an_oversized_batch_is_refused() {
 }
 
 #[test]
-fn document_edits_are_refused_before_anything_changes() {
+fn presentation_edits_are_refused_before_anything_changes() {
     let engine = loaded();
     let before = shape(&engine);
     let batch = r#"[
         {"op":"add_module","id":"osc2","module_type":"oscillator"},
-        {"op":"set_control","module_id":"osc","key":"frequency","value":440.0}]"#;
+        {"op":"name_modules","names":{"osc":"Lead"}}]"#;
     let error = engine.apply_edits(&edits(batch)).unwrap_err();
     assert!(
-        error.message.starts_with("edit 1 (set_control) refused"),
+        error.message.starts_with("edit 1 (name_modules) refused"),
         "{}",
         error.message
     );

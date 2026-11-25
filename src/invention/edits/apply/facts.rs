@@ -61,12 +61,35 @@ pub(super) struct LiveFacts {
     unbuildable: HashSet<String>,
 }
 
+/// What a batch is checked against in a graph, read once as it starts.
+pub(crate) struct GraphFacts {
+    pub(crate) registry: Arc<ModuleRegistry>,
+    pub(crate) sample_rate: u32,
+    pub(crate) ports: IndexMap<String, ModulePorts>,
+    pub(crate) surfaces: IndexMap<String, ControlSurfaceInstance>,
+    pub(crate) developments: Arc<LoadedDevelopments>,
+}
+
 impl LiveFacts {
     pub(super) fn new(
         running: &RunningInvention,
         document: &Invention,
         pending: Vec<PendingWrite>,
     ) -> Self {
+        let graph = GraphFacts {
+            registry: running.registry(),
+            sample_rate: running.sample_rate,
+            ports: running.module_ports.lock().unwrap().clone(),
+            surfaces: running.control_surfaces.lock().unwrap().clone(),
+            developments: running.definitions().loaded().clone(),
+        };
+        Self::of(graph, document, pending)
+    }
+
+    /// The facts of `graph`, a running invention's or an offline render's,
+    /// whose retained document is `document`, with `pending`, its authored
+    /// writes still waiting to apply.
+    pub(super) fn of(graph: GraphFacts, document: &Invention, pending: Vec<PendingWrite>) -> Self {
         let assets = Invention {
             modules: Vec::new(),
             connections: Vec::new(),
@@ -89,13 +112,13 @@ impl LiveFacts {
             }
         }
         Self {
-            registry: running.registry(),
-            audio: AudioControls::of(running.registry()),
-            sample_rate: running.sample_rate,
-            ports: running.module_ports.lock().unwrap().clone(),
-            surfaces: running.control_surfaces.lock().unwrap().clone(),
+            audio: AudioControls::of(graph.registry.clone()),
+            registry: graph.registry,
+            sample_rate: graph.sample_rate,
+            ports: graph.ports,
+            surfaces: graph.surfaces,
             assets,
-            developments: running.definitions().loaded().clone(),
+            developments: graph.developments,
             described: HashMap::new(),
             authored,
             waiting,

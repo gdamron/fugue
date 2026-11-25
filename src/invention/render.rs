@@ -17,6 +17,7 @@ use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, Runti
 #[cfg(target_arch = "wasm32")]
 mod audio_file_sink;
 mod batch;
+mod batch_writes;
 mod code_modules;
 mod editing;
 mod levels;
@@ -25,6 +26,7 @@ mod pause;
 mod replay;
 mod view_reading;
 
+pub use batch_writes::{AuthoredConfig, RenderEditsReport};
 pub use code_modules::CodeModuleRuntimeInfo;
 pub use levels::OfflineLevels;
 pub use view_reading::ViewReading;
@@ -510,6 +512,8 @@ impl OrchestrationRuntime for RenderEngine {
 
 #[cfg(test)]
 mod batch_tests;
+#[cfg(test)]
+mod batch_writes_tests;
 #[cfg(test)]
 mod clamp_tests;
 #[cfg(test)]
