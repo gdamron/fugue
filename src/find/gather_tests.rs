@@ -142,9 +142,9 @@ impl Daemon {
                     ),
                     Some(_) => page(
                         vec![content(
-                            "fugue.demo.in-c",
+                            "fugue.demo.bwv772",
                             ContentKind::Invention,
-                            "Riley's In C.",
+                            "Bach's Invention 1.",
                         )],
                         None,
                     ),
@@ -308,11 +308,11 @@ fn idle_daemon_reads_no_controls_and_the_answer_says_why() {
 #[test]
 fn every_page_of_a_catalog_is_read_and_a_failed_read_is_noted() {
     let (index, requests) = gather(snapshot(false, Vec::new()));
-    let example = card(&index, FindKind::Example, "fugue.demo.in-c");
+    let example = card(&index, FindKind::Example, "fugue.demo.bwv772");
     assert_eq!(example.how["call"]["tool"], "load_invention");
     assert_eq!(
         example.how["call"]["arguments"]["ref"]["package"],
-        "fugue.demo.in-c"
+        "fugue.demo.bwv772"
     );
     assert!(index.contains(FindKind::Example, "fugue.demo.drone"));
     assert!((requests.iter()).any(|request| request["query"]["cursor"] == "second"));

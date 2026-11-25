@@ -4,7 +4,7 @@
 //! `get_control`, one cell at a time as `cells.N`. A description with no
 //! such value is as it was, byte for byte.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use fugue::rpc::{
@@ -36,12 +36,6 @@ fn start(invention: Invention) -> RunningInvention {
     let (runtime, _) = InventionBuilder::new(RATE).build(invention).unwrap();
     let slot = Arc::new(Mutex::new(None));
     runtime.start_with_backend(Silent(slot)).unwrap()
-}
-
-fn example(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
-        .join(name)
 }
 
 fn describe(running: &RunningInvention, module: &str) -> (ModuleDescription, String) {
@@ -107,25 +101,49 @@ fn assert_bank_left_out(running: &RunningInvention, module: &str) -> Vec<Value> 
     bank
 }
 
+/// A piece whose sequencer reads its cells from a score asset: the
+/// public-domain BWV 772 score, five cells, copied into a scratch directory.
+fn score_piece() -> (tempfile::TempDir, Invention) {
+    let dir = tempfile::tempdir().unwrap();
+    let score = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/preview_notes/bwv772.score.json");
+    std::fs::copy(score, dir.path().join("score.json")).unwrap();
+    let piece = json!({
+        "version": "1.0.0",
+        "assets": {"score": {"path": "score.json"}},
+        "modules": [{
+            "id": "mel_1",
+            "type": "cell_sequencer",
+            "config": {"step_count": 704, "cells": {"$asset": "score", "path": "/cells"}},
+        }],
+        "connections": [],
+    });
+    let path = dir.path().join("piece.json");
+    std::fs::write(&path, piece.to_string()).unwrap();
+    let invention = Invention::from_file(path.to_str().unwrap()).unwrap();
+    (dir, invention)
+}
+
 #[test]
-fn in_c_describes_its_sequencers_and_reads_their_cells_one_at_a_time() {
-    let running = start(Invention::from_file(example("in_c.json").to_str().unwrap()).unwrap());
+fn a_score_piece_describes_its_sequencer_and_reads_its_cells_one_at_a_time() {
+    let (_dir, invention) = score_piece();
+    let running = start(invention);
     let bank = assert_bank_left_out(&running, "mel_1");
-    assert_eq!(bank.len(), 53);
+    assert_eq!(bank.len(), 5);
     let past = running
-        .get_control("mel_1", "cells.53")
+        .get_control("mel_1", "cells.5")
         .unwrap_err()
         .to_string();
     assert!(
-        past.contains("the bank holds 53 cells, cells.0 to cells.52"),
+        past.contains("the bank holds 5 cells, cells.0 to cells.4"),
         "{past}"
     );
     let written = running
-        .set_control("mel_1", "cells.53", ControlValue::String("[null]".into()))
+        .set_control("mel_1", "cells.5", ControlValue::String("[null]".into()))
         .unwrap_err()
         .to_string();
     assert!(
-        written.contains("cells.0 to cells.52"),
+        written.contains("cells.0 to cells.4"),
         "a write refuses alike: {written}"
     );
     assert!(running.get_control("mel_1", "cells.64").is_err());

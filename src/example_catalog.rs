@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 35] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 34] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -187,12 +187,6 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 35] = [
         title: "Voice Library Trio",
         summary: "Layers piano, marimba, and pad developments through one mixer.",
     },
-    ExampleDefinition {
-        file_name: "in_c.json",
-        title: "In C — Terry Riley",
-        summary:
-            "13-voice generative performance of Terry Riley's In C with self-progressing voices.",
-    },
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -363,7 +357,6 @@ mod tests {
                 "development_file_patch.json",
                 "development_inline_patch.json",
                 "developments/voice_library_trio.json",
-                "in_c.json",
             ]
         );
     }
@@ -423,13 +416,25 @@ mod tests {
 
     #[test]
     fn parse_example_command_takes_a_seed_before_or_after_the_example() {
-        let run = ExampleCommand::RunByName(String::from("in_c.json"));
+        let run = ExampleCommand::RunByName(String::from("chance_groove.json"));
         let expected = ExampleArgs {
             command: run,
             seed: Some(42),
         };
-        let after = ["examples", "--example", "in_c.json", "--seed", "42"];
-        let before = ["examples", "--seed", "42", "--example", "in_c.json"];
+        let after = [
+            "examples",
+            "--example",
+            "chance_groove.json",
+            "--seed",
+            "42",
+        ];
+        let before = [
+            "examples",
+            "--seed",
+            "42",
+            "--example",
+            "chance_groove.json",
+        ];
         assert_eq!(parse_example_command(after).unwrap(), expected);
         assert_eq!(parse_example_command(before).unwrap(), expected);
         let interactive = parse_example_command(["examples", "--seed", "7"]).unwrap();

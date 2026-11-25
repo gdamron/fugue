@@ -4,8 +4,9 @@
 //! cells; the asset file is never written; later edits change the copy; and
 //! a saved piece reloads and plays the edited cells.
 //!
-//! The piece plays the public-domain cells of Riley's *In C*
-//! (`examples/in_c/score.json`), copied into a scratch directory.
+//! The piece plays the cells of Bach's public-domain Invention 1, BWV 772
+//! (`tests/fixtures/preview_notes/bwv772.score.json`), copied into a scratch
+//! directory.
 
 use std::path::{Path, PathBuf};
 
@@ -55,7 +56,8 @@ impl Scratch {
     fn new() -> Scratch {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
-        let score = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/in_c/score.json");
+        let score = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/preview_notes/bwv772.score.json");
         std::fs::copy(score, root.join("score.json")).unwrap();
         let scratch = Scratch { _dir: dir, root };
         scratch.write("piece.json", &piece_doc(asset_ref(), asset_ref()));
@@ -114,7 +116,7 @@ fn the_first_cell_edit_copies_the_bank_into_the_piece_and_later_edits_change_the
     let b_before = piece.read("mel_b", "cells");
     assert_eq!(
         b_before.as_array().map(Vec::len),
-        Some(53),
+        Some(5),
         "the score's cells load"
     );
 

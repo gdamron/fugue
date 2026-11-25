@@ -91,7 +91,7 @@ Offline renders take the same seed through `RenderEngine::set_seed`, set
 before loading the invention; test renders can also stub agent backends with
 `RenderEngine::stub_agent_backends`, so no service or local process is
 contacted. `code` and `agent` modules run on wall-clock time, so an invention
-using them (such as `in_c.json`) still varies under a seed.
+using them still varies under a seed.
 
 Current playable examples include:
 

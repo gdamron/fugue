@@ -1,10 +1,10 @@
 {
-  "id": "fugue.example.in-c",
+  "id": "fugue.example.bwv772",
   "version": "1.0.0",
   "kind": "invention",
   "license": "CC-BY-SA-4.0",
   "authors": [{ "name": "Example Ensemble" }],
-  "description": "An arrangement of Terry Riley's In C.",
+  "description": "An arrangement of Bach's Invention 1 (BWV 772).",
   "targets": ["external-agent"],
-  "entry": { "invention": "in_c.invention.json" }
+  "entry": { "invention": "bwv772.invention.json" }
 }
