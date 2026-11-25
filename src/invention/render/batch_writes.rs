@@ -3,8 +3,8 @@
 //! made once the batch's graph change commits.
 //!
 //! The render keeps the document it loaded, updated by each edit, as the
-//! daemon keeps its retained document; it has no call to export it. So the
-//! report gives each written module's config as that document now holds
+//! daemon keeps its retained document, but the browser engine (`wasm`) has
+//! no call to export it. So the report gives each written module's config as that document now holds
 //! it, which a host keeping its own copy of the document puts in place of
 //! the module's config there.
 

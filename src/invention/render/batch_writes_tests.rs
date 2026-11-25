@@ -35,6 +35,8 @@ fn a_reported_config_builds_the_value_again() {
     let engine = loaded();
     let batch = r#"[{"op":"set_control","module_id":"mix","key":"level.1","value":0.25}]"#;
     let report = engine.apply_edits(&edits(batch)).unwrap();
+    let live = engine.get_control("mix", "level.1").unwrap();
+    assert_eq!(live, ControlValue::Number(0.25));
     assert_eq!(report.configs[0].config, config(&engine, "mix"));
     // A host that puts the reported config in its copy, and loads that,
     // hears the value the batch wrote.

@@ -509,8 +509,8 @@ It has no revisions, tickets, `when` or events.
 
 A batch with a `set_control` is checked as the daemon checks it, on a copy of
 the render's retained document, and its values become the modules' starting
-values in that document. The render cannot export that document, so its
-report carries `controls_written` and `controls_failed`, with the meanings
+values in that document. The browser engine cannot export that document, so
+the report carries `controls_written` and `controls_failed`, with the meanings
 above, and `configs`: `{ module_id, config }` for each module the batch
 wrote, once, in first-written order, holding the module's config as the
 render's document now has it. A host that keeps its own copy of the document
