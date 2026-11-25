@@ -499,6 +499,26 @@ third attempt, the batch is refused as `internal` and nothing was applied.
 
 A refused batch emits no events.
 
+## On an offline render
+
+`RenderEngine::apply_edits` (the browser engine's `applyEdits`) takes
+`add_module`, `remove_module`, `connect`, `disconnect` and `set_control`,
+with the checks, refusals and order above, all or none. It refuses
+`move_modules` and `name_modules` for the whole batch, with no edit detail.
+It has no revisions, tickets, `when` or events.
+
+A batch with a `set_control` is checked as the daemon checks it, on a copy of
+the render's retained document, and its values become the modules' starting
+values in that document. The render cannot export that document, so its
+report carries `controls_written` and `controls_failed`, with the meanings
+above, and `configs`: `{ module_id, config }` for each module the batch
+wrote, once, in first-written order, holding the module's config as the
+render's document now has it. A host that keeps its own copy of the document
+puts each `config` in place of that module's config in its copy. It does not
+work out from the edits how a key lands in a config, since a control's key
+need not be its config key. A batch without a `set_control` reports
+nothing in these fields.
+
 ## Not supported
 
 - **Swap.** Remove and add the module instead.

@@ -98,10 +98,11 @@ impl RenderEngine {
         // after the graph's lock.
         drop(built);
         match (committed, failure) {
-            (Ok(committed), _) => {
+            (Ok(mut committed), _) => {
+                let contested = std::mem::take(&mut committed.contested);
                 self.follow_up(committed);
                 Ok(match candidate {
-                    Some(candidate) => self.commit_writes(edits, candidate),
+                    Some(candidate) => self.commit_writes(edits, candidate, &contested),
                     None => RenderEditsReport::default(),
                 })
             }

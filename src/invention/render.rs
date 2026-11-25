@@ -513,6 +513,8 @@ impl OrchestrationRuntime for RenderEngine {
 #[cfg(test)]
 mod batch_tests;
 #[cfg(test)]
+mod batch_writes_tests;
+#[cfg(test)]
 mod clamp_tests;
 #[cfg(test)]
 mod edit_state_tests;

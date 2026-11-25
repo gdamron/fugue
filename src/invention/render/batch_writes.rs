@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use super::RenderEngine;
 use crate::invention::audio_assets;
 use crate::invention::edits::{check_offline, EditedCandidate, GraphFacts};
+use crate::invention::publish::Contested;
 use crate::invention::runtime::GraphCommandError;
 use crate::rpc::{
     truncate_on_char_boundary, ControlWriteFailure, RpcError, RpcErrorCode, StructuralEdit,
@@ -86,13 +87,15 @@ impl RenderEngine {
     /// Makes the checked batch's writes once its graph change committed, as
     /// the daemon's commit does: the candidate becomes the retained
     /// document, and each module that survived the change is written, in
-    /// batch order. Modules the batch added or rebuilt were built with
-    /// their writes. A write that fails as it is made is reported, and the
+    /// batch order, unrecorded unless `contested` says a timed authored write
+    /// contests it, as the daemon writes them. Modules the batch added or
+    /// rebuilt were built with their writes. A write that fails as it is made is reported, and the
     /// document takes back what it held for the control.
     pub(super) fn commit_writes(
         &self,
         edits: &[StructuralEdit],
         candidate: EditedCandidate,
+        contested: &Contested,
     ) -> RenderEditsReport {
         let built: HashSet<&str> = (edits.iter())
             .filter_map(|edit| match edit {
@@ -121,7 +124,8 @@ impl RenderEngine {
             }
             let asset = (write.key.as_str(), written.asset);
             let load = audio_assets::resolve_checked_asset_write(source_path, asset, &write.value);
-            let made = snapshot.set_control_transient(&write.module_id, &write.key, load);
+            let control = (write.module_id.as_str(), write.key.as_str());
+            let made = snapshot.set_control_committed(control, load, contested);
             let outcome = made.err().map(|error| match error {
                 GraphCommandError::ControlError(message) => message,
                 other => other.to_string(),
