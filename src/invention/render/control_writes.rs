@@ -23,8 +23,13 @@ impl RenderEngine {
     /// was made (refused, with the reason) or lost to a higher-ranked
     /// write (`overridden`).
     ///
-    /// A render writes now: a write with a `when` or a `ttl_ms` is refused.
+    /// A render writes now: a write with a `when` or a `ttl_ms` the daemon
+    /// would take is refused.
     pub fn write_controls(&self, writes: &[ControlWrite]) -> Result<Vec<AppliedControl>, RpcError> {
+        // The daemon's checks first, so a batch the daemon would refuse is
+        // refused at the same write, with the same message.
+        let snapshot = self.snapshot();
+        let checked = snapshot.check_writes(writes)?;
         let timed = (writes.iter().enumerate())
             .find(|(_, write)| write.timing.when.is_some() || write.timing.ttl_ms.is_some());
         if let Some((index, write)) = timed {
@@ -36,8 +41,6 @@ impl RenderEngine {
                 message: "an offline render writes now; `when` and `ttl_ms` do not apply".into(),
             }));
         }
-        let snapshot = self.snapshot();
-        let checked = snapshot.check_writes(writes)?;
         let mut controls = Vec::with_capacity(writes.len());
         for (write, checked) in writes.iter().zip(checked) {
             let options = WriteOptions {

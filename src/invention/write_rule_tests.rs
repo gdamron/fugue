@@ -199,7 +199,28 @@ fn cases() -> Vec<(Vec<ControlWrite>, Outcome)> {
             ],
             made(&[(num(2.0), true), (num(0.0), true), (num(1.5), false)]),
         ),
+        // A refusal before a timing a render cannot take, and a ttl alone,
+        // as the daemon refuses them.
+        (
+            vec![write("gone", "level.0", num(0.5)), bounded(1)],
+            refused(0, UnknownModule, "no module 'gone' exists"),
+        ),
+        (
+            vec![bounded(1)],
+            refused(
+                0,
+                InvalidTiming,
+                "`ttl_ms` applies only with a `when`; nothing was sent",
+            ),
+        ),
     ]
+}
+
+/// A write to the oscillator's frequency with a ttl and no `when`.
+fn bounded(ttl_ms: u64) -> ControlWrite {
+    let mut write = write("osc", "frequency", ControlValue::Number(1.0));
+    write.timing.ttl_ms = Some(ttl_ms);
+    write
 }
 
 /// A refusal's message as far as `expected` gives it: the start of one
