@@ -205,8 +205,9 @@ fresh instance, so its internal state restarts.
 
 The swapped module is the new one for the edits after it: a `connect` can use
 a port only the new type has, one naming a port the new type lacks is
-refused as `unknown_port`, and a `set_control` reaches the new module. A `set_control` before the swap goes with the old module, as a write
-before a `remove_module` does. A module the batch added can be swapped later
+refused as `unknown_port`, and a `set_control` reaches the new module. A
+`set_control` before the swap goes with the old module, as a write before a
+`remove_module` does. A module the batch added can be swapped later
 in the batch; one it removed is `unknown_module`. Every other module keeps its
 instance and plays on, so a voice the swap does not touch has no gap.
 
@@ -257,17 +258,17 @@ A committed batch answers with `kind: "edits_applied"`:
   "schema_version": 1,
   "revision": { "session_id": "…", "revision": 13 },
   "kind": "edits_applied",
-  "edit_count": 3,
+  "edit_count": 4,
   "added": ["tremolo"],
   "removed": [],
-  "rebuilt": [],
+  "rebuilt": ["tone"],
   "controls_written": [{ "module_id": "lead", "key": "amplitude_mod_depth" }],
   "swapped": [{ "edit_index": 3, "module_id": "tone", "connections_removed": [
     { "from": "env", "from_port": "envelope", "to": "tone", "to_port": "cutoff_mod" }
   ] }],
   "connections_added": 1,
-  "connections_removed": 0,
-  "untouched": 41
+  "connections_removed": 1,
+  "untouched": 40
 }
 ```
 
@@ -279,7 +280,7 @@ A committed batch answers with `kind: "edits_applied"`:
 | `controls_written` | `{ module_id, key }` for each distinct control the `set_control` edits wrote, once, in first-written order. Only modules that exist after the commit are listed (survivors, added and rebuilt modules): a write to a module that a later edit removed or replaced goes with that module. |
 | `controls_failed` | Present only when a write failed at commit; see below. |
 | `swapped` | Present only when the batch swapped a module: `{ edit_index, module_id, connections_removed }` for each `swap_module` edit, in batch order, with `{ from, from_port, to, to_port }` for each connection that swap removed. |
-| `connections_added`, `connections_removed` | Connection counts, a swap's removed connections included. Connections that go with a removed module are not counted. |
+| `connections_added`, `connections_removed` | Connection counts, against the piece before the batch: a swap's removed connections are counted, a connection the batch both made and removed is not, and neither are connections that go with a removed module. |
 | `untouched` | Surviving modules that were not rebuilt. They keep their instance, phase and state. A module whose only change is a `set_control` counts here: its value changes, its instance does not. |
 
 The report's size depends on the batch: each list holds at most one entry per

@@ -127,7 +127,8 @@ pub(crate) trait EditFacts {
     }
 
     /// Called when `remove_module` removes `id` after an earlier
-    /// [`Self::describe`] in this batch built it: drop anything kept for it.
+    /// [`Self::describe`] in this batch built it, and when `swap_module`
+    /// replaces `id`: drop anything kept for it.
     fn forget(&mut self, _id: &str) {}
 
     /// The controls a running module lists as authored, that is, as the

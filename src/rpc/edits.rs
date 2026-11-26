@@ -79,13 +79,12 @@ pub enum StructuralEdit {
     },
     /// Removes a module, together with every connection to or from it.
     RemoveModule { id: String },
-    /// Replaces a module with a fresh one of `module_type`, keeping its id,
-    /// name, position and every connection whose port the new type has;
-    /// the others are removed and reported.
+    /// Replaces a module, keeping connections the new type has ports for.
+    // Its id, name and position stay; the connections it drops are reported
+    // in `swapped`. An omitted config is `null`, the new type's defaults.
     SwapModule {
         id: String,
         module_type: String,
-        /// The new type's config; omitted is `null`, its defaults.
         #[serde(default)]
         config: serde_json::Value,
     },

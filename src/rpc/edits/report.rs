@@ -40,8 +40,8 @@ pub struct ApplyEditsReport {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub swapped: Vec<SwappedModule>,
     pub connections_added: usize,
-    /// Connections removed, a swap's included; those that go with a removed
-    /// module are not counted.
+    /// Connections removed, against the piece before the batch: a swap's
+    /// count, those that go with a removed module do not.
     pub connections_removed: usize,
     /// Modules the batch left untouched; they keep their phase and state.
     /// A control-only change counts as untouched: the value changes, the

@@ -165,3 +165,19 @@ fn a_voice_the_swap_does_not_touch_plays_on_without_a_gap() {
     assert!(left.iter().any(|sample| sample.abs() > 0.5));
     assert_ne!(right, twin_right);
 }
+
+#[test]
+fn a_timed_batch_cannot_swap_in_a_code_or_agent_module() {
+    for module_type in ["code", "agent"] {
+        let (mut running, audio) = start();
+        let (_twin, twin) = start();
+        let edits = [swap_edit(module_type, &serde_json::json!({}))];
+        let error = (running.apply_edits_at(&edits, &next_bar(), None)).unwrap_err();
+        assert!(error.message.contains("code or agent"), "{error:?}");
+        assert!(!running.live.publisher().lock().unwrap().timed_waiting());
+        assert_eq!(
+            audio.render_stereo(PAST_TWO_BARS),
+            twin.render_stereo(PAST_TWO_BARS)
+        );
+    }
+}
