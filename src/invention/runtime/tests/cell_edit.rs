@@ -170,7 +170,7 @@ fn a_cell_write_at_a_later_time_is_refused() {
             ..ControlWrite::new("seq", "cells.1", value)
         };
         let acks = running.write_controls(&[write]);
-        let error = acks.error.expect("refused").to_string();
+        let error = acks.error.expect("refused").message;
         assert!(error.contains("timed"), "{intent:?}: {error}");
     }
     let ControlValue::String(text) = running.get_control("seq", "cells").unwrap() else {

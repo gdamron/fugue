@@ -49,6 +49,7 @@ pub(crate) mod seeding;
 pub mod state;
 pub mod taps;
 pub(crate) mod timelines;
+pub(crate) mod write_rule;
 
 pub use builder::InventionBuilder;
 pub use core_version::CoreVersion;

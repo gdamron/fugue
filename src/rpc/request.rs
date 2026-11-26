@@ -305,9 +305,17 @@ pub enum RpcCommand {
     },
     /// Apply several control writes in one round trip. The daemon applies them
     /// in order within a single command, so a multi-control conducting gesture
-    /// (cells + tempo + dynamics) lands together rather than smeared across N
-    /// separate requests. Each write coerces and emits a `ControlChanged` event
-    /// exactly as a single [`RpcCommand::SetControl`] would.
+    /// lands together rather than smeared across separate requests, and all
+    /// or none: the batch is checked whole first, timed writes and untimed
+    /// alike, and a write the check refuses refuses the batch with nothing
+    /// written ([`super::RpcErrorCode::InvalidControlWrite`], naming its
+    /// index and reason). A number outside the range its control holds is
+    /// written as the nearer limit and reported `clamped`. A write the check
+    /// accepts can still fail as it is made (no room left to wait, a sample
+    /// that cannot load); its entry is then `refused` with the reason, and
+    /// the rest are made. Each write coerces and emits a `ControlChanged`
+    /// event exactly as a single [`RpcCommand::SetControl`] would, which is
+    /// a batch of one.
     SetControls {
         writes: Vec<ControlWrite>,
     },

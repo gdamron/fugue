@@ -417,6 +417,17 @@ pub trait ControlSurface: Send + Sync {
         None
     }
 
+    /// The range a number written to `key` is held within, as its module
+    /// clamps it when the write applies, or `None` for a control that
+    /// holds whatever finite number it is given (a clock's tempo, say).
+    /// It can be wider than the range [`Self::controls`] lists for editors:
+    /// an oscillator lists 20 to 20000 Hz but plays a 5 Hz write. Control
+    /// thread.
+    #[doc(hidden)]
+    fn held_range(&self, key: &str) -> Option<(f32, f32)> {
+        self.declaration(key)?.decl.clamp
+    }
+
     /// The declared control `key`, as automation on the audio thread writes
     /// it (see [`crate::control_request::Automation`]), or `None` for an
     /// undeclared control, or one automation cannot write. Control

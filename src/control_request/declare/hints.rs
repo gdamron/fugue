@@ -5,7 +5,7 @@
 //! control steps by 1 and shows no decimals unless it declares otherwise.
 
 use super::{ControlDecl, DeclKind};
-use crate::{ControlScale, NumberFormat, NumberHints};
+use crate::{ControlKind, ControlScale, NumberFormat, NumberHints};
 
 impl ControlDecl {
     /// The unit a number is in (`"Hz"`, `"s"`, `"BPM"`).
@@ -37,6 +37,28 @@ impl ControlDecl {
     pub(crate) const fn note(mut self) -> Self {
         self.format = Some(NumberFormat::Note);
         self
+    }
+
+    /// The kind clients list it as.
+    pub(crate) fn listed_kind(&self) -> ControlKind {
+        match self.kind {
+            _ if self.reader.is_some() => ControlKind::String { options: None },
+            DeclKind::Number { min, max } => ControlKind::Number {
+                min,
+                max,
+                hints: self.hints(),
+            },
+            DeclKind::Integer { min, max } => ControlKind::Number {
+                min: min as f32,
+                max: max as f32,
+                hints: self.hints(),
+            },
+            DeclKind::Bool => ControlKind::Bool,
+            DeclKind::Choice(options) => ControlKind::String {
+                options: Some(options.iter().map(|o| o.to_string()).collect()),
+            },
+            DeclKind::Payload => ControlKind::String { options: None },
+        }
     }
 
     /// The hints clients list for it. A whole number, an integer or a

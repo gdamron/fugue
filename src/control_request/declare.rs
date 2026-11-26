@@ -20,7 +20,7 @@ use super::request::{ControlIndex, RtValue};
 use crate::module_config::{whole_number_in, ConfigKind};
 use crate::payload::Payload;
 use crate::traits::check_finite;
-use crate::{ControlKind, ControlMeta, ControlScale, ControlValue, NumberFormat};
+use crate::{ControlMeta, ControlScale, ControlValue, NumberFormat};
 
 mod bounds;
 mod hints;
@@ -557,24 +557,7 @@ impl ControlTable {
                         return None;
                     }
                 }
-                let kind = match decl.kind {
-                    _ if decl.reader.is_some() => ControlKind::String { options: None },
-                    DeclKind::Number { min, max } => ControlKind::Number {
-                        min,
-                        max,
-                        hints: decl.hints(),
-                    },
-                    DeclKind::Integer { min, max } => ControlKind::Number {
-                        min: min as f32,
-                        max: max as f32,
-                        hints: decl.hints(),
-                    },
-                    DeclKind::Bool => ControlKind::Bool,
-                    DeclKind::Choice(options) => ControlKind::String {
-                        options: Some(options.iter().map(|o| o.to_string()).collect()),
-                    },
-                    DeclKind::Payload => ControlKind::String { options: None },
-                };
+                let kind = decl.listed_kind();
                 let default = current(index)
                     .or_else(|| self.value(index, decl.default))
                     .unwrap_or_else(|| ControlValue::String(String::new()));

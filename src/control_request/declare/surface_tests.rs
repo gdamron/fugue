@@ -6,7 +6,7 @@ use std::sync::Arc;
 use super::*;
 use crate::control_request::ControlCells;
 use crate::invention::declared::DeclaredSurface;
-use crate::ControlSurface;
+use crate::{ControlKind, ControlSurface};
 
 /// The names a picker's `pick` answers to, attached to its surface.
 struct Names(&'static [&'static str]);

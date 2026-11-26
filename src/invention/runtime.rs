@@ -17,7 +17,7 @@ use super::state::{RuntimeState, RuntimeStatus};
 pub type ModuleInstance = GraphModule;
 pub type ControlSurfaceInstance = Arc<dyn ControlSurface + Send + Sync>;
 
-mod acks;
+pub(crate) mod acks;
 mod clock;
 pub(crate) mod control_timing;
 mod controls;

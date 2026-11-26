@@ -2,6 +2,7 @@
 //! them back.
 
 use super::*;
+use crate::ControlKind;
 
 const SHAPES: &[&str] = &["sine", "square"];
 

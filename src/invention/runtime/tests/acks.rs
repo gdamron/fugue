@@ -129,7 +129,7 @@ fn a_pending_write_a_later_one_replaces_at_its_sample_is_never_announced() {
 }
 
 #[test]
-fn a_write_that_cannot_be_made_stops_the_batch_and_those_before_it_stand() {
+fn a_batch_with_a_write_the_rule_refuses_writes_nothing() {
     let (running, pump, _sink) = on_manual();
 
     let acks = running.write_controls(&[
@@ -138,15 +138,16 @@ fn a_write_that_cannot_be_made_stops_the_batch_and_those_before_it_stand() {
         frequency(550.0, RequestSource::User),
     ]);
 
-    assert!(matches!(
-        acks.error,
-        Some(GraphCommandError::UnknownModule(ref id)) if id == "gone"
-    ));
-    assert_eq!(acks.controls.len(), 1);
+    let error = acks.error.expect("refused");
+    assert_eq!(error.code, crate::rpc::RpcErrorCode::InvalidControlWrite);
+    let write = error.write.expect("names the write");
+    assert_eq!((write.index, write.module_id.as_str()), (1, "gone"));
+    assert_eq!(write.reason, crate::rpc::ControlWriteReason::UnknownModule);
+    assert!(acks.controls.is_empty());
     pump.block();
     assert_eq!(
         running.get_control("osc", "frequency").unwrap(),
-        330.0.into()
+        220.0.into()
     );
 }
 

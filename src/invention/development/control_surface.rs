@@ -442,6 +442,20 @@ impl ControlSurface for DevelopmentControlSurface {
         self.declared(key)?.declaration(key)
     }
 
+    /// The range every inner control `key` aliases holds, when they all
+    /// hold the same one; `None` otherwise, as each alias then clamps a
+    /// write for itself.
+    fn held_range(&self, key: &str) -> Option<(f32, f32)> {
+        let mut ranges = (self.controls.iter())
+            .filter(|entry| entry.meta.key == key)
+            .map(|entry| {
+                let surface = self.surfaces.get(&entry.module_id)?;
+                surface.held_range(&entry.key)
+            });
+        let first = ranges.next()??;
+        ranges.all(|range| range == Some(first)).then_some(first)
+    }
+
     fn refuses_writes(&self, key: &str) -> bool {
         (self.lookup(key)).is_ok_and(|(control, surface)| surface.refuses_writes(&control.key))
     }
