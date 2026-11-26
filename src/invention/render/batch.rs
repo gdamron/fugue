@@ -151,7 +151,7 @@ impl RenderEngine {
             let last = !(edits[index + 1..].iter())
                 .any(|later| builds_module(later).is_some_and(|(again, ..)| again == id));
             let authored = candidate.filter(|_| last).and_then(|candidate| {
-                (candidate.document.modules.iter()).find(|spec| &spec.id == id)
+                (candidate.document.modules.iter()).find(|spec| spec.id == id)
             });
             let config = authored.map_or(config, |spec| &spec.config);
             let built =

@@ -115,7 +115,11 @@ fn unknown_fields_and_ops_are_refused() {
     let with_intent = json!({ "op": "set_control", "module_id": "osc", "key": "frequency",
                               "value": 1.0, "intent": "perform" });
     assert!(serde_json::from_value::<StructuralEdit>(with_intent).is_err());
-    let swap = json!({ "op": "swap_module", "id": "osc", "module_type": "lfo" });
+    let unknown = json!({ "op": "replace_module", "id": "osc", "module_type": "lfo" });
+    assert!(serde_json::from_value::<StructuralEdit>(unknown).is_err());
+    // A swap always keeps what the new type can; the tool's flag is a mistake.
+    let swap = json!({ "op": "swap_module", "id": "osc", "module_type": "lfo",
+                       "preserve_connections": false });
     assert!(serde_json::from_value::<StructuralEdit>(swap).is_err());
 }
 
