@@ -180,6 +180,13 @@ pub(crate) trait EditFacts {
     ) -> Option<Result<(String, ControlValue), String>> {
         None
     }
+
+    /// The range a number written to `key` of module `id` is held within,
+    /// as the batch has the module (see `ControlSurface::held_range`).
+    /// None by default.
+    fn held_range(&mut self, _id: &str, _key: &str) -> Option<(f32, f32)> {
+        None
+    }
 }
 
 /// One `set_control` edit's authored write, tagged with the edit that made
@@ -192,6 +199,9 @@ pub(crate) struct CandidateWrite {
     pub(crate) write: ControlWrite,
     /// Whether the control written loads the audio its value names.
     pub(crate) asset: bool,
+    /// Whether the number written lay outside the range its control holds,
+    /// so the write carries the nearer limit.
+    pub(crate) clamped: bool,
 }
 
 /// A batch applied to a copy of the authored document.

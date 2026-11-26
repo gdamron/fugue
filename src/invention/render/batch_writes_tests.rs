@@ -72,3 +72,43 @@ fn a_report_with_no_failure_leaves_the_field_out() {
     assert!(json.get("controls_failed").is_none());
     assert_eq!(json["controls_written"][0]["key"], "frequency");
 }
+
+#[test]
+fn an_edit_batch_holds_a_write_as_a_front_door_does() {
+    let engine = loaded();
+    let batch = r#"[
+        {"op":"set_control","module_id":"mix","key":"level.1","value":7.0},
+        {"op":"set_control","module_id":"mix","key":"level.0","value":"0.7"},
+        {"op":"set_control","module_id":"osc","key":"waveform","value":"Square"}]"#;
+    let report = engine.apply_edits(&edits(batch)).unwrap();
+    let clamped: Vec<_> = (report.controls_written.iter())
+        .map(|written| (written.key.as_str(), written.clamped))
+        .collect();
+    assert_eq!(
+        clamped,
+        [("level.1", true), ("level.0", false), ("waveform", false)]
+    );
+    // The document holds what plays: the nearer limit, the number, the option.
+    let live = engine.get_control("mix", "level.1").unwrap();
+    assert_eq!(live, ControlValue::Number(2.0));
+    assert_eq!(config(&engine, "mix")["level.1"], 2.0);
+    assert_eq!(config(&engine, "mix")["level.0"], 0.7);
+    assert_eq!(config(&engine, "osc")["waveform"], "square");
+    // Refused as a front door refuses them, with the same words.
+    for (value, message) in [
+        (
+            "\"loud\"",
+            "control 'mix.level.0' expects a number, got \"loud\"",
+        ),
+        (
+            "\"inf\"",
+            "control 'mix.level.0' expects a finite number, got inf",
+        ),
+    ] {
+        let batch = format!(
+            r#"[{{"op":"set_control","module_id":"mix","key":"level.0","value":{value}}}]"#
+        );
+        let refused = engine.apply_edits(&edits(&batch)).unwrap_err();
+        assert_eq!(refused.edit.unwrap().message, message);
+    }
+}

@@ -355,8 +355,12 @@ overwrites it. A value the module
 would refuse is `invalid_control_value` at that edit's index: a read-only
 control (a sequencer's `cell`, say), text that does not parse as the
 JSON a control expects (such as `cells`), or an option the control
-does not offer. Within those rules a module may still clamp a number into its
-range or accept an alias for an option, as it does for a standalone write.
+does not offer. These are the rules a standalone `SetControl` meets
+(see the front doors in [`control-model.md`](control-model.md)): a number
+outside the range its control holds is written, and recorded in the
+document, as the nearer limit, and its `controls_written` entry says
+`clamped: true`; a choice in another case is written as the option it
+names.
 
 Writes are checked in batch order, each on the module as the edits before it
 leave it, so one write can depend on another. After `degree_count = 7` on a

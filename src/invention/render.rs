@@ -19,6 +19,7 @@ mod audio_file_sink;
 mod batch;
 mod batch_writes;
 mod code_modules;
+mod control_writes;
 mod editing;
 mod levels;
 mod options;
