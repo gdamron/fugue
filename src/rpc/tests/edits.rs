@@ -48,6 +48,22 @@ fn every_op_has_a_flat_tagged_wire_shape() {
         StructuralEdit::RemoveModule { id: "lfo".into() },
         json!({ "op": "remove_module", "id": "lfo" }),
     );
+    round_trip(
+        StructuralEdit::SwapModule {
+            id: "lfo".into(),
+            module_type: "noise".into(),
+            config: json!({ "color": "pink" }),
+        },
+        json!({ "op": "swap_module", "id": "lfo", "module_type": "noise",
+                "config": { "color": "pink" } }),
+    );
+    let bare: StructuralEdit =
+        serde_json::from_value(json!({ "op": "swap_module", "id": "lfo", "module_type": "noise" }))
+            .unwrap();
+    assert!(
+        matches!(&bare, StructuralEdit::SwapModule { config, .. } if config.is_null()),
+        "an omitted config is null, the type's defaults"
+    );
     let wire = |op: &str| json!({ "op": op, "from": "lfo", "from_port": "audio", "to": "osc", "to_port": "frequency_mod" });
     round_trip(
         StructuralEdit::Connect {
@@ -124,6 +140,7 @@ fn edits_applied_response_is_compact_and_flat() {
         rebuilt: vec![],
         controls_written: vec![WrittenControl::new("osc", "frequency")],
         controls_failed: vec![],
+        swapped: vec![],
         connections_added: 1,
         connections_removed: 0,
         untouched: 2,
@@ -279,6 +296,7 @@ fn every_failure_reason_has_a_snake_case_wire_name() {
     for op in [
         EditOp::AddModule,
         EditOp::RemoveModule,
+        EditOp::SwapModule,
         EditOp::Connect,
         EditOp::Disconnect,
         EditOp::SetControl,

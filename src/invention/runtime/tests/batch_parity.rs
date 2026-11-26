@@ -34,6 +34,14 @@ const REFUSED: &[&str] = &[
     r#"[{"op":"disconnect","from":"nobody","from_port":"audio","to":"mix","to_port":"audio.1"}]"#,
     r#"[{"op":"disconnect","from":"osc","from_port":"audio","to":"mix","to_port":"audio.1"}]"#,
     r#"[{"op":"add_module","id":"","module_type":"oscillator"}]"#,
+    r#"[{"op":"swap_module","id":"nobody","module_type":"vca"}]"#,
+    r#"[{"op":"swap_module","id":"osc","module_type":"no_such_type"}]"#,
+    r#"[{"op":"swap_module","id":"osc","module_type":"oscillator","config":{"waveform":"bogus"}}]"#,
+    r#"[{"op":"swap_module","id":"","module_type":"vca"}]"#,
+    r#"[{"op":"remove_module","id":"osc"},{"op":"swap_module","id":"osc","module_type":"lfo"}]"#,
+    r#"[{"op":"swap_module","id":"osc","module_type":"lfo"},
+        {"op":"connect","from":"osc","from_port":"audio","to":"mix","to_port":"audio.1"}]"#,
+    r#"[{"op":"swap_module","id":"nobody","module_type":"no_such_type"}]"#,
 ];
 
 /// What a refusal tells an agent about the edit to blame.
@@ -105,4 +113,71 @@ fn both_engines_refuse_a_batch_leaving_a_schedule_unresolved_alike() {
         offline.contains("'sched'") && offline.contains("unknown module 'osc'"),
         "{offline}"
     );
+}
+
+/// Batches with swaps, each committed by both engines.
+const SWAPS: &[&str] = &[
+    r#"[{"op":"swap_module","id":"osc","module_type":"lfo","config":{"rate":4.0}}]"#,
+    r#"[{"op":"swap_module","id":"mix","module_type":"vca"},
+        {"op":"swap_module","id":"osc","module_type":"noise"}]"#,
+    r#"[{"op":"set_control","module_id":"osc","key":"frequency","value":330.0},
+        {"op":"swap_module","id":"osc","module_type":"oscillator","config":{"waveform":"square"}},
+        {"op":"set_control","module_id":"osc","key":"frequency","value":110.0}]"#,
+    r#"[{"op":"add_module","id":"x","module_type":"oscillator"},
+        {"op":"connect","from":"x","from_port":"audio","to":"mix","to_port":"audio.1"},
+        {"op":"swap_module","id":"x","module_type":"lfo"}]"#,
+];
+
+#[test]
+fn both_engines_report_a_swap_alike_and_leave_the_same_document() {
+    for batch in SWAPS {
+        let invention = Invention::from_json(DOCUMENT).unwrap();
+        let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+        let mut running = runtime
+            .start_with_backend(TickBackend::new(48_000))
+            .unwrap();
+        let mut engine = RenderEngine::new(48_000);
+        engine.load_json(DOCUMENT).unwrap();
+        let edits: Vec<StructuralEdit> = serde_json::from_str(batch).unwrap();
+        let live = running.apply_edits(&edits).unwrap();
+        let offline = engine.apply_edits(&edits).unwrap();
+        assert!(!live.swapped.is_empty(), "{batch}");
+        assert_eq!(offline.swapped, live.swapped, "{batch}");
+        assert_eq!(engine.document(), running.document(), "{batch}");
+    }
+}
+
+fn rendered(engine: &mut RenderEngine, frames: usize) -> Vec<f32> {
+    let mut out = vec![0.0; frames * 2];
+    engine.render_interleaved(&mut out).unwrap();
+    out
+}
+
+#[test]
+fn an_offline_swap_renders_sample_identical_to_replacing_the_module() {
+    let swaps = [
+        ("lfo", serde_json::json!({ "rate": 4.0 })),
+        (
+            "oscillator",
+            serde_json::json!({ "waveform": "square", "frequency": 110.0 }),
+        ),
+        ("noise", serde_json::json!({})),
+    ];
+    for (module_type, config) in swaps {
+        let (mut batch, mut replaced) = (RenderEngine::new(48_000), RenderEngine::new(48_000));
+        batch.load_json(DOCUMENT).unwrap();
+        replaced.load_json(DOCUMENT).unwrap();
+        assert_eq!(rendered(&mut batch, 1000), rendered(&mut replaced, 1000));
+
+        let edit = StructuralEdit::SwapModule {
+            id: "osc".into(),
+            module_type: module_type.into(),
+            config: config.clone(),
+        };
+        batch.apply_edits(&[edit]).unwrap();
+        replaced.add_module("osc", module_type, &config).unwrap();
+        let out = rendered(&mut batch, 4000);
+        assert_eq!(out, rendered(&mut replaced, 4000), "{module_type}");
+        assert_eq!(batch.document(), replaced.document(), "{module_type}");
+    }
 }

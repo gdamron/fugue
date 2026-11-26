@@ -2,12 +2,15 @@
 //! with nothing changed.
 //!
 //! The batch takes the wire form of `ApplyEdits` ([`StructuralEdit`]): its
-//! four graph operations, `add_module`, `remove_module`, `connect` and
-//! `disconnect`, and `set_control`. Edits apply in order, so a module added
-//! at index 0 can be wired at index 1 and tuned at index 2. Modules are
-//! built first, outside the graph's lock; then every graph edit goes into
-//! one [`GraphChange`], which commits whole or not at all (see
-//! [`edit_offline`](crate::invention::publish::edit_offline)).
+//! five graph operations, `add_module`, `remove_module`, `swap_module`,
+//! `connect` and `disconnect`, and `set_control`. Edits apply in order, so
+//! a module added at index 0 can be wired at index 1 and tuned at index 2.
+//! Modules are built first, outside the graph's lock; then every graph edit
+//! goes into one [`GraphChange`], which commits whole or not at all (see
+//! [`edit_offline`](crate::invention::publish::edit_offline)). A swap keeps
+//! the connections the daemon's keeps, by the same rule
+//! ([`kept_by_swap`](crate::invention::publish::kept_by_swap)), and the
+//! report lists the ones it removed as the daemon's does.
 //!
 //! The checks and their refusals are the daemon's (see
 //! [`refusals`](crate::invention::edits::refusals)), made in the same
@@ -31,10 +34,14 @@ use crate::invention::edits::refusals::{
 use crate::invention::edits::{build_failed, graph_refusal, write_built, EditedCandidate};
 use crate::invention::publish::{edge, BuiltModule, GraphChange};
 use crate::invention::runtime::GraphCommandError;
-use crate::rpc::{check_edit_batch, EditFailure, EditOp, RpcError, RpcErrorCode, StructuralEdit};
+use crate::rpc::{
+    check_edit_batch, EditFailure, EditOp, RpcError, RpcErrorCode, StructuralEdit, SwappedModule,
+};
+use crate::RuntimeConnectionInfo;
 
-/// What building an `add_module`'s module came to, kept until its edit's
-/// turn so a refusal names the first edit that cannot apply.
+/// What building an `add_module`'s or a `swap_module`'s module came to,
+/// kept until its edit's turn so a refusal names the first edit that
+/// cannot apply.
 type Build = Option<Result<BuiltModule, Refusal>>;
 
 impl RenderEngine {
@@ -43,7 +50,8 @@ impl RenderEngine {
     ///
     /// The checks are those of `ApplyEdits`: an `add_module` id must not
     /// name a module that exists at that point in the batch, and its type
-    /// and config must build; a `remove_module` id must name one; a
+    /// and config must build; a `remove_module` id must name one, and so
+    /// must a `swap_module`'s, whose type and config must build; a
     /// `connect` must name existing modules and ports and a connection not
     /// yet made, a `disconnect` existing modules and a connection that is;
     /// a `set_control` must name an existing module, a control it has and
@@ -67,6 +75,7 @@ impl RenderEngine {
                 edit.op(),
                 EditOp::AddModule
                     | EditOp::RemoveModule
+                    | EditOp::SwapModule
                     | EditOp::Connect
                     | EditOp::Disconnect
                     | EditOp::SetControl
@@ -75,7 +84,8 @@ impl RenderEngine {
                     RpcErrorCode::InvalidRequest,
                     format!(
                         "edit {index} ({}) refused: an offline render applies only add_module, \
-                         remove_module, connect, disconnect and set_control; nothing was applied",
+                         remove_module, swap_module, connect, disconnect and set_control; \
+                         nothing was applied",
                         edit.op()
                     ),
                 ));
@@ -85,9 +95,11 @@ impl RenderEngine {
         let candidate = self.checked_writes(edits)?;
         let mut built = self.build_added(edits, candidate.as_ref())?;
         let mut failure = None;
+        let mut swapped = Vec::new();
         let committed = self.edit(graph, |change| {
             for (index, edit) in edits.iter().enumerate() {
-                if let Err(Refusal(reason, message)) = apply_one(change, edit, &mut built[index]) {
+                let made = apply_one(change, (index, edit), &mut built[index], &mut swapped);
+                if let Err(Refusal(reason, message)) = made {
                     failure = Some(EditFailure::new(index, edit.op(), reason, message.clone()));
                     return Err(GraphCommandError::ControlError(message));
                 }
@@ -101,10 +113,12 @@ impl RenderEngine {
             (Ok(mut committed), _) => {
                 let contested = std::mem::take(&mut committed.contested);
                 self.follow_up(committed);
-                Ok(match candidate {
+                let mut report = match candidate {
                     Some(candidate) => self.commit_writes(edits, candidate, &contested),
                     None => RenderEditsReport::default(),
-                })
+                };
+                report.swapped = swapped;
+                Ok(report)
             }
             (Err(_), Some(failure)) => Err(RpcError::invalid_edit(failure)),
             // A schedule the batch leaves unable to resolve, as building
@@ -116,12 +130,13 @@ impl RenderEngine {
         }
     }
 
-    /// Builds each added module from its config, in batch order, before
-    /// the graph is touched. A build that fails is kept, to refuse its edit
-    /// in its turn. With `candidate`, the batch checked with its control
-    /// writes, the last `add_module` of each module the batch leaves is
-    /// built from the candidate's config and given the batch's writes, as
-    /// the daemon builds it; a write it refuses refuses the batch.
+    /// Builds each added or swapped-in module from its config, in batch
+    /// order, before the graph is touched. A build that fails is kept, to
+    /// refuse its edit in its turn. With `candidate`, the batch checked
+    /// with its control writes, the last `add_module` or `swap_module` of
+    /// each module the batch leaves is built from the candidate's config
+    /// and given the batch's writes, as the daemon builds it; a write it
+    /// refuses refuses the batch.
     fn build_added(
         &self,
         edits: &[StructuralEdit],
@@ -129,19 +144,12 @@ impl RenderEngine {
     ) -> Result<Vec<Build>, RpcError> {
         let mut builds = Vec::with_capacity(edits.len());
         for (index, edit) in edits.iter().enumerate() {
-            let StructuralEdit::AddModule {
-                id,
-                module_type,
-                config,
-                ..
-            } = edit
-            else {
+            let Some((id, module_type, config)) = builds_module(edit) else {
                 builds.push(None);
                 continue;
             };
-            let last = !edits[index + 1..].iter().any(
-                |later| matches!(later, StructuralEdit::AddModule { id: again, .. } if again == id),
-            );
+            let last = !(edits[index + 1..].iter())
+                .any(|later| builds_module(later).is_some_and(|(again, ..)| again == id));
             let authored = candidate.filter(|_| last).and_then(|candidate| {
                 (candidate.document.modules.iter()).find(|spec| &spec.id == id)
             });
@@ -168,13 +176,34 @@ impl RenderEngine {
     }
 }
 
-/// Makes `edit` in `change`, with `built`, what building an `add_module`'s
-/// module came to, checking in the order `ApplyEdits` does. The change is
+/// The id, type and config of the module `edit` builds, if it builds one:
+/// an `add_module` or a `swap_module`.
+pub(super) fn builds_module(edit: &StructuralEdit) -> Option<(&str, &str, &serde_json::Value)> {
+    match edit {
+        StructuralEdit::AddModule {
+            id,
+            module_type,
+            config,
+            ..
+        }
+        | StructuralEdit::SwapModule {
+            id,
+            module_type,
+            config,
+        } => Some((id, module_type, config)),
+        _ => None,
+    }
+}
+
+/// Makes `edit`, the batch's edit at `index`, in `change`, with `built`,
+/// what building its module came to, checking in the order `ApplyEdits`
+/// does, and records in `swapped` what a swap removed. The change is
 /// dropped whole when any edit fails.
 fn apply_one(
     change: &mut GraphChange,
-    edit: &StructuralEdit,
+    (index, edit): (usize, &StructuralEdit),
     built: &mut Build,
+    swapped: &mut Vec<SwappedModule>,
 ) -> Result<(), Refusal> {
     match edit {
         StructuralEdit::AddModule { id, .. } => {
@@ -191,6 +220,28 @@ fn apply_one(
                 return Err(unknown_module(id));
             }
             change.remove(id);
+        }
+        StructuralEdit::SwapModule { id, .. } => {
+            if !change.contains(id) {
+                return Err(unknown_module(id));
+            }
+            let module = built
+                .take()
+                .expect("each swapped-in module is built before the change")?;
+            let removed = change
+                .swap(id, module)
+                .into_iter()
+                .map(|wire| RuntimeConnectionInfo {
+                    from: wire.from_module,
+                    from_port: wire.from_port,
+                    to: wire.to_module,
+                    to_port: wire.to_port,
+                });
+            swapped.push(SwappedModule {
+                edit_index: index,
+                module_id: id.clone(),
+                connections_removed: removed.collect(),
+            });
         }
         StructuralEdit::Connect {
             from,

@@ -66,7 +66,9 @@ pub(crate) use announce::Progress;
 pub(crate) use authored::APPLY_WAIT;
 #[cfg(test)]
 pub(crate) use change::MirrorModule;
-pub(crate) use change::{edit_offline, BuiltModule, GraphChange, PreparedChange, TopologyMirror};
+pub(crate) use change::{
+    edit_offline, kept_by_swap, BuiltModule, GraphChange, PreparedChange, TopologyMirror,
+};
 pub(crate) use contested::Contested;
 pub(crate) use pending::{Announcement, Authoring, DocumentStep, PendingLog, PendingWrite};
 #[cfg(test)]

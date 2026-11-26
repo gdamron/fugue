@@ -221,15 +221,18 @@ pub(crate) struct EditedCandidate {
     /// endpoint. A commit must not touch a module outside this set.
     pub(crate) named_modules: BTreeSet<String>,
     /// Ids that existed before the batch, were removed by it and added
-    /// again. Each gets a fresh instance, reported as rebuilt, even when its
-    /// type and config came back identical, which a diff of the documents
-    /// cannot see.
+    /// again, or swapped. Each gets a fresh instance, reported as rebuilt,
+    /// even when its type and config came back identical, which a diff of
+    /// the documents cannot see.
     pub(crate) replaced: BTreeSet<String>,
     /// The presentation changes the batch made, in order: its moves and
     /// names, and each removed module unplaced and unnamed. Made again on
     /// the retained document as the batch commits, which a move or a name
     /// since may have changed (see [`Invention::carry_presentation`]).
     pub(crate) presentation: crate::invention::names::PresentationChanges,
+    /// Each `swap_module` edit, in batch order, with the connections it
+    /// removed, as the report lists them.
+    pub(crate) swaps: Vec<crate::rpc::SwappedModule>,
 }
 
 impl EditedCandidate {

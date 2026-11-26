@@ -24,6 +24,7 @@ mod real_modules;
 mod refusals;
 mod scheduled_targets;
 mod scripted;
+mod swap;
 mod timed_writes;
 mod write_back;
 
