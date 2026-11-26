@@ -286,6 +286,54 @@ fn a_mixed_batch_with_a_timed_write_that_cannot_land_queues_nothing() {
 }
 
 #[test]
+fn a_timed_write_to_a_development_that_cannot_land_queues_nothing() {
+    use crate::rpc::{ControlTiming, ControlWhen};
+    let document = r#"{"version":"1.0.0",
+        "developments":[{"name":"pad","definition":{"version":"1.0.0",
+            "modules":[{"id":"vca","type":"vca"}],"connections":[],
+            "inputs":[{"name":"audio","to":"vca","to_port":"audio"}],
+            "outputs":[{"name":"audio","from":"vca","from_port":"audio"}],
+            "controls":[{"name":"level","module":"vca","control":"level"}]}}],
+        "modules":[{"id":"clock","type":"clock"},{"id":"mix","type":"mixer",
+            "config":{"levels":[0.5]}},{"id":"voice","type":"pad"},{"id":"dac","type":"dac"}],
+        "connections":[]}"#;
+    let invention = Invention::from_json(document).unwrap();
+    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let running = Settled::start(runtime);
+    let refusals = [
+        ControlWhen::AfterRequest {
+            request: "999999".into(),
+            offset_samples: 0,
+        },
+        ControlWhen::AfterBeats {
+            beats: 1.0,
+            clock: Some("mix".into()),
+        },
+    ];
+    for when in refusals {
+        let timed = ControlWrite {
+            timing: ControlTiming {
+                when: Some(when.clone()),
+                ttl_ms: None,
+            },
+            ..write("voice", "level", ControlValue::Number(0.2))
+        };
+        let acks =
+            running.write_controls(&[write("mix", "level.0", ControlValue::Number(0.1)), timed]);
+        let refused = acks.error.expect("refused").write.expect("names the write");
+        assert_eq!(
+            (refused.index, refused.reason),
+            (1, ControlWriteReason::InvalidTiming),
+            "{when:?}"
+        );
+        assert_eq!(
+            running.get_control("mix", "level.0").unwrap(),
+            ControlValue::Number(0.5)
+        );
+    }
+}
+
+#[test]
 fn a_batch_writes_a_control_its_count_write_brings_into_play() {
     let document = r#"{"version":"1.0.0","modules":[
         {"id":"tune","type":"melody","config":{"degree_count":3}},

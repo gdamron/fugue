@@ -14,7 +14,6 @@ const QUEUE_FULL: &str = "The control request queue is full; try again";
 const UNTIMED: &str = "A timed control write needs a running graph and a declared control";
 const SCHEDULE_UNTIMED: &str =
     "A schedule write cannot be timed yet: time an edit batch that writes it instead";
-const PAYLOAD_UNCHAINED: &str = "A payload write cannot wait on another request yet";
 const CHAINS_FULL: &str = "Too many requests wait on another; try again once some apply";
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -216,7 +215,7 @@ impl DeclaredSurface {
                 let beat = match options.time {
                     Some(time) => {
                         let conditions = match &request.value {
-                            RequestValue::Payload(_) => Err(PAYLOAD_UNCHAINED),
+                            RequestValue::Payload(_) => Err(timed_write::PAYLOAD_UNCHAINED),
                             _ if port.requests.watchers_full(reserved) => Err(CHAINS_FULL),
                             _ => Ok(()),
                         };

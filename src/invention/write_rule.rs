@@ -15,6 +15,7 @@
 //! Every check runs on the control thread, before a write is handed to the
 //! audio thread.
 
+use crate::control_request::DeclKind;
 use crate::invention::edits::refusals::{bounded, listing};
 use crate::invention::orchestration::RuntimeSnapshot;
 use crate::invention::runtime::control_timing::timing_time;
@@ -70,7 +71,10 @@ impl RuntimeSnapshot {
         let mut times = Vec::new();
         for (index, write) in writes.iter().enumerate() {
             if let Ok(Some(time)) = timing_time(&write.timing) {
-                times.push((index, write.module_id.as_str(), time));
+                let declared = (directory.get(&write.module_id))
+                    .and_then(|surface| surface.declaration(&write.key));
+                let payload = declared.is_some_and(|d| matches!(d.decl.kind, DeclKind::Payload));
+                times.push((index, write.module_id.as_str(), time, payload));
             }
         }
         if let Err((index, message)) = live.check_write_times(&times) {
@@ -147,6 +151,10 @@ pub(crate) fn check_write(
     // it builds, and written at once.
     if let Some(whole) = surface.whole_write(key, value) {
         whole.map_err(setter)?;
+        // The whole it builds, as the module's setter rules would take it.
+        surface
+            .validate_control(key, value, directory)
+            .map_err(setter)?;
         if timed {
             return Err(WriteRefusal::new(
                 InvalidTiming,

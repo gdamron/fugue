@@ -310,9 +310,12 @@ pub enum RpcCommand {
     /// alike, and a write the check refuses refuses the batch with nothing
     /// written ([`super::RpcErrorCode::InvalidControlWrite`], naming its
     /// index and reason). A number outside the range its control holds is
-    /// written as the nearer limit and reported `clamped`. Each write
-    /// coerces and emits a `ControlChanged` event exactly as a single
-    /// [`RpcCommand::SetControl`] would, which is a batch of one.
+    /// written as the nearer limit and reported `clamped`. A write the check
+    /// accepts can still fail as it is made (no room left to wait, a sample
+    /// that cannot load); its entry is then `refused` with the reason, and
+    /// the rest are made. Each write coerces and emits a `ControlChanged`
+    /// event exactly as a single [`RpcCommand::SetControl`] would, which is
+    /// a batch of one.
     SetControls {
         writes: Vec<ControlWrite>,
     },

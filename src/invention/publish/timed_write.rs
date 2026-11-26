@@ -114,36 +114,51 @@ pub(crate) fn resolve(
     Ok(timed)
 }
 
-/// Whether each timed write of a batch, as its index, the module it writes
-/// and its time, would resolve now as [`resolve`] resolves one: the index
-/// of the first that would not, and why. Changes nothing. A write to a
-/// module the graph does not hold itself (a development's control, resolved
-/// to an inner module as it is written) is left to the write, as is room:
-/// whether the writes before it have applied by then is not known yet.
-pub(crate) fn check_batch(
-    times: &[(usize, &str, WriteTime<'_>)],
+/// A payload write chained after a request, which its control cannot take.
+pub(crate) const PAYLOAD_UNCHAINED: &str = "A payload write cannot wait on another request yet";
+
+/// One timed write of a batch, for [`check_times`]: its index in the
+/// batch, the module it writes, its time, and whether it writes a payload.
+pub(crate) type BatchTime<'a> = (usize, &'a str, WriteTime<'a>, bool);
+
+/// Whether each timed write of a batch would resolve now as [`resolve`]
+/// resolves one: the index of the first that would not, and why. Changes
+/// nothing. Room is left to each write, as whether the writes before it
+/// have applied by then is not known yet. So is a beat on the own clock of
+/// a module the graph does not hold itself, found as the write is made.
+pub(crate) fn check_times(
+    times: &[BatchTime<'_>],
     (publisher, pending): (&mut Publisher, &mut PendingLog),
 ) -> Result<(), (usize, String)> {
-    for &(index, module_id, time) in times {
-        if publisher.mirror().modules.contains_key(module_id) {
-            let locked = (&mut *publisher, &mut *pending);
-            time_of(time, module_id, locked, Ok(())).map_err(|e| (index, e))?;
-        }
+    for &(index, module_id, time, payload) in times {
+        let held = publisher.mirror().modules.contains_key(module_id);
+        // Only a beat reads the written module, for its clock.
+        let module = match time {
+            WriteTime::Beat { clock: None, .. } if !held => continue,
+            WriteTime::Beat {
+                clock: Some(clock), ..
+            } if !held => clock,
+            _ => module_id,
+        };
+        let conditions = if payload {
+            Err(PAYLOAD_UNCHAINED)
+        } else {
+            Ok(())
+        };
+        let locked = (&mut *publisher, &mut *pending);
+        time_of(time, module, locked, conditions).map_err(|e| (index, e))?;
     }
     Ok(())
 }
 
 impl super::LiveGraph {
-    /// [`check_batch`] under the publisher and the log, locked as a write
+    /// [`check_times`] under the publisher and the log, locked as a write
     /// locks them, every outcome received first.
-    pub(crate) fn check_write_times(
-        &self,
-        times: &[(usize, &str, WriteTime<'_>)],
-    ) -> Result<(), (usize, String)> {
+    pub(crate) fn check_write_times(&self, times: &[BatchTime<'_>]) -> Result<(), (usize, String)> {
         let mut publisher = self.publisher.lock().unwrap();
         let mut pending = self.pending.lock().unwrap();
         pending.settle();
-        check_batch(times, (&mut publisher, &mut pending))
+        check_times(times, (&mut publisher, &mut pending))
     }
 }
 
