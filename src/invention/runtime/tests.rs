@@ -23,6 +23,7 @@ mod reclaimer;
 mod script_timing;
 #[cfg(feature = "spectrogram")]
 mod spectrum;
+mod swap_edit;
 mod taps;
 mod timed;
 mod timed_batch;

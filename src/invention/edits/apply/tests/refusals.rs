@@ -184,6 +184,7 @@ fn candidate(named: &[&str], replaced: &[&str]) -> EditedCandidate {
         named_modules: named.iter().map(|id| id.to_string()).collect(),
         replaced: replaced.iter().map(|id| id.to_string()).collect(),
         presentation: Default::default(),
+        swaps: Vec::new(),
     }
 }
 

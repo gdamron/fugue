@@ -20,7 +20,7 @@ use crate::invention::publish::Contested;
 use crate::invention::runtime::GraphCommandError;
 use crate::rpc::{
     truncate_on_char_boundary, ControlWriteFailure, RpcError, RpcErrorCode, StructuralEdit,
-    WrittenControl, MODULE_ERROR_BYTES,
+    SwappedModule, WrittenControl, MODULE_ERROR_BYTES,
 };
 
 /// What a committed batch on an offline render wrote: the control fields
@@ -43,6 +43,10 @@ pub struct RenderEditsReport {
     /// it: the written values are its starting values. Empty for a batch
     /// without a `set_control`.
     pub configs: Vec<AuthoredConfig>,
+    /// Each `swap_module` edit, in batch order, with the connections it
+    /// removed, as the daemon's report lists them. Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub swapped: Vec<SwappedModule>,
 }
 
 /// One module's config as the render's retained document holds it.
@@ -88,7 +92,7 @@ impl RenderEngine {
     /// the daemon's commit does: the candidate becomes the retained
     /// document, and each module that survived the change is written, in
     /// batch order, unrecorded unless `contested` says a timed authored
-    /// write contests it. Modules the batch added or rebuilt were built
+    /// write contests it. Modules the batch added, swapped or rebuilt were built
     /// with their writes. A write that fails as it is made is reported, and
     /// the document takes back what it held for the control.
     pub(super) fn commit_writes(
@@ -98,10 +102,7 @@ impl RenderEngine {
         contested: &Contested,
     ) -> RenderEditsReport {
         let built: HashSet<&str> = (edits.iter())
-            .filter_map(|edit| match edit {
-                StructuralEdit::AddModule { id, .. } => Some(id.as_str()),
-                _ => None,
-            })
+            .filter_map(|edit| super::batch::builds_module(edit).map(|(id, ..)| id))
             .collect();
         let previous = {
             let mut state = self.state.lock().unwrap();

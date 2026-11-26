@@ -125,10 +125,7 @@ impl TopologyMirror {
     /// through ports the new module does not have.
     fn upsert(&mut self, id: &str, module: MirrorModule) {
         let ports = &module.ports;
-        self.edges.retain(|edge| {
-            (edge.from_module != id || ports.outputs.contains(&edge.from_port))
-                && (edge.to_module != id || ports.inputs.contains(&edge.to_port))
-        });
+        self.edges.retain(|edge| kept_by_swap(id, ports, edge));
         self.modules.insert(id.to_string(), module);
     }
 
@@ -173,6 +170,15 @@ impl TopologyMirror {
             .map(|module| module.instance)
             .collect()
     }
+}
+
+/// Whether `edge` survives module `id` being replaced by one with `ports`:
+/// unless it touches the module through a port the new one lacks. The one
+/// rule a swap keeps connections by, on a live graph, an offline render and
+/// an edit batch's candidate document alike.
+pub(crate) fn kept_by_swap(id: &str, ports: &ModulePorts, edge: &RoutingConnection) -> bool {
+    (edge.from_module != id || ports.outputs.contains(&edge.from_port))
+        && (edge.to_module != id || ports.inputs.contains(&edge.to_port))
 }
 
 /// Port names of a built instance.
@@ -326,6 +332,20 @@ impl GraphChange {
         }
         self.rescheduling.touched.insert(id.to_string());
         self.edits += 1;
+    }
+
+    /// [`Self::upsert`] in place of an existing module, returning the
+    /// connections it drops: those touching the module through a port
+    /// `module` lacks (see [`kept_by_swap`]), in the order the change held
+    /// them.
+    pub(crate) fn swap(&mut self, id: &str, module: BuiltModule) -> Vec<RoutingConnection> {
+        let ports = &module.module.ports;
+        let dropped = (self.mirror.edges.iter())
+            .filter(|edge| !kept_by_swap(id, ports, edge))
+            .cloned()
+            .collect();
+        self.upsert(id, module);
+        dropped
     }
 
     /// Takes the modules this change's upserts and removes displaced, for

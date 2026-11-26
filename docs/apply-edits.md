@@ -1,8 +1,8 @@
 # Atomic structural edits
 
 `RpcCommand::ApplyEdits { edits }` changes the structure of the running
-invention in one step. A batch of edits (add or remove modules, connect or
-disconnect ports, set authored control values, move modules on the canvas)
+invention in one step. A batch of edits (add, remove or swap modules, connect
+or disconnect ports, set authored control values, move modules on the canvas)
 either commits as a whole, in
 one revision, or is refused and changes nothing. No audio block ever plays a
 half-applied batch.
@@ -44,6 +44,7 @@ described here is made by the daemon, and every refusal is structured.
 | --- | --- | --- |
 | `add_module` | `id`, `module_type`, `config` (optional, defaults to `null`), `name` (optional) | Adds a module. The id must not exist yet. |
 | `remove_module` | `id` | Removes a module and every connection to or from it. |
+| `swap_module` | `id`, `module_type`, `config` (optional, defaults to `null`) | Replaces a module with a fresh one of `module_type`, keeping its id, name, position and the connections the new type has ports for. |
 | `connect` | `from`, `from_port`, `to`, `to_port` | Connects an output port to an input port. |
 | `disconnect` | `from`, `from_port`, `to`, `to_port` | Removes an existing connection. |
 | `set_control` | `module_id`, `key`, `value` | Sets a control's authored starting value. |
@@ -52,8 +53,9 @@ described here is made by the daemon, and every refusal is structured.
 
 Edits apply **in order**, each against the result of the ones before it. A
 module added at index 0 can be connected at index 1 and tuned at index 2; a
-module removed at index 0 is unknown from index 1 on. To replace a module,
-remove it and add it again with the same id; there is no swap op.
+module removed at index 0 is unknown from index 1 on, and a module swapped at
+index 0 has its new type's ports and controls from index 1 on (see
+[Swapping a module](#swapping-a-module)).
 
 `set_control` is always an authoring write: the value becomes the module's new
 starting state and is written into its config, exactly as a standalone
@@ -108,7 +110,7 @@ blank, with no control characters; `add_module` takes an optional `name` under
 the same rules. Moves and names alone take the document-only path together,
 a timed batch or reload that lands keeps the names given meanwhile with its
 own on top, and neither can be timed on its own. Removing a module drops its
-name; `SwapModule` keeps it.
+name; `swap_module` (and the `SwapModule` command) keeps it.
 
 ### Arranging a development's inside
 
@@ -187,8 +189,30 @@ Coordinates are numbers: an integer re-saves as a float (`120` becomes
 `120.0`), and every value round-trips exactly.
 
 Removing a module drops its position with it, so removing and adding the same
-id in one batch leaves the new module unplaced. `SwapModule` keeps the
-module's position.
+id in one batch leaves the new module unplaced. `swap_module` (and the
+`SwapModule` command) keeps the module's position.
+
+### Swapping a module
+
+`swap_module` replaces a module with a fresh instance of `module_type` built
+from `config`, as the standalone `SwapModule` command does with
+`preserve_connections`: it sounds the same, sample for sample. The module keeps
+its id, its name and its position. Each connection to or from it stays when the
+new type has the port it uses (an input for a connection into it, an output
+for one out of it); the others are removed, and the report lists them under
+the swap's edit index. Swapping to the same type and config still builds a
+fresh instance, so its internal state restarts.
+
+The swapped module is the new one for the edits after it: a `connect` can use
+a port only the new type has, one naming a port the new type lacks is
+refused as `unknown_port`, and a `set_control` reaches the new module. A
+`set_control` before the swap goes with the old module, as a write before a
+`remove_module` does. A module the batch added can be swapped later
+in the batch; one it removed is `unknown_module`. Every other module keeps its
+instance and plays on, so a voice the swap does not touch has no gap.
+
+A swap can be timed with the rest of its batch (`when`), and lands with it. A
+timed batch cannot swap to or from a `code` or `agent` module.
 
 Unknown fields inside an edit, and unknown ops, are refused when the request
 is parsed, so a misspelled edit field fails loudly instead of being ignored.
@@ -234,14 +258,17 @@ A committed batch answers with `kind: "edits_applied"`:
   "schema_version": 1,
   "revision": { "session_id": "…", "revision": 13 },
   "kind": "edits_applied",
-  "edit_count": 3,
+  "edit_count": 4,
   "added": ["tremolo"],
   "removed": [],
-  "rebuilt": [],
+  "rebuilt": ["tone"],
   "controls_written": [{ "module_id": "lead", "key": "amplitude_mod_depth" }],
+  "swapped": [{ "edit_index": 3, "module_id": "tone", "connections_removed": [
+    { "from": "env", "from_port": "envelope", "to": "tone", "to_port": "cutoff_mod" }
+  ] }],
   "connections_added": 1,
-  "connections_removed": 0,
-  "untouched": 41
+  "connections_removed": 1,
+  "untouched": 40
 }
 ```
 
@@ -249,14 +276,16 @@ A committed batch answers with `kind: "edits_applied"`:
 | --- | --- |
 | `edit_count` | Edits in the batch; all were applied. |
 | `added`, `removed` | Module ids added to or removed from the running graph. A module added and removed again in the same batch appears in neither. |
-| `rebuilt` | Module ids that existed before the batch and were removed and added again in it. Each gets a fresh instance, even with an identical type and config, so its internal state restarts. |
+| `rebuilt` | Module ids that existed before the batch and were swapped, or removed and added again, in it. Each gets a fresh instance, even with an identical type and config, so its internal state restarts. |
 | `controls_written` | `{ module_id, key }` for each distinct control the `set_control` edits wrote, once, in first-written order. Only modules that exist after the commit are listed (survivors, added and rebuilt modules): a write to a module that a later edit removed or replaced goes with that module. |
 | `controls_failed` | Present only when a write failed at commit; see below. |
-| `connections_added`, `connections_removed` | Connection counts. Connections that go with a removed module are not counted. |
+| `swapped` | Present only when the batch swapped a module: `{ edit_index, module_id, connections_removed }` for each `swap_module` edit, in batch order, with `{ from, from_port, to, to_port }` for each connection that swap removed. |
+| `connections_added`, `connections_removed` | Connection counts, against the piece before the batch: a swap's removed connections are counted, a connection the batch both made and removed is not, and neither are connections that go with a removed module. |
 | `untouched` | Surviving modules that were not rebuilt. They keep their instance, phase and state. A module whose only change is a `set_control` counts here: its value changes, its instance does not. |
 
-The report's size depends on the batch, never on the invention: each list
-holds at most one entry per edit. It is not a snapshot; read one if you need
+The report's size depends on the batch: each list holds at most one entry per
+edit, apart from a swap's `connections_removed`, which holds the connections
+that one module loses. It is not a snapshot; read one if you need
 the new state. A field added by a later daemon reads as empty from an older
 one.
 
@@ -319,8 +348,8 @@ resend the batch with a **new** ticket (see
 | `invalid_name` | any | An id, type, port or key is empty or longer than 256 bytes; or a module name is blank, too long or holds a control character, or a `name_modules` names none or more than 1024. |
 | `unknown_module` | any | The module does not exist at this point in the batch (inside a development, in its definition). |
 | `duplicate_module` | `add_module` | The id already exists at this point in the batch. |
-| `unknown_module_type` | `add_module` | The running invention cannot build this type. |
-| `invalid_config` | `add_module` | The module type refused the config. |
+| `unknown_module_type` | `add_module`, `swap_module` | The running invention cannot build this type. |
+| `invalid_config` | `add_module`, `swap_module` | The module type refused the config. |
 | `unknown_port` | `connect` | The source has no such output, or the destination no such input. |
 | `connection_exists` | `connect` | The connection already exists. |
 | `connection_not_found` | `disconnect` | No such connection exists. |
@@ -506,8 +535,9 @@ A refused batch emits no events.
 ## On an offline render
 
 `RenderEngine::apply_edits` (the browser engine's `applyEdits`) takes
-`add_module`, `remove_module`, `connect`, `disconnect` and `set_control`,
-with the checks, refusals and order above, all or none. It refuses
+`add_module`, `remove_module`, `swap_module`, `connect`, `disconnect` and
+`set_control`, with the checks, refusals and order above, all or none. Its
+report carries `swapped` as the daemon's does, connections and all. It refuses
 `move_modules` and `name_modules` for the whole batch, with no edit detail.
 It has no revisions, tickets, `when` or events.
 
@@ -525,7 +555,6 @@ nothing in these fields.
 
 ## Not supported
 
-- **Swap.** Remove and add the module instead.
 - **Undo.** Send the inverse batch, or reload an earlier document.
 - **Partial application.** There is no mode that keeps the edits before a
   failing one.

@@ -199,13 +199,16 @@ impl WasmFugueEngine {
 
     #[wasm_bindgen(js_name = applyEdits)]
     /// Applies a JSON array of `apply_edits` operations (`add_module`,
-    /// `remove_module`, `connect`, `disconnect`, `set_control`) to the
-    /// loaded graph as one change, or refuses them all with nothing changed.
+    /// `remove_module`, `swap_module`, `connect`, `disconnect`,
+    /// `set_control`) to the loaded graph as one change, or refuses them all
+    /// with nothing changed.
     ///
     /// Returns the batch's report as JSON text (see [`RenderEditsReport`]):
     /// `controls_written`, `controls_failed` when a write failed as it was
-    /// made, and `configs`, each written module's config as the engine's
-    /// document now holds it, for a host that keeps its own copy.
+    /// made, `configs`, each written module's config as the engine's
+    /// document now holds it, for a host that keeps its own copy, and
+    /// `swapped` when the batch swapped a module: each swap's edit index,
+    /// module and the connections it removed, as the daemon reports them.
     ///
     /// A refusal throws the daemon's error as JSON text: `code`, `message`
     /// and, when one edit is to blame, `edit` with its `index`, `op` and

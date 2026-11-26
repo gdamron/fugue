@@ -35,7 +35,7 @@ use crate::invention::names::name_refusal;
 use crate::ControlValue;
 
 mod report;
-pub use report::{ApplyEditsReport, ControlWriteFailure, WrittenControl};
+pub use report::{ApplyEditsReport, ControlWriteFailure, SwappedModule, WrittenControl};
 
 /// The most edits one `ApplyEdits` batch may carry. An empty batch is refused
 /// too, so a batch holds `1..=MAX_EDITS_PER_BATCH` edits.
@@ -64,8 +64,7 @@ pub const MAX_NAMES_PER_EDIT: usize = 1024;
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StructuralEdit {
     /// Adds a new module. The id must not name a module that exists at this
-    /// point in the batch; replacing a module is a `remove_module` followed by
-    /// an `add_module` of the same id.
+    /// point in the batch; `swap_module` replaces one.
     AddModule {
         id: String,
         module_type: String,
@@ -80,6 +79,15 @@ pub enum StructuralEdit {
     },
     /// Removes a module, together with every connection to or from it.
     RemoveModule { id: String },
+    /// Replaces a module, keeping connections the new type has ports for.
+    // Its id, name and position stay; the connections it drops are reported
+    // in `swapped`. An omitted config is `null`, the new type's defaults.
+    SwapModule {
+        id: String,
+        module_type: String,
+        #[serde(default)]
+        config: serde_json::Value,
+    },
     /// Connects an output port to an input port. Both ports must exist and
     /// the connection must not already exist.
     Connect {
@@ -130,6 +138,7 @@ pub enum StructuralEdit {
 pub enum EditOp {
     AddModule,
     RemoveModule,
+    SwapModule,
     Connect,
     Disconnect,
     SetControl,
@@ -143,6 +152,7 @@ impl EditOp {
         match self {
             Self::AddModule => "add_module",
             Self::RemoveModule => "remove_module",
+            Self::SwapModule => "swap_module",
             Self::Connect => "connect",
             Self::Disconnect => "disconnect",
             Self::SetControl => "set_control",
@@ -175,6 +185,7 @@ impl StructuralEdit {
         match self {
             Self::AddModule { .. } => EditOp::AddModule,
             Self::RemoveModule { .. } => EditOp::RemoveModule,
+            Self::SwapModule { .. } => EditOp::SwapModule,
             Self::Connect { .. } => EditOp::Connect,
             Self::Disconnect { .. } => EditOp::Disconnect,
             Self::SetControl { .. } => EditOp::SetControl,
@@ -200,6 +211,9 @@ impl StructuralEdit {
         };
         match self {
             Self::AddModule {
+                id, module_type, ..
+            }
+            | Self::SwapModule {
                 id, module_type, ..
             } => {
                 check("id", id)?;
@@ -393,9 +407,11 @@ pub enum EditFailureReason {
     /// `add_module` names an id that already exists at this point in the
     /// batch.
     DuplicateModule,
-    /// `add_module` names a type the running invention cannot build.
+    /// `add_module` or `swap_module` names a type the running invention
+    /// cannot build.
     UnknownModuleType,
-    /// `add_module`'s config was refused by the module type.
+    /// `add_module`'s or `swap_module`'s config was refused by the module
+    /// type.
     InvalidConfig,
     /// `connect` names an output or input port the module does not have.
     UnknownPort,

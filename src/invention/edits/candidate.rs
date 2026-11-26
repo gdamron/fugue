@@ -10,13 +10,17 @@ use super::{CandidateWrite, EditFacts, EditedCandidate, ModuleFacts};
 use crate::invention::format::{Connection, Invention};
 use crate::invention::layout::Position;
 use crate::invention::names::PresentationChanges;
+use crate::invention::orchestration::ModulePorts;
+use crate::invention::publish::{edge, kept_by_swap};
 use crate::invention::write_rule::{
     as_offered, fits_kind, hold, setter_refused, unknown_control, wrong_kind,
 };
 use crate::invention::{audio_assets, authored_document};
-use crate::rpc::{non_finite_refusal, ControlWrite, EditFailureReason, StructuralEdit};
+use crate::rpc::{
+    non_finite_refusal, ControlWrite, EditFailureReason, StructuralEdit, SwappedModule,
+};
 use crate::traits::exact_number;
-use crate::{ControlKind, ControlValue};
+use crate::{ControlKind, ControlValue, RuntimeConnectionInfo};
 
 type Applied = Result<(), Refusal>;
 
@@ -32,9 +36,10 @@ pub(super) struct Candidate<'f, F> {
     named_modules: BTreeSet<String>,
     /// Ids in the document the batch started from.
     original: BTreeSet<String>,
-    /// Ids from `original` that an edit removed.
+    /// Ids from `original` that an edit removed or swapped.
     removed_originals: BTreeSet<String>,
     presentation: PresentationChanges,
+    swaps: Vec<SwappedModule>,
 }
 
 impl<'f, F: EditFacts> Candidate<'f, F> {
@@ -54,6 +59,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             original,
             removed_originals: BTreeSet::new(),
             presentation: PresentationChanges::default(),
+            swaps: Vec::new(),
         }
     }
 
@@ -69,6 +75,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             named_modules: self.named_modules,
             replaced,
             presentation: self.presentation,
+            swaps: self.swaps,
         }
     }
 
@@ -82,6 +89,11 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
                 name,
             } => self.add_module(id, module_type, config, name.as_deref()),
             StructuralEdit::RemoveModule { id } => self.remove_module(id),
+            StructuralEdit::SwapModule {
+                id,
+                module_type,
+                config,
+            } => self.swap_module(index, id, module_type, config),
             StructuralEdit::Connect {
                 from,
                 from_port,
@@ -179,6 +191,70 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         // A write aimed at the instance being removed goes with it.
         self.control_writes
             .retain(|candidate| candidate.write.module_id != id);
+        Ok(())
+    }
+
+    /// Replaces module `id` with a fresh one of `module_type`, keeping its
+    /// id, name and position, and each connection the new type has the
+    /// port for (see [`kept_by_swap`]). The writes made to the instance it
+    /// replaces go with that instance, as for `remove_module`.
+    fn swap_module(
+        &mut self,
+        index: usize,
+        id: &str,
+        module_type: &str,
+        config: &serde_json::Value,
+    ) -> Applied {
+        self.named_modules.insert(id.to_string());
+        if !self.exists(id) {
+            return Err(unknown_module(id));
+        }
+        if !self.facts.has_type(module_type) {
+            return Err(unknown_module_type(module_type));
+        }
+        // Nothing kept for the instance replaced is checked against again.
+        self.facts.forget(id);
+        let facts = self
+            .facts
+            .describe(id, module_type, config)
+            .map_err(|error| refused_config(id, module_type, &error))?;
+        let ports = ModulePorts {
+            inputs: facts.inputs.clone(),
+            outputs: facts.outputs.clone(),
+        };
+        let mut removed = Vec::new();
+        self.document.connections.retain(|conn| {
+            let port = |port: &Option<String>| port.clone().unwrap_or_default();
+            let (from_port, to_port) = (port(&conn.from_port), port(&conn.to_port));
+            let wire = edge(&conn.from, &from_port, &conn.to, &to_port);
+            let kept = kept_by_swap(id, &ports, &wire);
+            if !kept {
+                removed.push(RuntimeConnectionInfo {
+                    from: conn.from.clone(),
+                    from_port,
+                    to: conn.to.clone(),
+                    to_port,
+                });
+            }
+            kept
+        });
+        // The other end of each connection removed is changed too.
+        for conn in &removed {
+            self.name_endpoints(&conn.from, &conn.to);
+        }
+        authored_document::upsert_module(&mut self.document, id, module_type, config);
+        if self.original.contains(id) {
+            self.removed_originals.insert(id.to_string());
+        }
+        self.controls_now.remove(id);
+        self.added.insert(id.to_string(), facts);
+        self.control_writes
+            .retain(|candidate| candidate.write.module_id != id);
+        self.swaps.push(SwappedModule {
+            edit_index: index,
+            module_id: id.to_string(),
+            connections_removed: removed,
+        });
         Ok(())
     }
 

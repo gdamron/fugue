@@ -140,6 +140,7 @@ impl RunningInvention {
 
         let snapshot = self.snapshot();
         let mut report = report_for(&plan, batch.edit_count);
+        report.swapped = batch.candidate.swaps.clone();
         // Every write, in batch order, so each lands on the module as the
         // writes before it left it, as they were checked. Each control is
         // then settled by its last write: an earlier failure a later write
@@ -282,6 +283,7 @@ fn report_for(plan: &ReloadPlan, edit_count: usize) -> ApplyEditsReport {
         rebuilt: ids(&plan.swapped),
         controls_written: Vec::new(),
         controls_failed: Vec::new(),
+        swapped: Vec::new(),
         connections_added: plan.added_connections.len(),
         connections_removed: plan.removed_connections.len(),
         untouched: plan.unchanged.len(),
