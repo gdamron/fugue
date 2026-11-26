@@ -338,8 +338,9 @@ offline `RenderEngine` behind FFI and WASM. A write there is:
   priority;
 - announced as `ControlChanged`, naming its request, once it applies.
 
-A write a client sends (RPC `SetControl` and `SetControls`) first meets
-one rule, in
+A write a client sends (RPC `SetControl` and `SetControls`, the
+offline `RenderEngine::write_controls` behind WASM `setControls`, and the
+`set_control` op of an edit batch) first meets one rule, in
 [`write_rule.rs`](../src/invention/write_rule.rs), on the control thread
 before anything is submitted:
 

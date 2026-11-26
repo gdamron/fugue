@@ -383,6 +383,10 @@ impl EditFacts for LiveFacts {
         self.writable(id).ok()?.whole_write(key, value)
     }
 
+    fn held_range(&mut self, id: &str, key: &str) -> Option<(f32, f32)> {
+        self.writable(id).ok()?.held_range(key)
+    }
+
     fn write_control(
         &mut self,
         id: &str,

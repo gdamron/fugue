@@ -10,7 +10,8 @@
 //! when the module's own setter rules refuse it (a read-only control, an
 //! option the control does not offer). A batch is checked whole, before
 //! any of it is written (see [`check_batch`]), so a refusal leaves nothing
-//! written.
+//! written. `set_control` inside an edit batch meets the same rule, with
+//! the same messages (see `edits::candidate`).
 //!
 //! Every check runs on the control thread, before a write is handed to the
 //! audio thread.

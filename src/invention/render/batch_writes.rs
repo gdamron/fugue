@@ -142,7 +142,7 @@ impl RenderEngine {
             }
             let Some(Some(mut error)) = last.get(&control).cloned() else {
                 let named = WrittenControl::new(&write.module_id, &write.key);
-                report.controls_written.push(named);
+                report.controls_written.push(named.clamped(written.clamped));
                 continue;
             };
             if let Ok(actual) = snapshot.get_control(control.0, control.1) {

@@ -10,7 +10,9 @@ use super::{CandidateWrite, EditFacts, EditedCandidate, ModuleFacts};
 use crate::invention::format::{Connection, Invention};
 use crate::invention::layout::Position;
 use crate::invention::names::PresentationChanges;
-use crate::invention::write_rule::{fits_kind, setter_refused, unknown_control, wrong_kind};
+use crate::invention::write_rule::{
+    as_offered, fits_kind, hold, setter_refused, unknown_control, wrong_kind,
+};
 use crate::invention::{audio_assets, authored_document};
 use crate::rpc::{non_finite_refusal, ControlWrite, EditFailureReason, StructuralEdit};
 use crate::traits::exact_number;
@@ -327,6 +329,17 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
                     setter_refused(module_id, key, &reason),
                 )
             })?;
+        // Once the module's rules take it, held as a front door's write is
+        // (see `write_rule`): a number outside the range its control holds
+        // is set to the nearer limit, and a choice spelled as its option is.
+        let (applied, clamped) = match kind {
+            ControlKind::Number { .. } => hold(applied, self.facts.held_range(module_id, key)),
+            ControlKind::String {
+                options: Some(options),
+                ..
+            } => (as_offered(applied, options), false),
+            _ => (applied, false),
+        };
         if let Some(controls) = controls {
             match self.added.get_mut(module_id) {
                 Some(facts) => facts.controls = controls,
@@ -346,6 +359,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             edit_index: index,
             write: ControlWrite::new(module_id, key, applied),
             asset,
+            clamped,
         });
         Ok(())
     }

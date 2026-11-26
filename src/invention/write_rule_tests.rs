@@ -1,9 +1,9 @@
-//! The write rule as a daemon applies it: each batch, and what becomes of
-//! it.
+//! The write rule as a daemon and an offline render apply it: one list of
+//! writes, the same outcome and the same message on both.
 
 use crate::invention::manual_backend::Settled;
 use crate::rpc::{ControlWriteReason, RpcErrorCode};
-use crate::{ControlValue, ControlWrite, Invention, InventionBuilder};
+use crate::{ControlValue, ControlWrite, Invention, InventionBuilder, RenderEngine};
 
 const DOCUMENT: &str = r#"{
     "version": "1.0.0",
@@ -60,7 +60,18 @@ fn on_daemon(running: &Settled, writes: &[ControlWrite]) -> Outcome {
     )
 }
 
-/// Each batch, and what becomes of it.
+fn on_render(engine: &RenderEngine, writes: &[ControlWrite]) -> Outcome {
+    match engine.write_controls(writes) {
+        Ok(controls) => Outcome::Made(
+            (controls.into_iter())
+                .map(|ack| (ack.value.expect("applied"), ack.clamped))
+                .collect(),
+        ),
+        Err(error) => refusal(error),
+    }
+}
+
+/// Each batch, and what both sides make of it.
 fn cases() -> Vec<(Vec<ControlWrite>, Outcome)> {
     use ControlWriteReason::*;
     let num = ControlValue::Number;
@@ -207,18 +218,22 @@ fn matches(outcome: &Outcome, expected: &Outcome) -> bool {
 }
 
 #[test]
-fn a_daemon_accepts_clamps_and_refuses_writes_by_the_rule() {
+fn a_daemon_and_a_render_accept_clamp_and_refuse_the_same_writes() {
     let invention = Invention::from_json(DOCUMENT).unwrap();
     let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
     let running = Settled::start(runtime);
+    let mut engine = RenderEngine::new(48_000);
+    engine.load_json(DOCUMENT).unwrap();
     for (writes, expected) in cases() {
-        let daemon = on_daemon(&running, &writes);
+        let (daemon, render) = (on_daemon(&running, &writes), on_render(&engine, &writes));
         assert!(matches(&daemon, &expected), "{writes:?}: {daemon:?}");
+        assert_eq!(daemon, render, "{writes:?}");
     }
     // The refused batch wrote nothing: the frequency is the 5 Hz written
     // before it, not its 330 Hz.
-    let frequency = running.get_control("osc", "frequency").unwrap();
+    let frequency = engine.get_control("osc", "frequency").unwrap();
     assert_eq!(frequency, ControlValue::Number(5.0));
+    assert_eq!(running.get_control("osc", "frequency").unwrap(), frequency);
 }
 
 #[test]

@@ -179,9 +179,8 @@ impl RunningInvention {
                 .cloned()
                 .flatten();
             let Some(mut error) = failure else {
-                report
-                    .controls_written
-                    .push(WrittenControl::new(&write.module_id, &write.key));
+                let written = WrittenControl::new(&write.module_id, &write.key);
+                (report.controls_written).push(written.clamped(candidate.clamped));
                 // Recorded and announced as written, not read back: a read
                 // can return a command's idle state (a trigger reads empty)
                 // or a value another writer performed since.

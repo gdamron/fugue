@@ -114,6 +114,34 @@ impl WasmFugueEngine {
             .map_err(to_js_error)
     }
 
+    #[wasm_bindgen(js_name = setControls)]
+    /// Makes a JSON array of control writes (each `module_id`, `key`,
+    /// `value`, and optionally `intent`, `source` and `priority`) in order,
+    /// or none of them, as a daemon's `set_controls` does: a value in a
+    /// loose form (number text, a choice in another case) is read as its
+    /// control's kind, and a number outside the range its control holds is
+    /// set to the nearer limit.
+    ///
+    /// Returns `{"controls": [...]}` as JSON text, an entry per write with
+    /// the daemon's fields: `module_id`, `key`, `value` (read back),
+    /// `state`, `requested`, `clamped` when it was clamped, and `reason`
+    /// when it failed as it was made. A refusal throws the daemon's error
+    /// as JSON text: `code` `invalid_control_write`, `message`, and `write`
+    /// with the refused write's `index`, `module_id`, `key`, `reason` and
+    /// `message`; nothing was written.
+    pub fn set_controls(&self, writes_json: &str) -> Result<String, JsValue> {
+        let writes: Vec<crate::ControlWrite> =
+            serde_json::from_str(writes_json).map_err(|err| {
+                rpc_error_value(&crate::rpc::RpcError::new(
+                    crate::rpc::RpcErrorCode::InvalidRequest,
+                    format!("invalid control writes JSON: {err}; nothing was applied"),
+                ))
+            })?;
+        let controls = (self.inner.write_controls(&writes)).map_err(|err| rpc_error_value(&err))?;
+        let reply = serde_json::json!({ "controls": controls });
+        Ok(reply.to_string())
+    }
+
     #[wasm_bindgen(js_name = status)]
     /// Returns runtime status as a JSON string.
     pub fn status(&self) -> Result<String, JsValue> {

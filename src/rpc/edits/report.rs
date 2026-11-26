@@ -49,6 +49,11 @@ pub struct ApplyEditsReport {
 pub struct WrittenControl {
     pub module_id: String,
     pub key: String,
+    /// Whether the number its last write gave lay outside the range the
+    /// control holds, so the control was set to the nearer limit, as the
+    /// written module's config now records it. Omitted when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clamped: bool,
 }
 
 /// A control write a committed batch could not make; see
@@ -72,6 +77,12 @@ impl WrittenControl {
         Self {
             module_id: module_id.into(),
             key: key.into(),
+            clamped: false,
         }
+    }
+
+    /// This control, its last write `clamped` or not.
+    pub fn clamped(self, clamped: bool) -> Self {
+        Self { clamped, ..self }
     }
 }
