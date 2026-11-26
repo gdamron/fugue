@@ -111,10 +111,12 @@ fn both_engines_refuse_a_batch_leaving_a_schedule_unresolved_alike() {
     let (live, offline) = refuse(UNRESOLVED, &mut running, &mut engine);
     assert_eq!(offline, live);
     let (live, offline) = refuse(TARGET_SWAPPED, &mut running, &mut engine);
-    assert!(
-        live.contains("'sched'") && offline.contains("'sched'"),
-        "{live} / {offline}"
-    );
+    for message in [&live, &offline] {
+        assert!(
+            message.contains("'sched'") && message.contains("frequency"),
+            "{message}"
+        );
+    }
     let (live, offline) = refuse(TARGET_REMOVED, &mut running, &mut engine);
     // The same scheduler and reason, with the advice an offline change adds.
     let reason = "control_scheduler 'sched': schedule entry at step 1: unknown module 'osc'";
@@ -156,7 +158,8 @@ fn presented() -> String {
 fn both_engines_report_a_swap_alike_and_leave_the_same_document() {
     let presented = presented();
     let main_clock = r#"[{"op":"swap_module","id":"clock","module_type":"lfo"}]"#;
-    for batch in SWAPS.iter().chain([&main_clock]) {
+    let batches = (SWAPS.iter()).map(|batch| (*batch, false));
+    for (batch, swaps_clock) in batches.chain([(main_clock, true)]) {
         let invention = Invention::from_json(&presented).unwrap();
         let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
         let mut running = runtime
@@ -178,8 +181,7 @@ fn both_engines_report_a_swap_alike_and_leave_the_same_document() {
             .unwrap();
         assert_eq!(osc.name.as_deref(), Some("Lead"), "{batch}");
         assert!(document.layout.modules.contains_key("osc"), "{batch}");
-        let swapped_clock = std::ptr::eq(batch, &main_clock);
-        assert_eq!(document.main_clock.is_none(), swapped_clock, "{batch}");
+        assert_eq!(document.main_clock.is_none(), swaps_clock, "{batch}");
     }
 }
 

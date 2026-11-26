@@ -41,7 +41,8 @@ pub struct ApplyEditsReport {
     pub swapped: Vec<SwappedModule>,
     pub connections_added: usize,
     /// Connections removed, against the piece before the batch: a swap's
-    /// count, those that go with a removed module do not.
+    /// removals count; one the batch both made and removed, or one that went
+    /// with a removed module, does not.
     pub connections_removed: usize,
     /// Modules the batch left untouched; they keep their phase and state.
     /// A control-only change counts as untouched: the value changes, the

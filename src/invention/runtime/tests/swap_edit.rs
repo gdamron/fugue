@@ -167,7 +167,7 @@ fn a_voice_the_swap_does_not_touch_plays_on_without_a_gap() {
 }
 
 #[test]
-fn a_timed_batch_cannot_swap_in_a_code_or_agent_module() {
+fn a_timed_batch_cannot_swap_to_or_from_a_code_or_agent_module() {
     for module_type in ["code", "agent"] {
         let (mut running, audio) = start();
         let (_twin, twin) = start();
@@ -180,4 +180,21 @@ fn a_timed_batch_cannot_swap_in_a_code_or_agent_module() {
             twin.render_stereo(PAST_TWO_BARS)
         );
     }
+    // Nor swap one out.
+    let scripted = DOCUMENT.replace(
+        r#"{ "id": "dac""#,
+        r#"{ "id": "script", "type": "code", "config": { "script": "function init() {}" } },
+        { "id": "dac""#,
+    );
+    let invention = Invention::from_json(&scripted).unwrap();
+    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let (mut running, _audio) = start_manual(runtime);
+    let edits = [StructuralEdit::SwapModule {
+        id: "script".into(),
+        module_type: "vca".into(),
+        config: serde_json::json!({}),
+    }];
+    let error = (running.apply_edits_at(&edits, &next_bar(), None)).unwrap_err();
+    assert!(error.message.contains("code or agent"), "{error:?}");
+    assert!(!running.live.publisher().lock().unwrap().timed_waiting());
 }
