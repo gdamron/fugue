@@ -433,6 +433,7 @@ fn receipt(state: ControlRequestState, requested: bool) -> RpcResponsePayload {
         request: requested.then(|| "s1.1.7".to_string()),
         state: Some(state),
         requested: Some(ControlValue::Number(220.0)),
+        clamped: false,
         landing: Some(RequestLanding {
             sample: Some(48_000),
             ..RequestLanding::default()

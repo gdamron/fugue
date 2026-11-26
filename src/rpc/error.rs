@@ -1,6 +1,6 @@
 //! Structured RPC errors.
 
-use super::{EditFailure, RevisionConflict};
+use super::{ControlWriteRefusal, EditFailure, RevisionConflict};
 use crate::GraphCommandError;
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +18,10 @@ pub struct RpcError {
     /// small on the `Ok` path of every fallible RPC call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edit: Option<Box<EditFailure>>,
+    /// Present only on [`RpcErrorCode::InvalidControlWrite`]: which write
+    /// of a control batch was refused, and why. Boxed as `edit` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write: Option<Box<ControlWriteRefusal>>,
 }
 
 impl RpcError {
@@ -27,6 +31,7 @@ impl RpcError {
             message: message.into(),
             conflict: None,
             edit: None,
+            write: None,
         }
     }
 
@@ -42,6 +47,7 @@ impl RpcError {
             message: conflict.describe(),
             conflict: Some(conflict),
             edit: None,
+            write: None,
         }
     }
 
@@ -56,6 +62,22 @@ impl RpcError {
             ),
             conflict: None,
             edit: Some(Box::new(failure)),
+            write: None,
+        }
+    }
+
+    /// Builds the refusal for one write of a control batch. The caller must
+    /// have written nothing: the whole batch is refused.
+    pub fn invalid_control_write(refusal: ControlWriteRefusal) -> Self {
+        Self {
+            code: RpcErrorCode::InvalidControlWrite,
+            message: format!(
+                "write {} ({}.{}) refused: {}; nothing was applied",
+                refusal.index, refusal.module_id, refusal.key, refusal.message
+            ),
+            conflict: None,
+            edit: None,
+            write: Some(Box::new(refusal)),
         }
     }
 }
@@ -81,6 +103,10 @@ pub enum RpcErrorCode {
     /// Nothing changed; the error carries an [`EditFailure`] naming the edit
     /// and the reason.
     InvalidEdit,
+    /// One write of a `SetControl` or `SetControls` batch was refused, so
+    /// the whole batch was. Nothing was written; the error carries a
+    /// [`ControlWriteRefusal`] naming the write and the reason.
+    InvalidControlWrite,
     AudioThreadStopped,
     UnknownModuleType,
     ModuleBuildFailed,

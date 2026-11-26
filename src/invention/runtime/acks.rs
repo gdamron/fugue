@@ -7,7 +7,8 @@ use crate::control_request::{Outcome, Refusal, Source};
 use crate::invention::declared::WriteOptions;
 use crate::invention::orchestration::ControlAck;
 use crate::invention::publish::Progress;
-use crate::rpc::{AppliedControl, ControlRequestState, RequestSource};
+use crate::invention::write_rule::CheckedWrite;
+use crate::rpc::{AppliedControl, ControlRequestState, RequestSource, RpcError};
 use crate::ControlWrite;
 
 /// How many device blocks a reply waits for its writes to apply: one
@@ -23,66 +24,81 @@ const ACK_WAIT_MS: (f64, f64) = (20.0, 200.0);
 /// What [`RunningInvention::write_controls`] reports.
 #[derive(Debug)]
 pub struct ControlAcks {
-    /// Each write submitted, in order, and what became of it.
+    /// Each write, in order, and what became of it: every write of a batch
+    /// the rule accepts (see `write_rule`), or none.
     pub controls: Vec<AppliedControl>,
-    /// The write that could not be submitted, which stopped the batch:
-    /// those before it stand, as control writes have no rollback.
-    pub error: Option<GraphCommandError>,
+    /// Why the batch was refused, with nothing written: the first write
+    /// the rule refuses ([`crate::rpc::RpcErrorCode::InvalidControlWrite`]).
+    pub error: Option<RpcError>,
 }
 
 impl RunningInvention {
-    /// Makes `writes` in order, as [`crate::OrchestrationRuntime::set_controls`]
-    /// does, each from its source at its priority, and reports what became
-    /// of each. A reply waits a few device blocks for its writes to apply,
-    /// never more than 200 ms, and not at all with no device playing (a
-    /// headless or stalled stream): one not applied by then is reported
-    /// pending, and announced as a `ControlChanged` event naming its
-    /// request if it applies later.
+    /// Makes `writes` in order, each from its source at its priority, and
+    /// reports what became of each; or makes none of them, when the rule
+    /// refuses one (see `write_rule`): the batch is checked whole, timed
+    /// writes and untimed alike, before any is submitted. A number outside
+    /// the range its control holds is written as the nearer limit, and its
+    /// entry says it was clamped. A write the rule accepts can still fail
+    /// as it is made, on what only making it shows (a sample that does not
+    /// load, an audio thread with no room): its entry is refused, with the
+    /// reason, and the rest are made all the same.
+    ///
+    /// A reply waits a few device blocks for its writes to apply, never
+    /// more than 200 ms, and not at all with no device playing (a headless
+    /// or stalled stream): one not applied by then is reported pending, and
+    /// announced as a `ControlChanged` event naming its request if it
+    /// applies later.
     pub fn write_controls(&self, writes: &[ControlWrite]) -> ControlAcks {
         let snapshot = self.snapshot();
-        let mut taken = Vec::with_capacity(writes.len());
-        let mut error = None;
+        let checked = match snapshot.check_writes(writes) {
+            Ok(checked) => checked,
+            Err(error) => {
+                let controls = Vec::new();
+                return ControlAcks {
+                    controls,
+                    error: Some(error),
+                };
+            }
+        };
+        let mut made = Vec::with_capacity(writes.len());
         // Their outcomes are held apart from the shared ring, which a
         // large batch or other writers could wrap, until the reply is built.
         self.live.hold_room(writes.len());
-        for write in writes {
-            let time = timing_time(&write.timing);
-            let time = match time {
-                Ok(time) => time,
-                Err(refusal) => {
-                    error = Some(refusal);
-                    break;
-                }
-            };
-            // Held for the reply, timed or not: a reply waits only for one
-            // due now (see below), but reads what became of each.
-            let options = WriteOptions {
-                priority: write.priority.unwrap_or(0),
-                ttl: self.ttl_samples(write.timing.ttl_ms),
-                time,
-                ..WriteOptions::performed(source(write.source)).awaiting()
-            };
-            let (module_id, key) = (&write.module_id, &write.key);
-            let value = write.value.clone();
-            match snapshot.submit_control(module_id, key, value, write.intent, options) {
-                Ok(ack) => taken.push((write, ack)),
-                Err(refusal) => {
-                    error = Some(refusal);
-                    break;
-                }
-            }
+        for (write, checked) in writes.iter().zip(checked) {
+            let submitted = timing_time(&write.timing).and_then(|time| {
+                // Held for the reply, timed or not: a reply waits only for
+                // one due now (see below), but reads what became of each.
+                let options = WriteOptions {
+                    priority: write.priority.unwrap_or(0),
+                    ttl: self.ttl_samples(write.timing.ttl_ms),
+                    time,
+                    ..WriteOptions::performed(source(write.source)).awaiting()
+                };
+                let (module_id, key) = (&write.module_id, &write.key);
+                let value = checked.value.clone();
+                snapshot.submit_control(module_id, key, value, write.intent, options)
+            });
+            made.push((write, checked, submitted));
         }
-        let due_now = taken
-            .iter()
-            .filter(|(write, _)| write.timing.when.is_none());
-        self.await_acks(due_now.map(|(_, ack)| ack));
+        let due_now = (made.iter())
+            .filter(|(write, ..)| write.timing.when.is_none())
+            .filter_map(|(_, _, submitted)| submitted.as_ref().ok());
+        self.await_acks(due_now);
         snapshot.announce_applied();
-        let held: Vec<_> = taken.iter().filter_map(|(_, ack)| ack.request).collect();
-        let controls = (taken.into_iter())
-            .map(|(write, ack)| self.acknowledged(write, ack))
+        let held: Vec<_> = (made.iter())
+            .filter_map(|(_, _, submitted)| submitted.as_ref().ok()?.request)
+            .collect();
+        let controls = (made.into_iter())
+            .map(|(write, checked, submitted)| match submitted {
+                Ok(ack) => self.acknowledged(write, ack, checked.clamped),
+                Err(error) => failed(write, checked, error),
+            })
             .collect();
         self.live.release(&held);
-        ControlAcks { controls, error }
+        ControlAcks {
+            controls,
+            error: None,
+        }
     }
 
     /// Announces each front door's write that applied since the last call
@@ -138,7 +154,7 @@ impl RunningInvention {
     }
 
     /// `write`, taken as `ack`, as its reply reports it.
-    fn acknowledged(&self, write: &ControlWrite, ack: ControlAck) -> AppliedControl {
+    fn acknowledged(&self, write: &ControlWrite, ack: ControlAck, clamped: bool) -> AppliedControl {
         let (state, reason) = state_of(self.progress(&ack));
         let landing = write.timing.when.is_some().then(|| self.landing_of(&ack));
         let value = (state == ControlRequestState::Applied)
@@ -151,9 +167,26 @@ impl RunningInvention {
             request: ack.request.map(|id| id.0.to_string()),
             state: Some(state),
             requested: Some(ack.value),
+            clamped,
             reason,
             landing,
         }
+    }
+}
+
+/// `write`, which the rule took as `checked` but which failed as it was
+/// made, as its reply reports it.
+fn failed(write: &ControlWrite, checked: CheckedWrite, error: GraphCommandError) -> AppliedControl {
+    let reason = match error {
+        GraphCommandError::ControlError(message) => message,
+        other => other.to_string(),
+    };
+    AppliedControl {
+        state: Some(ControlRequestState::Refused),
+        requested: Some(checked.value),
+        clamped: checked.clamped,
+        reason: Some(reason),
+        ..AppliedControl::read_back(&write.module_id, &write.key, None)
     }
 }
 
@@ -179,7 +212,7 @@ pub(super) fn state_of(progress: Progress) -> (ControlRequestState, Option<Strin
 }
 
 /// The tier a wire source submits at.
-fn source(source: Option<RequestSource>) -> Source {
+pub(crate) fn source(source: Option<RequestSource>) -> Source {
     match source.unwrap_or_default() {
         RequestSource::User => Source::User,
         RequestSource::Agent => Source::Agent,

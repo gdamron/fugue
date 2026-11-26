@@ -62,8 +62,9 @@ pub trait OrchestrationRuntime {
     /// across separate requests. Each write carries its own intent and goes
     /// through [`Self::set_control_with_intent`] (same coercion, same refusal
     /// of non-finite numbers). Fails on the first bad write;
-    /// writes already applied before it stand, since control writes have no
-    /// rollback — validate keys with `list_controls` first if that matters.
+    /// writes already applied before it stand. A front door's batch is
+    /// checked whole first instead (see
+    /// [`RunningInvention::write_controls`](crate::RunningInvention::write_controls)).
     fn set_controls(&self, writes: &[ControlWrite]) -> Result<(), GraphCommandError> {
         for write in writes {
             self.set_control_with_intent(

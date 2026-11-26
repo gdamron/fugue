@@ -106,18 +106,59 @@ pub(crate) fn resolve(
         false => (SAMPLE_TIMED_CAPACITY, TIMED_WRITE_CAPACITY),
     };
     if on_sample && pending.on_sample() >= on_sample_room {
-        return Err(format!(
-            "{on_sample_room} writes already wait on a sample, as many as may at once; \
-             write it once some have applied"
-        ));
+        return Err(sample_room_full(on_sample_room));
     }
     if pending.timed_waiting() >= room {
-        return Err(format!(
-            "{room} timed writes already wait, as many as may at once; \
-             write it once some have applied"
-        ));
+        return Err(room_full(room));
     }
     Ok(timed)
+}
+
+/// Whether each timed write of a batch, as its index, the module it writes
+/// and its time, would resolve now as [`resolve`] resolves one: the index
+/// of the first that would not, and why. Changes nothing. A write to a
+/// module the graph does not hold itself (a development's control, resolved
+/// to an inner module as it is written) is left to the write, as is room:
+/// whether the writes before it have applied by then is not known yet.
+pub(crate) fn check_batch(
+    times: &[(usize, &str, WriteTime<'_>)],
+    (publisher, pending): (&mut Publisher, &mut PendingLog),
+) -> Result<(), (usize, String)> {
+    for &(index, module_id, time) in times {
+        if publisher.mirror().modules.contains_key(module_id) {
+            let locked = (&mut *publisher, &mut *pending);
+            time_of(time, module_id, locked, Ok(())).map_err(|e| (index, e))?;
+        }
+    }
+    Ok(())
+}
+
+impl super::LiveGraph {
+    /// [`check_batch`] under the publisher and the log, locked as a write
+    /// locks them, every outcome received first.
+    pub(crate) fn check_write_times(
+        &self,
+        times: &[(usize, &str, WriteTime<'_>)],
+    ) -> Result<(), (usize, String)> {
+        let mut publisher = self.publisher.lock().unwrap();
+        let mut pending = self.pending.lock().unwrap();
+        pending.settle();
+        check_batch(times, (&mut publisher, &mut pending))
+    }
+}
+
+fn sample_room_full(room: usize) -> String {
+    format!(
+        "{room} writes already wait on a sample, as many as may at once; \
+         write it once some have applied"
+    )
+}
+
+fn room_full(room: usize) -> String {
+    format!(
+        "{room} timed writes already wait, as many as may at once; \
+         write it once some have applied"
+    )
 }
 
 fn time_of(

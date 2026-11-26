@@ -107,6 +107,7 @@ fn a_reply_and_a_listing_say_where_a_timed_write_lands() {
         request: Some("9".into()),
         state: Some(ControlRequestState::Pending),
         requested: Some(ControlValue::Number(330.0)),
+        clamped: false,
         landing: Some(landing.clone()),
         ..AppliedControl::read_back("osc", "frequency", None)
     };

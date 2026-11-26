@@ -223,6 +223,7 @@ fn an_acknowledged_control_says_what_became_of_its_request() {
         request: Some("7".to_string()),
         state: Some(ControlRequestState::Pending),
         requested: Some(crate::ControlValue::Number(330.0)),
+        clamped: false,
         ..AppliedControl::read_back("osc", "frequency", None)
     };
     let json = serde_json::to_value(&pending).unwrap();

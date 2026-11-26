@@ -96,6 +96,11 @@ pub struct AppliedControl {
     /// pending write applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requested: Option<ControlValue>,
+    /// Whether the number written lay outside the range the control holds,
+    /// so it was set to the nearer limit: `requested`, and `value` once it
+    /// applies, is that limit. Omitted when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clamped: bool,
     /// Why a refused write was refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -120,6 +125,7 @@ impl AppliedControl {
             request: None,
             state: None,
             requested: None,
+            clamped: false,
             reason: None,
             landing: None,
         }

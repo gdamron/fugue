@@ -5,6 +5,7 @@
 
 mod authored_snapshot;
 mod control_timing;
+mod control_writes;
 mod development;
 pub use development::{
     DevelopmentDeclaration, DevelopmentOverrides, DevelopmentSavedIn, DevelopmentSnapshot,
@@ -42,6 +43,7 @@ pub use authored_snapshot::{
     AuthoredSnapshot, SnapshotDelivery, MAX_FILE_SNAPSHOT_BYTES, MAX_INLINE_SNAPSHOT_BYTES,
 };
 pub use control_timing::{ControlRequestSettled, ControlTiming, ControlWhen};
+pub use control_writes::{ControlWriteReason, ControlWriteRefusal};
 pub use described_values::{
     leave_out_defaults, omitted_values, OmittedValue, MAX_DESCRIBED_VALUE_BYTES,
 };

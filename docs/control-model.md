@@ -338,6 +338,31 @@ offline `RenderEngine` behind FFI and WASM. A write there is:
   priority;
 - announced as `ControlChanged`, naming its request, once it applies.
 
+A write a client sends (RPC `SetControl` and `SetControls`) first meets
+one rule, in
+[`write_rule.rs`](../src/invention/write_rule.rs), on the control thread
+before anything is submitted:
+
+- A value in a loose form is accepted as what it names: number text
+  (`"0.7"`) for a number, a choice in any case (`"Sine"` for `"sine"`).
+- A number outside the range its control holds (its declared clamp) is set
+  to the nearer limit, and the write's entry says `clamped: true`. A control
+  that declares no clamp (a clock's `bpm`) takes any finite number.
+- A write is refused when its module or control does not exist, when its
+  value is not of the control's kind or not a finite number, or when the
+  module's own setter rules refuse it (a read-only control, an option it
+  does not offer).
+- A batch is checked whole before any of it is written, timed and untimed
+  writes alike (a `when` that names no clock or a request never made is
+  refused here). One refused write refuses the batch with nothing written,
+  as `invalid_control_write`, naming the write's index, module, key, reason
+  and message. A batch whose only fault is out-of-range numbers is made in
+  full, each value clamped and reported.
+
+A write the rule accepts can still fail as it is made (a full pending
+store, a sample that cannot load); it is then reported refused in its
+entry, and the rest of the batch is made.
+
 `RunningInvention::write_controls` tells its caller what became of each
 write:
 

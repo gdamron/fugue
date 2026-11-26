@@ -177,7 +177,7 @@ fn a_write_after_another_request_lands_that_many_samples_after_it() {
             offset_samples: 0,
         },
     )]);
-    let error = refused.error.unwrap().to_string();
+    let error = refused.error.unwrap().message;
     assert!(error.contains("no request 999999"), "{error}");
 }
 
@@ -249,7 +249,7 @@ fn a_timed_write_refused_where_it_cannot_wait_says_why() {
         clock: None,
     };
     let refused = running.write_controls(&[timed("osc", "frequency", 1.0.into(), when)]);
-    let error = refused.error.unwrap().to_string();
+    let error = refused.error.unwrap().message;
     assert!(error.contains("positive `every`"), "{error}");
     let not_a_clock = ControlWhen::AfterBeats {
         beats: 1.0,
@@ -261,7 +261,7 @@ fn a_timed_write_refused_where_it_cannot_wait_says_why() {
     let mut bounded = ControlWrite::new("osc", "frequency", 1.0.into());
     bounded.timing.ttl_ms = Some(10);
     let refused = running.write_controls(&[bounded]);
-    let error = refused.error.unwrap().to_string();
+    let error = refused.error.unwrap().message;
     assert!(error.contains("only with a `when`"), "{error}");
     assert!(running
         .pending_requests(None, PendingDetail::Full)
@@ -306,7 +306,11 @@ fn writes_far_ahead_on_a_sample_never_hold_up_one_made_now() {
         pump.render(1);
     }
     let refused = running.write_controls(&[far(SAMPLE_TIMED_CAPACITY)]);
-    let error = refused.error.unwrap().to_string();
+    // Room is known only as the write is made: refused in its entry.
+    assert!(refused.error.is_none(), "{:?}", refused.error);
+    let refusal = &refused.controls[0];
+    assert_eq!(refusal.state, Some(ControlRequestState::Refused));
+    let error = refusal.reason.clone().unwrap();
     assert!(error.contains("wait on a sample"), "{error}");
 
     submit(&running, ControlWrite::new("tune", "degree.1", 9.0.into()));
@@ -354,6 +358,10 @@ fn timed_writes_past_the_bound_are_refused_however_timed() {
         assert!(acks.error.is_none(), "{:?}", acks.error);
     }
     let refused = running.write_controls(&[timed("osc", "frequency", value(0), next_bar())]);
-    let error = refused.error.unwrap().to_string();
+    // Room is known only as the write is made: refused in its entry.
+    assert!(refused.error.is_none(), "{:?}", refused.error);
+    let refusal = &refused.controls[0];
+    assert_eq!(refusal.state, Some(ControlRequestState::Refused));
+    let error = refusal.reason.clone().unwrap();
     assert!(error.contains("timed writes already wait"), "{error}");
 }

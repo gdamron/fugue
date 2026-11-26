@@ -3,22 +3,18 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::refusals::{
-    already_connected, bounded, duplicate_module, listing, no_input_port, no_output_port,
-    not_connected, refused_config, unknown_module, unknown_module_type, Refusal,
+    already_connected, duplicate_module, no_input_port, no_output_port, not_connected,
+    refused_config, unknown_module, unknown_module_type, Refusal,
 };
 use super::{CandidateWrite, EditFacts, EditedCandidate, ModuleFacts};
 use crate::invention::format::{Connection, Invention};
 use crate::invention::layout::Position;
 use crate::invention::names::PresentationChanges;
+use crate::invention::write_rule::{fits_kind, setter_refused, unknown_control, wrong_kind};
 use crate::invention::{audio_assets, authored_document};
-use crate::rpc::{
-    non_finite_refusal, ControlWrite, EditFailureReason, StructuralEdit, MODULE_ERROR_BYTES,
-};
+use crate::rpc::{non_finite_refusal, ControlWrite, EditFailureReason, StructuralEdit};
 use crate::traits::exact_number;
 use crate::{ControlKind, ControlValue};
-
-/// The most of a refused value a refusal echoes, in bytes.
-const ECHOED_VALUE_BYTES: usize = 64;
 
 type Applied = Result<(), Refusal>;
 
@@ -253,10 +249,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             Some(Err(reason)) => {
                 return Err(Refusal(
                     EditFailureReason::InvalidControlValue,
-                    format!(
-                        "module '{module_id}' refused the value for control '{key}': {}",
-                        bounded(&reason, MODULE_ERROR_BYTES)
-                    ),
+                    setter_refused(module_id, key, &reason),
                 ))
             }
             None => None,
@@ -269,10 +262,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             let keys: Vec<String> = facts.controls.keys().cloned().collect();
             return Err(Refusal(
                 EditFailureReason::UnknownControl,
-                format!(
-                    "module '{module_id}' has no control '{key}' (available: {})",
-                    listing(&keys)
-                ),
+                unknown_control(module_id, key, &keys),
             ));
         };
         // The same coercion a standalone authored write applies: number
@@ -286,11 +276,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         if !exact && !fits_kind(&applied, kind) {
             return Err(Refusal(
                 EditFailureReason::InvalidControlValue,
-                format!(
-                    "control '{module_id}.{key}' expects {}, got {}",
-                    kind_name(kind),
-                    echo(value)
-                ),
+                wrong_kind(module_id, key, kind, value),
             ));
         }
         // Only a number control can hold a number once the value fits its
@@ -338,10 +324,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             .map_err(|reason| {
                 Refusal(
                     EditFailureReason::InvalidControlValue,
-                    format!(
-                        "module '{module_id}' refused the value for control '{key}': {}",
-                        bounded(&reason, MODULE_ERROR_BYTES)
-                    ),
+                    setter_refused(module_id, key, &reason),
                 )
             })?;
         if let Some(controls) = controls {
@@ -410,35 +393,4 @@ fn same_connection(
         && conn.to == to
         && conn.from_port.as_deref().unwrap_or("") == from_port
         && conn.to_port.as_deref().unwrap_or("") == to_port
-}
-
-/// Whether a coerced value has the shape its control declares. Ranges and
-/// option lists are left to the module, which may clamp or accept aliases;
-/// at commit, `validate_control` refuses whatever the module's setter would
-/// refuse.
-fn fits_kind(value: &ControlValue, kind: &ControlKind) -> bool {
-    matches!(
-        (value, kind),
-        (ControlValue::Number(_), ControlKind::Number { .. })
-            | (ControlValue::Bool(_), ControlKind::Bool)
-            | (ControlValue::String(_), ControlKind::String { .. })
-    )
-}
-
-fn kind_name(kind: &ControlKind) -> &'static str {
-    match kind {
-        ControlKind::Number { .. } => "a number",
-        ControlKind::Bool => "a boolean",
-        ControlKind::String { .. } => "a string",
-    }
-}
-
-/// A refused value as a message shows it, cut to about
-/// [`ECHOED_VALUE_BYTES`].
-fn echo(value: &ControlValue) -> String {
-    match value {
-        ControlValue::Number(number) => number.to_string(),
-        ControlValue::Bool(flag) => flag.to_string(),
-        ControlValue::String(text) => format!("{:?}", bounded(text, ECHOED_VALUE_BYTES)),
-    }
 }
