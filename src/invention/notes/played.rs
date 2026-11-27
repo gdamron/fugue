@@ -177,12 +177,13 @@ impl PlayedNotes {
         }
         let key = |word: f64| (word >= 0.0).then_some(word as u32);
         let body = &words[HEADER_WORDS..];
-        self.taps = (body[..tap_words].chunks_exact(TAP_WORDS))
+        self.taps = (body[..tap_words].as_chunks::<TAP_WORDS>().0.iter())
             .map(|tap| (tap[0] as u32, key(tap[1]), tap[2]))
             .collect();
         let names = &self.names;
         let mut notes = Vec::new();
-        for word in body[tap_words..].chunks_exact(EDGE_WORDS).take(edges) {
+        let (edge_words, _) = body[tap_words..].as_chunks::<EDGE_WORDS>();
+        for word in edge_words.iter().take(edges) {
             let edge = NoteEdge {
                 key: word[0] as u32,
                 voice: word[1] as u16,
