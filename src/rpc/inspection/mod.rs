@@ -204,7 +204,7 @@ pub(super) fn invalid(message: &str) -> RpcError {
 }
 
 // Count bytes without allocating a serialized copy, stopping at the budget.
-fn fits(value: &impl Serialize, limit: usize) -> bool {
+pub(super) fn fits(value: &impl Serialize, limit: usize) -> bool {
     struct Budget(usize);
     impl std::io::Write for Budget {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {

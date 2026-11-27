@@ -17,6 +17,8 @@ pub use inspection::{
     InspectionQuery, InspectionSelection, MAX_INSPECTION_BYTES, MAX_INSPECTION_ENTRIES,
     MAX_INSPECTION_VALUE_BYTES,
 };
+mod difference;
+pub use difference::{differences, DiffEntry, Differences, PerformedValue, SoundingValue, Values};
 mod described_values;
 mod discovery;
 mod durability;
