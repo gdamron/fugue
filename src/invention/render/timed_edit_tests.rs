@@ -43,7 +43,7 @@ pub(super) fn next_bar() -> EditWhen {
 }
 
 /// Each kind of time, and the sample it lands on where that is plain.
-fn whens() -> [(EditWhen, Option<u64>); 5] {
+pub(super) fn whens() -> [(EditWhen, Option<u64>); 5] {
     let now = (LEAD_IN * BLOCK) as u64;
     [
         (EditWhen::AtSample { sample: now + 1000 }, Some(now + 1000)),

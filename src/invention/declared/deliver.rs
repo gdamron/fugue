@@ -6,7 +6,9 @@ use crate::control_request::{
     ControlIndex, ControlTable, DeclKind, Intent, Rank, Refusal, Request, RequestValue, RtValue,
     When,
 };
-use crate::invention::publish::{kept_until, timed_write, Authoring, CancelCause, PendingWrite};
+use crate::invention::publish::{
+    keep_offline_authored, kept_until, timed_write, Authoring, CancelCause, PendingWrite,
+};
 
 pub(super) const QUEUE_FULL: &str = "The control request queue is full; try again";
 
@@ -338,8 +340,20 @@ impl DeclaredSurface {
                     return self
                         .deliver_offline_timed(&mut graph, &module_id, write, options, control);
                 }
+                let mut safe = None;
                 match write {
-                    Write::Value(value) => graph.apply_control(&module_id, index, value, rank),
+                    Write::Value(value) => {
+                        let applied = graph.apply_control(&module_id, index, value, rank);
+                        // An authored write is kept over the timed edit
+                        // waiting, if it writes the control as it lands.
+                        if let (Ok(true), Some(key)) = (&applied, authored.filter(|_| !event)) {
+                            let standing = (options.source, options.priority, options.ttl);
+                            let control = (module_id.as_str(), key);
+                            let write = (index, value);
+                            safe = keep_offline_authored(&mut graph, control, write, standing);
+                        }
+                        applied
+                    }
                     Write::Payload(payload, shown, checked) => {
                         // Resolved before an offline edit installed: it may
                         // name what the edit replaced (see `Checked`).
@@ -367,6 +381,7 @@ impl DeclaredSurface {
                     }
                 }
                 .map(|applied| Queued {
+                    safe,
                     lost: !applied,
                     ..Queued::default()
                 })

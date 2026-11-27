@@ -116,10 +116,12 @@ impl RuntimeSnapshot {
 
     /// Cancels the timed edit waiting on the offline render, if it
     /// rebuilds or removes `module_id`, whose control `key` an untimed
-    /// authored write just set, as a live graph's is. Control thread.
-    pub(crate) fn reconcile_offline_edit(&self, module_id: &str, key: &str) {
+    /// authored write just set, or writes that control as it lands and the
+    /// write is not `spared` (kept over it, or lost), as a live graph's is.
+    /// Control thread.
+    pub(crate) fn reconcile_offline_edit(&self, control: (&str, &str), spared: bool) {
         if let Some(graph) = self.offline.as_ref().and_then(|graph| graph.upgrade()) {
-            reconcile_offline(&graph, module_id, key);
+            reconcile_offline(&graph, control, spared);
         }
     }
 
