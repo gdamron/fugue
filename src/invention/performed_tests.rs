@@ -50,7 +50,7 @@ fn a_performed_write_is_listed_with_what_it_sounds_and_others_are_not() {
 }
 
 #[test]
-fn a_module_removed_is_forgotten() {
+fn a_module_removed_or_built_again_is_forgotten() {
     let engine = loaded();
     let perform = |module_id: &str, key: &str, value: serde_json::Value| {
         write(
@@ -58,9 +58,19 @@ fn a_module_removed_is_forgotten() {
             json!([{"module_id":module_id,"key":key,"value":value,"intent":"perform"}]),
         );
     };
+    let config = json!({"waveform":"sine","frequency":220.0});
     perform("osc", "frequency", json!(330));
     perform("clock", "bpm", json!(100));
+    // Removed, then added again under the same id: it sounds its config.
     engine.remove_module("osc").unwrap();
+    engine.add_module("osc", "oscillator", &config).unwrap();
+    assert_eq!(
+        engine.snapshot().performed_values(),
+        [sounding("clock", "bpm", json!(100))]
+    );
+    // Built again in place.
+    perform("osc", "frequency", json!(330));
+    engine.add_module("osc", "oscillator", &config).unwrap();
     assert_eq!(
         engine.snapshot().performed_values(),
         [sounding("clock", "bpm", json!(100))]
