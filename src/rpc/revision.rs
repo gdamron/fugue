@@ -234,7 +234,8 @@ impl RuntimeRevision {
 
 impl RpcCommand {
     /// Whether this command is an authoring change, advancing the daemon's
-    /// revision whenever it is attempted.
+    /// revision when it runs. Whether a refused one still advances is
+    /// [`advances_revision_after`](Self::advances_revision_after)'s to say.
     ///
     /// The single definition of the rule described in the [module docs](self):
     /// structural commands always author; a control write authors only when

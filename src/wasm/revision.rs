@@ -1,6 +1,7 @@
-//! `FugueEngine.advancesRevision` and `FugueEngine.checkRevision`: core's
-//! revision rule for a browser host that keeps its own revision, so its
-//! revision moves, and refuses a stale precondition, as a daemon's does.
+//! `FugueEngine.advancesRevision`, `FugueEngine.checkRevision` and
+//! `documentWithEpoch`: core's revision rule for a browser host that keeps
+//! its own revision, so its revision moves, it refuses a stale
+//! precondition, and its document records a write, as a daemon's does.
 
 use wasm_bindgen::prelude::*;
 
@@ -15,9 +16,8 @@ impl WasmFugueEngine {
     /// has run; `committed` is whether it made its change. A control write
     /// advances once when one of its writes authors (the default intent),
     /// never when all perform, and not when it was refused; a structural
-    /// edit advances when it commits. For a `set_control`, the answer is
-    /// also whether its write is authored: recorded in the document,
-    /// unless it is an event control, which no document holds.
+    /// edit advances when it commits. Which writes the document recorded
+    /// is `documentWithEpoch`'s to say.
     ///
     /// A command that does not parse throws the daemon's error as JSON
     /// text, code `invalid_request`.
@@ -27,9 +27,23 @@ impl WasmFugueEngine {
         Ok(command.advances_revision_after(committed))
     }
 
+    #[wasm_bindgen(js_name = documentWithEpoch)]
+    /// The retained document and its authored epoch, read together, as
+    /// JSON text: `{"document": ..., "authored_epoch": n}`, the document
+    /// `null` before one is loaded. The epoch moves once for each authored
+    /// write the document recorded, so a host that reads it around a call
+    /// knows whether the call recorded any, and the document holds what it
+    /// recorded: a performed write, a write to an event control and one
+    /// that failed as it was made record nothing.
+    pub fn document_with_epoch(&self) -> String {
+        let (document, epoch) = self.inner.document_with_epoch();
+        serde_json::json!({ "document": document, "authored_epoch": epoch }).to_string()
+    }
+
     #[wasm_bindgen(js_name = checkRevision)]
-    /// Checks a call's `expected_revision` (`expected_json`, or `null` for
-    /// none, which always passes) against `current_json`, the revision the
+    /// Checks a call's `expected_revision` (`expected_json`, or the text
+    /// `null` for none, which always passes; `undefined` is not JSON and
+    /// throws `invalid_request`) against `current_json`, the revision the
     /// host holds, each `{"session_id", "revision"}`. A stale or replaced
     /// one throws the daemon's error as JSON text: code
     /// `revision_conflict`, its `message`, and `conflict` with `expected`,
