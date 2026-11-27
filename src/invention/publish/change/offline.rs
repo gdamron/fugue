@@ -145,11 +145,13 @@ fn commit_mirrors(
         for id in &removed {
             state.modules.shift_remove(id);
             state.written_since.forget(id);
+            state.performed.forget(id);
             state.document_remove_module(id);
         }
         for (id, module) in &built {
             state.modules.insert(id.clone(), module.info.clone());
             state.written_since.forget(id);
+            state.performed.forget(id);
             state.document_upsert_module(id, &module.info.module_type, &module.info.config);
         }
         state.connections = mirror.edges.iter().map(connection_info).collect();

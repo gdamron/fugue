@@ -308,6 +308,7 @@ impl InventionBuilder {
                 self.registry.clone(),
             )),
             written_since: Default::default(),
+            performed: Default::default(),
             authored_epoch: 0,
             authored_log: Default::default(),
             load_warnings: Vec::new(),

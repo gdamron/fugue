@@ -36,6 +36,7 @@ pub(crate) mod manual_backend;
 pub mod names;
 pub mod notes;
 pub mod orchestration;
+pub(crate) mod performed;
 pub mod preview;
 pub(crate) mod publish;
 pub mod reload;

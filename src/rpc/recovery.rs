@@ -199,6 +199,7 @@ impl RpcCommand {
         }
         match self {
             Self::InspectInvention { .. }
+            | Self::GetDiff { .. }
             | Self::GetInvention { .. }
             | Self::GetDevelopment { .. }
             // Writes the current document again; the file matches current state.

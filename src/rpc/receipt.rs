@@ -183,6 +183,7 @@ impl super::RpcCommand {
             | Self::Disconnect { .. } => true,
             Self::ApplyEdits { .. }
             | Self::InspectInvention { .. }
+            | Self::GetDiff { .. }
             | Self::GetInvention { .. }
             | Self::GetDevelopment { .. }
             | Self::SaveInvention { .. }
