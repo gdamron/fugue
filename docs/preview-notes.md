@@ -4,7 +4,9 @@
 of bars, without playing it. A page shows a piano roll or a score of a piece
 before anyone presses play, or checks an edit before reloading it. The
 browser engine (the wasm-bindgen web build) has it. In Rust it is
-[`NotePreview`](../src/invention/preview.rs).
+[`NotePreview`](../src/invention/preview.rs). The `preview_notes` tool, locally
+and in the player, answers with it, at `PREVIEW_SAMPLE_RATE` (48 kHz), so both
+list the same notes.
 
 ```js
 const answer = JSON.parse(await engine.previewNotes(json, JSON.stringify({ bars: 8 })));
@@ -16,7 +18,8 @@ a string.
 
 ## What it does
 
-The engine builds a private copy of the document at its own sample rate.
+The engine builds a private copy of the document at `PREVIEW_SAMPLE_RATE`
+(48 kHz), whatever its own rate.
 The copy is built under the request's seed and started without script hosts
 or agent workers. The engine then runs the copy offline, reading the notes
 from the same note taps the live `get_notes` drains. The engine's own piece
@@ -33,7 +36,7 @@ no `setTimeout`.
 
 | field | type | default | meaning |
 |---|---|---|---|
-| `bars` | integer, 1 to 64 | required | how many bars the range spans |
+| `bars` | integer, 1 to 64 | 4 | how many bars the range spans |
 | `start_bar` | integer, 0 or more | 0 | first bar of the range, counted from 0 at the start of the piece |
 | `module_id` | string | none | list only this top-level module's notes |
 | `seed` | integer, 0 to 2^53-1 | 0 | the invention seed for random modules with no seed of their own |
@@ -49,9 +52,9 @@ when it reports none. Without a clock, a bar is 2 seconds. The range is
 These are refused before any audio is rendered:
 
 - `bars` at most **64**: `bars is 65; the largest allowed is 64`.
-- At most **300 seconds** of audio, `300 × sampleRate` frames, counted from
+- At most **300 seconds** of audio, `300 × 48000` frames, counted from
   the start of the piece to one bar past the range at the starting tempo:
-  `the range needs 13671000 frames (310 seconds at 44100 Hz); the largest allowed is 13230000 frames (300 seconds)`.
+  `the range needs 14880000 frames (310 seconds at 48000 Hz); the largest allowed is 14400000 frames (300 seconds)`.
 - A document the engine cannot load is refused with exactly the string
   `loadInvention` throws for it.
 - An unknown `module_id` is refused, naming the id.
@@ -67,8 +70,8 @@ run stops there and the answer says `limit_reached: true`.
 {
   "notes": [
     { "module_id": "upper", "voice": "0", "pitch": 60, "velocity": 1.0,
-      "clock": "clock", "start_beats": 0.5, "duration_beats": 0.45,
-      "start_seconds": 0.166667, "duration_seconds": 0.15 }
+      "clock": "clock", "start_beats": 0.5, "end_beats": 0.95,
+      "start_seconds": 0.166667, "end_seconds": 0.316667 }
   ],
   "range": { "start_bar": 0, "bars": 8, "clock": "clock", "beats_per_bar": 4,
              "start_seconds": 0.0, "end_seconds": 10.666667 },
@@ -78,15 +81,19 @@ run stops there and the answer says `limit_reached: true`.
   "truncated": false,
   "cursor": null,
   "limit_reached": false,
-  "limits": { "max_bars": 64, "max_frames": 13230000 }
+  "limits": { "max_bars": 64, "max_frames": 14400000 }
 }
 ```
 
-- `pitch` is the MIDI note, rounded, as the local `get_notes` reports it.
+- A note has the shape of a played note from `PollNotes` (`ListedNote` in
+  [`rpc/notes.rs`](../src/rpc/notes.rs)), without its `seq` and `id`: the
+  same fields in the same units.
+- `pitch` is the MIDI note, rounded. `velocity` is 0 to 1, to four places.
 - `voice` is `"0"` for a module's lone `gate` and `"N"` for `gate.N`.
-- `start_beats` and `duration_beats` count on the note's `clock` from the
-  start of the piece. They are null without a clock.
-- Durations are null for a note still sounding one bar past the range.
+- `start_beats` and `end_beats` count on the note's `clock` from the start
+  of the piece. They are null without a clock. Seconds count from the start
+  of the piece. Times are rounded to the millionth.
+- Ends are null for a note still sounding one bar past the range.
 - Notes are in order of `start_seconds`; notes that start together are
   ordered by `module_id`, then `pitch`, then voice.
 - `chance` names every `chance`, `melody` and `noise` module, inside

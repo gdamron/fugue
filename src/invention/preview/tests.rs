@@ -40,7 +40,8 @@ fn lists_the_notes_that_start_in_the_range() {
     }
     assert_eq!(answer["range"]["start_seconds"], 2.0);
     assert_eq!(answer["range"]["end_seconds"], 6.0);
-    assert!((notes[0]["duration_beats"].as_f64().unwrap() - 0.5).abs() < 0.05);
+    let length = notes[0]["end_beats"].as_f64().unwrap() - starts[0];
+    assert!((length - 0.5).abs() < 0.05, "{length}");
     assert_eq!(answer["truncated"], false);
     assert_eq!(answer["limit_reached"], false);
 }
@@ -183,4 +184,31 @@ fn refuses_a_range_too_late_to_count_and_a_clock_that_never_moves() {
         .err()
         .unwrap();
     assert!(error.contains("bpm"), "{error}");
+}
+
+#[test]
+fn a_document_read_from_a_file_finds_its_assets_beside_it() {
+    let dir = std::env::temp_dir().join(format!("preview-assets-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pattern = serde_json::json!({ "pattern": [{ "note": 0 }, { "note": null }, { "note": 7 }, { "note": null }] });
+    std::fs::write(dir.join("bass.json"), pattern.to_string()).unwrap();
+    let mut document: serde_json::Value = serde_json::from_str(&bass(120.0)).unwrap();
+    document["assets"] = serde_json::json!({ "bass": { "path": "bass.json" } });
+    document["modules"][1]["config"]["pattern"] =
+        serde_json::json!({ "$asset": "bass", "path": "/pattern" });
+    let path = dir.join("piece.json");
+    std::fs::write(&path, document.to_string()).unwrap();
+
+    let invention = crate::Invention::from_file(path.to_str().unwrap()).unwrap();
+    let preview = NotePreview::for_invention(invention, r#"{"bars":2,"start_bar":1}"#, 44_100);
+    let read: serde_json::Value =
+        serde_json::from_str(&preview.unwrap().answer().unwrap()).unwrap();
+    let inline = answer(&bass(120.0), r#"{"bars":2,"start_bar":1}"#);
+    assert_eq!(
+        read["notes"], inline["notes"],
+        "the same notes as the inline pattern"
+    );
+    // Without the file's place the asset is not found.
+    assert!(NotePreview::new(&document.to_string(), r#"{"bars":2}"#, 44_100).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
 }

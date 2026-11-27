@@ -5,45 +5,14 @@ use serde::Serialize;
 
 use super::request::{Cursor, MAX_BARS};
 use super::walk::Walk;
-use crate::invention::notes::{NoteChange, NoteTime};
+use crate::invention::notes::NoteChange;
+use crate::rpc::ListedNote;
 
 /// The most notes one answer holds.
 pub(super) const PAGE_NOTES: usize = 256;
 
 /// The most bytes of JSON one answer holds.
 pub(super) const PAGE_BYTES: usize = 48 * 1024;
-
-/// A note the run played, as the note taps reported it.
-pub(super) struct Collected {
-    module_id: String,
-    voice: u32,
-    pitch: f32,
-    velocity: f32,
-    clock: Option<String>,
-    start: NoteTime,
-    pub(super) end: Option<NoteTime>,
-}
-
-impl Collected {
-    /// The MIDI note, rounded, as the answer reports it.
-    fn midi(&self) -> u8 {
-        self.pitch.round().clamp(0.0, 127.0) as u8
-    }
-}
-
-impl From<NoteChange> for Collected {
-    fn from(change: NoteChange) -> Self {
-        Self {
-            module_id: change.module_id,
-            voice: change.voice,
-            pitch: change.pitch,
-            velocity: change.velocity,
-            clock: change.clock,
-            start: change.start,
-            end: change.end,
-        }
-    }
-}
 
 /// Where the range lies.
 pub(super) struct Range {
@@ -60,7 +29,7 @@ pub(super) struct Range {
 impl Range {
     /// Whether `note` starts in the range: by beats when it counts on the
     /// main clock, by frames otherwise.
-    pub(super) fn holds(&self, note: &Collected, slack: f64) -> bool {
+    pub(super) fn holds(&self, note: &NoteChange, slack: f64) -> bool {
         match (&self.beats, &note.clock, note.start.beats) {
             (Some([from, to]), Some(clock), Some(beats)) if Some(clock) == self.clock.as_ref() => {
                 beats + slack >= *from && beats + slack < *to
@@ -75,7 +44,7 @@ impl Range {
 
 /// Everything an answer is made from.
 pub(super) struct Outcome {
-    pub(super) notes: Vec<Collected>,
+    pub(super) notes: Vec<NoteChange>,
     pub(super) range: Range,
     pub(super) seed: u64,
     pub(super) walk: Walk,
@@ -86,7 +55,7 @@ pub(super) struct Outcome {
 
 #[derive(Serialize)]
 struct Answer<'a> {
-    notes: &'a [NoteOut<'a>],
+    notes: &'a [ListedNote],
     range: RangeOut<'a>,
     seed: u64,
     chance: ChanceOut<'a>,
@@ -95,19 +64,6 @@ struct Answer<'a> {
     cursor: Option<String>,
     limit_reached: bool,
     limits: LimitsOut,
-}
-
-#[derive(Serialize)]
-struct NoteOut<'a> {
-    module_id: &'a str,
-    voice: String,
-    pitch: u8,
-    velocity: f64,
-    clock: Option<&'a str>,
-    start_beats: Option<f64>,
-    duration_beats: Option<f64>,
-    start_seconds: f64,
-    duration_seconds: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -157,9 +113,9 @@ impl Outcome {
                 "cursor points past the last note ({total} in all): it does not fit this request"
             ));
         }
-        let notes: Vec<NoteOut> = self.notes[offset..]
+        let notes: Vec<ListedNote> = self.notes[offset..]
             .iter()
-            .map(|note| note_out(note, sample_rate))
+            .map(|note| note.listed(self.sample_rate))
             .collect();
         let chance = chance_out(&self.walk.chance);
         let not_run = self
@@ -210,26 +166,6 @@ impl Outcome {
         answer.truncated = more;
         answer.cursor = more.then(|| Cursor::new(offset + count, fingerprint).encode());
         to_json(&answer)
-    }
-}
-
-fn note_out(note: &Collected, sample_rate: f64) -> NoteOut<'_> {
-    let start_beats = note.start.beats;
-    let end = note.end.as_ref();
-    NoteOut {
-        module_id: &note.module_id,
-        voice: note.voice.to_string(),
-        pitch: note.midi(),
-        velocity: (f64::from(note.velocity.clamp(0.0, 1.0)) * 1e4).round() / 1e4,
-        clock: note.clock.as_deref(),
-        start_beats: start_beats.map(round),
-        duration_beats: match (start_beats, end.and_then(|end| end.beats)) {
-            (Some(start), Some(end)) => Some(round(end - start)),
-            _ => None,
-        },
-        start_seconds: round(note.start.frame as f64 / sample_rate),
-        duration_seconds: end
-            .map(|end| round(end.frame.saturating_sub(note.start.frame) as f64 / sample_rate)),
     }
 }
 

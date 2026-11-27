@@ -5,7 +5,7 @@ use js_sys::{Function, Promise};
 use wasm_bindgen::prelude::*;
 
 use super::WasmFugueEngine;
-use crate::NotePreview;
+use crate::{NotePreview, PREVIEW_SAMPLE_RATE};
 
 /// Milliseconds of work in one slice before yielding to the event loop:
 /// far under the 50 ms a browser counts as a long task, with room for one
@@ -28,11 +28,12 @@ impl WasmFugueEngine {
     /// Lists the notes `json` (an invention document) plays over a range of
     /// bars, as `request` (JSON) asks, without playing it or touching the
     /// engine's own piece. Resolves to the answer as JSON, or rejects with
-    /// a string (see `docs/preview-notes.md`). Works in slices that yield
-    /// with `setTimeout(0)`: call it from a page or a worker, not an
-    /// AudioWorklet.
+    /// a string (see `docs/preview-notes.md`). Counts at
+    /// `PREVIEW_SAMPLE_RATE` whatever the engine's rate, so it lists the
+    /// notes a native preview lists. Works in slices that yield with
+    /// `setTimeout(0)`: call it from a page or a worker, not an AudioWorklet.
     pub fn preview_notes(&self, json: String, request: String) -> Promise {
-        let sample_rate = self.inner.sample_rate();
+        let sample_rate = PREVIEW_SAMPLE_RATE;
         Promise::new(
             &mut |resolve, reject| match NotePreview::new(&json, &request, sample_rate) {
                 Err(error) => {

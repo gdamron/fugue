@@ -69,7 +69,7 @@ pub use rpc::{
     SpectrogramLimits, SpectrogramMagnitudes, SpectrogramProvenance, SpectrogramStreamMeta,
     SpectrogramTile, SpectrogramWindow, TimelineContext, TypeDetail, RPC_SCHEMA_VERSION,
 };
-pub use rpc::{NotePage, NoteTimeUnit, SeqNote};
+pub use rpc::{ListedNote, NotePage, PlayedNote};
 
 // Re-export modules
 pub use modules::{
@@ -99,11 +99,12 @@ pub use invention::{
     DevelopmentSpec, GraphCommandError, Invention, InventionBuilder, InventionHandles,
     InventionRuntime, LoggedBeat, LoggedConnection, LoggedEdit, LoggedEditOutcome, LoggedLatch,
     LoggedModule, LoggedRequest, LoggedSetting, LoggedValue, LoggedWhen, MasterLevels, ModuleSpec,
-    NoteChange, NoteChanges, NotePreview, NoteTime, OfflineLevels, OrchestrationRuntime,
-    OutputBins, OutputTap, Playhead, ReloadError, ReloadReport, RenderEditsReport, RenderEngine,
-    RequestLog, RunningInvention, RuntimeConnectionInfo, RuntimeController, RuntimeModuleInfo,
-    RuntimeSnapshot, RuntimeState, RuntimeStatus, Score, TimeSignature, ViewReading,
-    FEEDBACK_CHUNKS_ENV, MAX_OUTPUT_TAPS, MAX_TAP_BINS, REQUEST_LOG_CAPACITY, SCORE_SCHEMA_V1,
+    NoteChange, NoteChanges, NoteHistory, NotePreview, NoteTime, OfflineLevels,
+    OrchestrationRuntime, OutputBins, OutputTap, Playhead, ReloadError, ReloadReport,
+    RenderEditsReport, RenderEngine, RequestLog, RunningInvention, RuntimeConnectionInfo,
+    RuntimeController, RuntimeModuleInfo, RuntimeSnapshot, RuntimeState, RuntimeStatus, Score,
+    TimeSignature, ViewReading, FEEDBACK_CHUNKS_ENV, MAX_OUTPUT_TAPS, MAX_TAP_BINS,
+    NOTES_PER_MODULE, PREVIEW_SAMPLE_RATE, REQUEST_LOG_CAPACITY, SCORE_SCHEMA_V1,
     TIMED_EDIT_LOG_CAPACITY,
 };
 
