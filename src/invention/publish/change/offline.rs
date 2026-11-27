@@ -14,16 +14,17 @@
 //! rather than queued for an audio thread.
 
 use indexmap::IndexMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::{BuiltModule, GraphChange, PreparedChange, TopologyMirror};
 use crate::invention::declared::offline_route;
 use crate::invention::graph::{Publication, SignalGraph};
 use crate::invention::orchestration::ModulePorts;
-use crate::invention::publish::{connection_info, rebind, Committed};
+use crate::invention::publish::rebind::{self, Packed};
+use crate::invention::publish::{connection_info, Committed};
 use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
-use crate::modules::control_scheduler::{SurfaceDirectory, Written};
+use crate::modules::control_scheduler::SurfaceDirectory;
 
 /// The runtime mirrors an offline edit commits with the graph: the
 /// control-surface directory, module ports and runtime state.
@@ -44,14 +45,16 @@ pub(crate) type OfflineMirrors<'a> = (
 /// resolve its schedule, a surviving scheduler no longer resolves, or the
 /// render has been replaced. It installs as an immediate edit does, or as
 /// a timed one lands (`landing`; see `SignalGraph::install_offline`).
+/// `settle` receives what the render settled, adopting a timed edit it
+/// landed.
 pub(crate) fn edit_offline(
     graph: &Arc<Mutex<SignalGraph>>,
     mirrors: OfflineMirrors<'_>,
-    landing: bool,
+    (landing, settle): (bool, &dyn Fn()),
     edit: impl FnOnce(&mut GraphChange) -> Result<(), GraphCommandError>,
 ) -> Result<Committed, GraphCommandError> {
     let (directory, module_ports, state) = mirrors;
-    let mut locked = graph.lock().unwrap();
+    let mut locked = lock_adopted(graph, settle)?;
     let (prepared, discarded) = prepare_offline(&mut locked, directory, edit);
     let prepared = match prepared {
         Ok(Some(prepared)) => prepared,
@@ -65,11 +68,11 @@ pub(crate) fn edit_offline(
     let OfflinePrepared {
         publication,
         prepared,
-        written,
+        packed,
         previous,
     } = prepared;
     let publication = locked.install_offline(publication, landing);
-    for schedule in written {
+    for schedule in packed.written {
         schedule.record();
     }
     let committed = commit_mirrors(graph, &previous, prepared, (directory, module_ports, state));
@@ -80,16 +83,41 @@ pub(crate) fn edit_offline(
     Ok(committed)
 }
 
+/// How many times [`lock_adopted`] settles before refusing: a render on
+/// another thread lands at most one edit between two settles.
+const ADOPT_ATTEMPTS: usize = 3;
+
+/// Locks `graph` with no timed edit it landed left to adopt (see
+/// `publish::offline_timed`): a change made before would be committed
+/// under it. `settle` adopts one, off the lock; a render on another thread
+/// may land another meanwhile, so it tries a few times.
+fn lock_adopted<'a>(
+    graph: &'a Mutex<SignalGraph>,
+    settle: &dyn Fn(),
+) -> Result<MutexGuard<'a, SignalGraph>, GraphCommandError> {
+    for attempt in 0..=ADOPT_ATTEMPTS {
+        let mut locked = graph.lock().unwrap();
+        if !locked.offline_edit_landed() {
+            return Ok(locked);
+        }
+        drop(locked);
+        if attempt < ADOPT_ATTEMPTS {
+            settle();
+        }
+    }
+    Err(GraphCommandError::TopologyMoved)
+}
+
 /// A change prepared against an offline render's graph: compiled, its
 /// handovers packed and its survivors mapped onto the modules running, to
-/// install in place.
+/// install in place or queue as a timed edit (see `publish::offline_timed`).
 pub(crate) struct OfflinePrepared {
     pub(crate) publication: Box<Publication>,
     /// The change, its publication taken.
     pub(crate) prepared: PreparedChange,
     /// The schedules it hands surviving schedulers, to record once it is
     /// committed.
-    pub(crate) written: Vec<Written>,
+    pub(crate) packed: Packed,
     /// The modules running as it was prepared, in order.
     pub(crate) previous: Vec<String>,
 }
@@ -116,9 +144,9 @@ pub(crate) fn prepare_offline(
     let discarded = change.take_discarded();
     let prepared = checked.map(|()| change.compile()).and_then(|mut prepared| {
         // The same handovers a live commit packs (see `rebind::pack`).
-        rebind::pack(&mut prepared).map(|packed| (prepared, packed.written))
+        rebind::pack(&mut prepared).map(|packed| (prepared, packed))
     });
-    let (mut prepared, written) = match prepared {
+    let (mut prepared, packed) = match prepared {
         Ok(prepared) => prepared,
         Err(error) => return (Err(error), discarded),
     };
@@ -135,7 +163,7 @@ pub(crate) fn prepare_offline(
     let prepared = OfflinePrepared {
         publication,
         prepared,
-        written,
+        packed,
         previous,
     };
     (Ok(Some(prepared)), discarded)

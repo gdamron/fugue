@@ -119,6 +119,11 @@ impl Fate {
 pub(crate) struct FateGuard(Fate);
 
 impl FateGuard {
+    /// Lands the edit it guards, unless it was cancelled. Audio thread.
+    pub(super) fn land(&self) -> bool {
+        self.0.land()
+    }
+
     /// Whether the publisher cancelled the edit. Audio thread.
     pub(crate) fn cancelled(&self) -> bool {
         self.0 .0.load(Ordering::Acquire) == CANCELLED
@@ -163,6 +168,9 @@ impl SignalGraph {
                 return Err(Outcome::Refused(Refusal::Unsupported));
             }
         };
+        if self.link.is_none() {
+            return self.take_offline_edit(publication, retirer);
+        }
         let fits = |link: &AudioLink| {
             link.landed.is_none()
                 && link.bridge.is_none()
@@ -190,6 +198,9 @@ impl SignalGraph {
     /// Allocation-, free- and lock-free, but for the recompile an install
     /// may fall back to (as at a block start).
     pub(in crate::invention::graph) fn land_timed_edit(&mut self) -> bool {
+        if self.link.is_none() {
+            return self.land_offline_edit();
+        }
         self.with_link(|graph, link, in_hand| {
             let Some(publication) = link.landed.take() else {
                 return false;

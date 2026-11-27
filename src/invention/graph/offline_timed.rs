@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use indexmap::IndexMap;
 
+use super::offline_edits::{LandedEdit, OfflineEdits};
 use super::requests::RequestDrain;
 use super::SignalGraph;
 use crate::control_request::{
@@ -23,6 +24,7 @@ use crate::control_request::{
     RequestSender, When,
 };
 use crate::invention::publish::timed_write::TIMED_WRITE_ROOM;
+use crate::invention::publish::CancelCause;
 use crate::invention::publish::{
     BEAT_WATCH_CAPACITY, OUTCOME_QUEUE_CAPACITY, PAYLOAD_RETIRE_HOLD, PENDING_REQUEST_CAPACITY,
     REQUEST_QUEUE_CAPACITY, TIMED_OUTCOME_RESERVE,
@@ -51,6 +53,8 @@ pub(crate) struct OfflineRequests {
     /// submitted only once those before it were taken (see
     /// `RuntimeSnapshot::record_control`).
     authored: Vec<AuthoredWrite>,
+    /// Its timed edits (see `offline_edits`).
+    pub(crate) edits: OfflineEdits,
 }
 
 /// A timed write waiting in an offline render.
@@ -66,10 +70,14 @@ pub(crate) struct OfflineWrite {
     /// The value the document records once it applies, for an authored
     /// write.
     pub(crate) authored: Option<ControlValue>,
+    /// The request generation it was resolved against (see
+    /// `SignalGraph::request_generation`).
+    pub(crate) generation: u64,
 }
 
-/// An authored timed write that applied: its control and value.
-pub(crate) type AuthoredWrite = (String, String, ControlValue);
+/// An authored timed write that applied: its control and value, and the
+/// request generation it was resolved against.
+pub(crate) type AuthoredWrite = (String, String, ControlValue, u64);
 
 /// A timed write an offline render settled.
 #[derive(Clone, Debug)]
@@ -111,6 +119,7 @@ pub(crate) fn offline_timed_requests(graph: &mut SignalGraph) {
         waiting: IndexMap::new(),
         settled: VecDeque::with_capacity(TIMED_WRITE_ROOM),
         authored: Vec::new(),
+        edits: OfflineEdits::default(),
     }));
 }
 
@@ -140,8 +149,9 @@ impl OfflineRequests {
     /// render's lock. Control thread, off the render.
     pub(crate) fn settle(&mut self) {
         while let Some((id, outcome, _)) = self.outcomes.try_recv() {
-            // Others settled are untimed: a table's, say.
+            // Others settled are timed edits, or untimed: a table's, say.
             let Some(write) = self.waiting.shift_remove(&id) else {
+                self.edits.outcome(id, outcome, self.authored.len());
                 continue;
             };
             let applied = matches!(
@@ -149,20 +159,34 @@ impl OfflineRequests {
                 Outcome::Applied { .. } | Outcome::AppliedLate { .. }
             );
             if let Some(value) = write.authored.clone().filter(|_| applied) {
-                (self.authored).push((write.module_id.clone(), write.key.clone(), value));
+                let control = (write.module_id.clone(), write.key.clone());
+                (self.authored).push((control.0, control.1, value, write.generation));
             }
             self.keep(SettledWrite { id, write, outcome });
         }
     }
 
-    /// Settles every timed write still waiting as refused: the render they
-    /// were queued on is replaced, or failed, so none will apply. Settle
-    /// first.
+    /// Settles every timed write still waiting as refused, and cancels the
+    /// timed edit waiting: the render they were queued on is replaced, or
+    /// failed, so none will apply. Settle first.
     fn stop(&mut self) {
+        self.cancel_edit(|| CancelCause::Stopping);
         for (id, write) in std::mem::take(&mut self.waiting) {
             let outcome = Outcome::Refused(Refusal::Stopped);
             self.keep(SettledWrite { id, write, outcome });
         }
+    }
+
+    /// Cancels the timed edit waiting for `cause`, unless it has landed or
+    /// nothing waits, and tells the drain, as a live graph's publisher
+    /// does: writes chained on it settle, and its condition slot is given
+    /// back. Returns whether it did.
+    pub(crate) fn cancel_edit(&mut self, cause: impl FnOnce() -> CancelCause) -> bool {
+        let Some(id) = self.edits.cancel(cause) else {
+            return false;
+        };
+        self.sender.cancelled(id);
+        true
     }
 
     /// The timed writes settled since the last call, oldest first.
@@ -179,33 +203,40 @@ impl OfflineRequests {
 }
 
 /// What an offline render's timed writes settled, taken from its graph:
-/// the authored values to record, in the order they applied, and each
-/// write's settling when asked for.
+/// the authored values to record, in the order they applied, each write's
+/// settling when asked for, and the timed edit it landed, to adopt in its
+/// place among the authored values.
 #[derive(Default)]
 pub(crate) struct OfflineSettled {
     pub(crate) authored: Vec<AuthoredWrite>,
     pub(crate) writes: Vec<SettledWrite>,
+    pub(crate) landed: Option<LandedEdit>,
 }
 
 /// Receives what an offline render's `graph` settled since the last call
 /// (see [`OfflineRequests::settle`]) and takes the authored values that
-/// applied, and each write's settling too when `writes`. With `stop`, or
-/// once a render failed (its drain reports nothing more), each write still
-/// waiting is settled refused first. The payloads the drain retired are
-/// freed once the lock is released, so a render waiting on it never waits
-/// on a free. Control thread.
+/// applied, the timed edit that landed, and each write's settling too when
+/// `writes`. With `stop`, or once a render failed (its drain reports
+/// nothing more), each write still waiting is settled refused first, and
+/// the timed edit waiting is cancelled, or refused. The payloads the drain
+/// retired, and what a timed edit displaced, are freed once the lock is
+/// released, so a render waiting on it never waits on a free. Control
+/// thread.
 pub(crate) fn settle_offline(
     graph: &Mutex<SignalGraph>,
     writes: bool,
     stop: bool,
 ) -> OfflineSettled {
-    let (settled, retired) = {
+    let (settled, retired, freed) = {
         let mut graph = graph.lock().unwrap();
         let failed = graph.failed;
         let Some(offline) = graph.offline.as_mut() else {
             return OfflineSettled::default();
         };
         offline.settle();
+        if failed {
+            offline.edits.strand();
+        }
         if stop || failed {
             offline.stop();
         }
@@ -216,10 +247,13 @@ pub(crate) fn settle_offline(
             } else {
                 Vec::new()
             },
+            landed: offline.edits.take_landed(),
         };
-        (settled, Arc::clone(&offline.payloads))
+        let freed = offline.edits.take_freed();
+        (settled, Arc::clone(&offline.payloads), freed)
     };
     retired.drain();
+    drop(freed);
     settled
 }
 

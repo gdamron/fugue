@@ -56,6 +56,7 @@ mod edges;
 pub(crate) mod ended;
 mod master;
 pub(crate) mod notes;
+mod offline_edits;
 mod offline_timed;
 mod onsets;
 mod pause;
@@ -72,6 +73,7 @@ pub use chunks::{feedback_chunks, set_feedback_chunks, FEEDBACK_CHUNKS_ENV};
 pub(crate) use compile::{compile_topology, CompiledTopology, TopologyFacts};
 pub use master::MasterLevels;
 pub(crate) use master::MasterObservers;
+pub(crate) use offline_edits::{LandedEdit, WaitingEdit};
 pub(crate) use offline_timed::{
     offline_timed_requests, settle_offline, AuthoredWrite, OfflineSettled, OfflineWrite,
     SettledWrite,

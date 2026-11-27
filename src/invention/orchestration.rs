@@ -405,6 +405,9 @@ impl RuntimeSnapshot {
                 options
             };
             let queued = self.submit_transient(module_id, key, load, submitted)?;
+            if !authoring.timed {
+                self.reconcile_offline_edit(module_id, key);
+            }
             if queued.id.is_none() && !queued.lost {
                 self.settle_offline_authored();
                 let mut state = self.state.lock().unwrap();
@@ -639,7 +642,8 @@ impl RuntimeController {
             &*self.module_ports,
             &*self.snapshot.state,
         );
-        edit_offline(graph, mirrors, false, edit)
+        let settle = || self.snapshot.settle_offline_authored();
+        edit_offline(graph, mirrors, (false, &settle), edit)
     }
 
     /// Builds and inserts a module into the current graph, replacing one

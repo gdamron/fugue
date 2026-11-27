@@ -84,7 +84,10 @@ impl BeatHost for SignalGraph {
     /// sample, keeping the module's table on the drain (see
     /// [`Self::keeps_table`]).
     fn defers(&self, module_idx: usize) -> bool {
-        let landing = self.link.as_ref().and_then(|link| link.landing());
+        let landing = match &self.link {
+            Some(link) => link.landing(),
+            None => self.offline_landing(),
+        };
         self.installing
             .as_deref()
             .or(landing)
