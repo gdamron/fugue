@@ -259,6 +259,7 @@ impl RpcCommand {
             Self::SetControl { intent, .. } => intent.is_authoring(),
             Self::SetControls { writes } => writes.iter().any(|write| write.intent.is_authoring()),
             Self::InspectInvention { .. }
+            | Self::GetDiff { .. }
             | Self::GetInvention { .. }
             | Self::GetDevelopment { .. }
             | Self::SaveInvention { .. }

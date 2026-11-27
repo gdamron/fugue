@@ -1,7 +1,7 @@
 //! Client request envelopes and the commands a daemon accepts.
 
 use super::{
-    ControlTiming, ControlWriteIntent, DescribeModuleQuery, EditTiming, InspectionQuery,
+    ControlTiming, ControlWriteIntent, DescribeModuleQuery, DiffQuery, EditTiming, InspectionQuery,
     ModuleTypeQuery, MutationReply, MutationTicket, PackageInstallRequest, PendingDetail,
     PendingSource, RpcSubscriptionTopic, RuntimeRevision, SnapshotDelivery, StructuralEdit,
     RPC_SCHEMA_VERSION,
@@ -413,6 +413,13 @@ pub enum RpcCommand {
     /// Inspect bounded authored selections with revision and source context.
     InspectInvention {
         query: InspectionQuery,
+    },
+    /// What differs between the piece as last loaded or saved and the piece
+    /// now, and which sounding values only performed a save would not keep
+    /// (see [`super::DiffSource`]). Read-only.
+    GetDiff {
+        #[serde(default)]
+        query: DiffQuery,
     },
     /// Retrieve the full retained authored snapshot.
     GetInvention {

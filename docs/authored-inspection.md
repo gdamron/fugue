@@ -98,6 +98,37 @@ cursors and `expected_revision` as above. The page's `source_path` is null.
 It reads no engine state, so it answers whether or not a piece is loaded;
 saying nothing is running is the host's to do.
 
+## What changed since the save
+
+`GetDiff` (the MCP `get_diff`) answers "what would be lost if this closed
+now?". It compares the document with a baseline, the document as it was last
+loaded or saved (`baseline` says which; the host decides when it moves), and
+lists the changes: modules removed, then each module in document order with
+its changed fields and config keys (saved and current value) or as added;
+connections removed and added; then the piece's other fields, each
+development and asset by name. Keys and fields come in name order (the
+saved piece's first, then those only the current one has), and a
+number compares by value, so `440` and `440.0` are the same.
+
+Apart from the changes, `performed` lists the controls written as
+performances (not by a script, not one-shots) whose sounding value the
+document does not hold: the control, the document's value (absent where it
+holds none) and the sounding value. A save would not keep them. The core
+marks a control as its performed write is submitted and forgets a module as
+it is built again or removed; the values are read from the control surfaces
+on the calling thread, never the audio thread.
+
+`summary` says the whole difference in a sentence or two, on every page.
+Pages hold the inspection limits (16 KiB, 1 to 100 records, 4 KiB values;
+a larger value is left out with `omitted`), and `next_cursor` is bound to the
+revision and to a digest of every record: a save or a performed write moves
+what is measured without moving the revision, and a cursor from other
+differences is refused, to read again from the first page.
+
+The browser engine's static `FugueEngine.diffInventions(baseline, kind,
+current, sounding, revision, query)` answers the same over documents a page
+holds, with the sounding values the page passes.
+
 ## A development's inside
 
 `RpcCommand::GetDevelopment { path }` reads one development's definition as

@@ -106,6 +106,9 @@ pub struct RuntimeState {
     /// last taken from a document that its stored config tracks apart from
     /// its keys (see [`WrittenSince`]).
     pub(crate) written_since: WrittenSince,
+    /// The controls written as performances (see
+    /// [`RuntimeSnapshot::performed_values`](super::orchestration::RuntimeSnapshot::performed_values)).
+    pub(crate) performed: super::performed::PerformedKeys,
     /// How many authored control writes the document has recorded. A
     /// commit planned from the document before the latest records them
     /// again on top of its own, or, when they are no longer all in

@@ -290,7 +290,13 @@ impl RuntimeSnapshot {
         let ack = if intent.is_authoring() && !self.is_event(module_id, key) {
             self.set_control_recorded(module_id, key, value, &options)?
         } else {
-            self.set_control_performed(module_id, key, value, &options)?
+            let ack = self.set_control_performed(module_id, key, value, &options)?;
+            // A script plays its values again as it runs; an event holds none.
+            if !ack.lost && options.source != Source::Script && !self.is_event(module_id, key) {
+                let mut state = self.state.lock().unwrap();
+                state.performed.mark(module_id, key);
+            }
+            ack
         };
         // Those that applied earlier go first.
         self.announce_applied();

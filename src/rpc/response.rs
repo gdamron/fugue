@@ -154,6 +154,10 @@ pub enum RpcResponsePayload {
     InventionInspection {
         page: Box<InspectionPage>,
     },
+    /// One page of the differences since the piece was last loaded or saved.
+    Diff {
+        page: Box<super::DiffPage>,
+    },
     /// A revision-stamped authored snapshot, never a flattened runtime graph.
     AuthoredSnapshot {
         snapshot: Box<AuthoredSnapshot>,
