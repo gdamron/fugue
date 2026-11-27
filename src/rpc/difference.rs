@@ -8,9 +8,14 @@
 //! and keys come in name order, the saved piece's first and then those only
 //! the current one has. Then, apart, the values that sound but that
 //! the document does not hold because they were only performed: a save
-//! would not keep them.
+//! would not keep them. Hosts read it in pages (`page`): the daemon's
+//! `GetDiff` and the browser engine's `diffInventions` (`document`).
 
 mod compare;
+mod document;
+mod page;
+#[cfg(test)]
+mod page_tests;
 #[cfg(test)]
 mod tests;
 
@@ -18,6 +23,9 @@ use super::{RpcError, RpcErrorCode};
 use crate::Invention;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+pub use document::{diff_documents, DiffTexts};
+pub use page::{DiffBaseline, DiffCursor, DiffPage, DiffQuery, DiffSource};
 
 /// A control's value as it sounds now, which a host reads off the audio
 /// thread: the input to [`PerformedValue`].
@@ -130,4 +138,8 @@ pub fn differences(
 fn to_value(invention: &Invention) -> Result<Value, RpcError> {
     serde_json::to_value(invention)
         .map_err(|e| RpcError::new(RpcErrorCode::Internal, e.to_string()))
+}
+
+fn invalid(message: &str) -> RpcError {
+    RpcError::new(RpcErrorCode::InvalidRequest, message)
 }
