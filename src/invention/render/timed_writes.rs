@@ -12,12 +12,16 @@
 //! on.
 
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
 use super::RenderEngine;
 use crate::audio_thread::ControlLock;
-use crate::invention::graph::{settle_offline, AuthoredWrite, OfflineSettled, SettledWrite};
+use crate::invention::graph::{
+    settle_offline, AuthoredWrite, LandedEdit, OfflineSettled, SettledWrite, SignalGraph,
+};
 use crate::invention::orchestration::RuntimeSnapshot;
 use crate::invention::publish::timed_write::TIMED_WRITE_ROOM;
+use crate::invention::publish::{adopt_offline, reconcile_offline};
 use crate::invention::runtime::control_timing::settled_as;
 use crate::rpc::ControlRequestSettled;
 
@@ -41,7 +45,7 @@ impl RenderEngine {
     /// [`Self::take_settled_writes`]. Control thread, off the render.
     pub(super) fn settle_timed_writes(&self) {
         if let Some(graph) = &self.graph {
-            self.keep_settled(settle_offline(graph, true, false));
+            self.keep_settled(graph, settle_offline(graph, true, false));
         }
     }
 
@@ -49,12 +53,13 @@ impl RenderEngine {
     /// render's graph is replaced.
     pub(super) fn stop_timed_writes(&self) {
         if let Some(graph) = &self.graph {
-            self.keep_settled(settle_offline(graph, true, true));
+            self.keep_settled(graph, settle_offline(graph, true, true));
         }
     }
 
-    fn keep_settled(&self, settled: OfflineSettled) {
-        self.snapshot().record_offline_authored(settled.authored);
+    fn keep_settled(&self, graph: &Arc<Mutex<SignalGraph>>, settled: OfflineSettled) {
+        let landed = settled.landed;
+        (self.snapshot()).record_offline_settled(graph, settled.authored, landed);
         if settled.writes.is_empty() {
             return;
         }
@@ -78,7 +83,43 @@ impl RuntimeSnapshot {
         let Some(graph) = self.offline.as_ref().and_then(|graph| graph.upgrade()) else {
             return;
         };
-        self.record_offline_authored(settle_offline(&graph, false, false).authored);
+        let settled = settle_offline(&graph, false, false);
+        self.record_offline_settled(&graph, settled.authored, settled.landed);
+    }
+
+    /// Records `authored`, the authored timed writes that applied, and
+    /// adopts `landed`, the timed edit that landed among them, in the order
+    /// they applied: the writes before it, its change, then those after.
+    /// One settled after it but resolved before it landed applied to the
+    /// graph it replaced, on its sample: a write to a module it rebuilt or
+    /// removed is forgotten, as a live graph's fence forgets it.
+    fn record_offline_settled(
+        &self,
+        graph: &Arc<Mutex<SignalGraph>>,
+        mut authored: Vec<AuthoredWrite>,
+        landed: Option<LandedEdit>,
+    ) {
+        let Some(LandedEdit { before, edit }) = landed else {
+            return self.record_offline_authored(authored);
+        };
+        let mut after = authored.split_off(before.min(authored.len()));
+        self.record_offline_authored(authored);
+        let replaced = edit.replaces;
+        let stopped = adopt_offline(graph, edit);
+        let replaced = |(module_id, _, _, generation): &AuthoredWrite| {
+            *generation <= replaced && stopped.contains(module_id)
+        };
+        after.retain(|write| !replaced(write));
+        self.record_offline_authored(after);
+    }
+
+    /// Cancels the timed edit waiting on the offline render, if it
+    /// rebuilds or removes `module_id`, whose control `key` an untimed
+    /// authored write just set, as a live graph's is. Control thread.
+    pub(crate) fn reconcile_offline_edit(&self, module_id: &str, key: &str) {
+        if let Some(graph) = self.offline.as_ref().and_then(|graph| graph.upgrade()) {
+            reconcile_offline(&graph, module_id, key);
+        }
     }
 
     /// Records `authored`, the authored timed writes that applied, in the
@@ -88,7 +129,7 @@ impl RuntimeSnapshot {
             return;
         }
         let mut state = self.state.lock().unwrap();
-        for (module_id, key, value) in authored {
+        for (module_id, key, value, _) in authored {
             state.record_authored_control(&module_id, &key, &value);
         }
     }

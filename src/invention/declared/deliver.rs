@@ -347,6 +347,11 @@ impl DeclaredSurface {
                         if generation.is_some_and(|seen| seen != graph.offline_edits) {
                             return Err(STALE.into());
                         }
+                        if let Some(checked) = &checked {
+                            if !graph.cancel_offline_edit_racing(&module_id, &checked.targets) {
+                                return Err(STALE.into());
+                            }
+                        }
                         let standing = (rank, options.due);
                         let applied = graph.apply_payload(&module_id, index, payload, standing);
                         if applied == Ok(true) {

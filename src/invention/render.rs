@@ -456,6 +456,9 @@ impl RenderEngine {
         self.agents.stop_all();
         runtime.state.lock().unwrap().running = true;
 
+        // An edit that landed is adopted first, so the surfaces it
+        // activated are the ones retired.
+        self.settle_timed_writes();
         if let Some(previous) = &self.graph {
             super::declared::retire_offline(previous, &self.control_surfaces);
         }

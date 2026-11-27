@@ -105,7 +105,8 @@ impl RenderEngine {
         edit: impl FnOnce(&mut GraphChange) -> Result<(), GraphCommandError>,
     ) -> Result<Committed, GraphCommandError> {
         let mirrors = (&self.control_surfaces, &*self.module_ports, &*self.state);
-        edit_offline(graph, mirrors, landing, edit)
+        let settle = || self.settle_timed_writes();
+        edit_offline(graph, mirrors, (landing, &settle), edit)
     }
 
     /// Stops the scripts, agents and handles of removed or replaced modules

@@ -84,11 +84,48 @@ impl EndWatch {
         self.at += frames;
     }
 
+    /// Watches the gates `next` lists from here on, as a timed edit lands
+    /// (see `offline_edits`): each gate of a module kept keeps the frame it
+    /// rose on this block. `next` is left holding the gates it replaces,
+    /// to free off the render. Allocation- and free-free.
+    pub(crate) fn take_gates(&mut self, next: &mut EndGates) {
+        for ((id, ..), rise) in next.gates.iter().zip(&mut next.rises) {
+            *rise = self.rise(id).flatten();
+        }
+        std::mem::swap(&mut self.gates, &mut next.gates);
+        std::mem::swap(&mut self.rises, &mut next.rises);
+    }
+
     /// Where the `ended` gate of module `id` first went high this block
     /// (`Some(None)`: it did not), or `None` when the block did not render
     /// it. By id: an edit since may have moved the modules.
     pub(crate) fn rise(&self, id: &str) -> Option<Option<usize>> {
         let at = self.gates.iter().position(|(module, ..)| module == id)?;
         Some(self.rises[at])
+    }
+}
+
+/// The `ended` gates of the graph a timed edit installs, found as it is
+/// queued, so the watch takes them as the edit lands without allocating
+/// (see [`EndWatch::take_gates`]).
+#[derive(Debug, Default)]
+pub(crate) struct EndGates {
+    gates: Vec<(String, usize, usize)>,
+    rises: Vec<Option<usize>>,
+}
+
+impl EndGates {
+    /// The gates of `modules` (each id with its output ports, in module
+    /// order). Allocates.
+    #[allow(dead_code)] // Queued by the render's timed edit batches, still to come.
+    pub(crate) fn of<'a>(modules: impl Iterator<Item = (&'a String, &'a [String])>) -> Self {
+        let gates: Vec<_> = (modules.enumerate())
+            .filter_map(|(index, (id, outputs))| {
+                let port = outputs.iter().position(|port| is_end_output(port))?;
+                Some((id.clone(), index, port))
+            })
+            .collect();
+        let rises = vec![None; gates.len()];
+        Self { gates, rises }
     }
 }

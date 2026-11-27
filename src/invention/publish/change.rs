@@ -670,6 +670,7 @@ mod order;
 mod ramp_room;
 mod rebind;
 pub(crate) use offline::edit_offline;
+pub(super) use offline::{commit_mirrors, prepare_offline, OfflinePrepared};
 pub(crate) use rebind::Rescheduling;
 #[cfg(test)]
 mod tests;

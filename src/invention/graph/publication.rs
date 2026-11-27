@@ -34,12 +34,14 @@ use super::onsets::moved_to;
 use super::releases::{id_at, Previous};
 use super::{RoutingConnection, SignalGraph};
 use crate::control_request::RampRoom;
+use crate::invention::publish::CancelCause;
 use crate::invention::runtime::ModuleInstance;
 use crate::spsc::{Consumer, Producer};
 use crate::{GraphModule, Module, MAX_BLOCK};
 
 mod handover;
 mod landing;
+mod offline_landing;
 mod remap;
 
 pub(crate) use handover::Handover;
@@ -473,8 +475,10 @@ impl SignalGraph {
     ) -> Box<Publication> {
         // What is queued for the generation it replaces is taken first, as
         // a live link takes what was queued ahead of an edit, so it maps
-        // through the install with what already waits.
+        // through the install with what already waits. A timed edit waiting
+        // was prepared for the graph this replaces: it never lands.
         self.take_offline();
+        self.cancel_offline_edit(|| CancelCause::Commit);
         let installed = self.requests.as_ref().map_or(0, |drain| drain.installed);
         let mut publication = self.play_before_offline_install(publication, landing);
         self.install(&mut publication);
