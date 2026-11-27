@@ -16,12 +16,6 @@ pub(crate) const AFTER_UNTIMED: &str =
     "This render cannot time a write after another request (`after_request`) yet; \
      nothing was written";
 
-/// Why an authored write with a `when` is refused offline: the render
-/// times only a live gesture.
-pub(crate) const AUTHORED_UNTIMED: &str =
-    "This render cannot time an authored write yet; write it with intent `perform`, \
-     or without `when`; nothing was written";
-
 impl DeclaredSurface {
     /// Submits a write to control `index` of module `module_id` in an
     /// offline render's `graph`, timed as `options` say, as the live route
@@ -91,15 +85,15 @@ impl DeclaredSurface {
         let key = self.table.key(index).unwrap_or_default();
         let module_id = module_id.to_string();
         let beat = timed.beat;
-        offline.submitted(
-            id,
-            OfflineWrite {
-                module_id,
-                key,
-                when,
-                beat,
-            },
-        );
+        let authored = options.authored.map(|authoring| authoring.value.clone());
+        let write = OfflineWrite {
+            module_id,
+            key,
+            when,
+            beat,
+            authored,
+        };
+        offline.submitted(id, write);
         Ok(Queued {
             id: Some(id),
             ..Queued::default()

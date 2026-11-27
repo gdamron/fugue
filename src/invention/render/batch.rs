@@ -69,6 +69,8 @@ impl RenderEngine {
     /// when made is listed in `controls_failed`, the batch committed.
     pub fn apply_edits(&self, edits: &[StructuralEdit]) -> Result<RenderEditsReport, RpcError> {
         check_edit_batch(edits)?;
+        // Timed writes that applied are recorded before the batch's.
+        self.settle_timed_writes();
         for (index, edit) in edits.iter().enumerate() {
             edit.check_names(index).map_err(RpcError::invalid_edit)?;
             if !matches!(

@@ -196,48 +196,24 @@ fn a_timed_write_lands_on_the_daemons_sample_and_settles_as_its_does() {
 }
 
 #[test]
-fn an_authored_timed_write_refuses_its_batch_with_nothing_written() {
+fn an_authored_timed_write_is_recorded_once_it_applies() {
     let mut engine = engine();
     let next_bar = ControlWhen::NextBar {
         beats_per_bar: Some(4.0),
         clock: None,
     };
-    let performed = timed(ControlWriteIntent::Perform, next_bar.clone());
-    let writes = [performed, timed(ControlWriteIntent::Author, next_bar)];
-    let error = engine.write_controls(&writes).unwrap_err();
-    let refusal = error.write.expect("names the write");
-    assert_eq!(refusal.index, 1);
-    assert_eq!(refusal.reason, ControlWriteReason::InvalidTiming);
-    assert!(refusal.message.contains("perform"), "{}", refusal.message);
-    assert!(refusal.message.contains("nothing was written"));
+    render(&mut engine, LEAD_IN);
+    let write = timed(ControlWriteIntent::Author, next_bar);
+    engine.write_controls(&[write]).unwrap();
+    let config = |engine: &RenderEngine| {
+        let document = engine.document().unwrap();
+        let osc = document.modules.iter().find(|m| m.id == "osc").unwrap();
+        osc.config["frequency"].as_f64()
+    };
+    render(&mut engine, 100);
+    assert_eq!(config(&engine), Some(220.0), "not yet applied");
     render(&mut engine, AFTER);
-    assert!(engine.take_settled_writes().is_empty());
-    assert_eq!(
-        engine.get_control("osc", "frequency").unwrap(),
-        220.0.into()
-    );
-}
-
-#[test]
-fn an_authored_timed_write_to_an_event_control_is_timed_as_a_gesture() {
-    let mut engine = engine();
-    let reset = ControlWrite {
-        intent: ControlWriteIntent::Author,
-        timing: ControlTiming {
-            when: Some(ControlWhen::AtSample { sample: 7000 }),
-            ttl_ms: None,
-        },
-        ..ControlWrite::new("clock", "reset", ControlValue::Bool(true))
-    };
-    let [ack] = &engine.write_controls(&[reset]).unwrap()[..] else {
-        panic!("one entry");
-    };
-    assert_eq!(ack.state, Some(ControlRequestState::Pending));
-    render(&mut engine, AFTER);
-    let [settled] = &engine.take_settled_writes()[..] else {
-        panic!("settled once");
-    };
-    assert_eq!(settled.state, ControlRequestState::Applied);
+    assert_eq!(config(&engine), Some(330.0));
 }
 
 #[test]
@@ -335,6 +311,63 @@ fn rendering_takes_and_applies_timed_writes_without_allocating() {
 
 fn edits(json: &str) -> Vec<crate::rpc::StructuralEdit> {
     serde_json::from_str(json).unwrap()
+}
+
+fn recorded_frequency(engine: &RenderEngine) -> Option<f64> {
+    let document = engine.document().unwrap();
+    let osc = document.modules.iter().find(|m| m.id == "osc").unwrap();
+    osc.config["frequency"].as_f64()
+}
+
+#[test]
+fn an_authored_timed_write_is_recorded_before_one_made_after_it_applied() {
+    let set_440 = r#"[{"op":"set_control","module_id":"osc","key":"frequency","value":440.0}]"#;
+    let author_440 = ControlWrite {
+        intent: ControlWriteIntent::Author,
+        ..ControlWrite::new("osc", "frequency", ControlValue::Number(440.0))
+    };
+    let later: [&dyn Fn(&RenderEngine); 2] = [
+        &|engine| drop(engine.apply_edits(&edits(set_440)).unwrap()),
+        &|engine| {
+            drop(
+                engine
+                    .write_controls(std::slice::from_ref(&author_440))
+                    .unwrap(),
+            )
+        },
+    ];
+    for (n, then) in later.into_iter().enumerate() {
+        let mut engine = engine();
+        render(&mut engine, LEAD_IN);
+        let at = ControlWhen::AtSample { sample: 7000 };
+        engine
+            .write_controls(&[timed(ControlWriteIntent::Author, at)])
+            .unwrap();
+        // It applies, and nothing reads the document before the next write.
+        render(&mut engine, 10);
+        then(&engine);
+        assert_eq!(
+            engine.get_control("osc", "frequency").unwrap(),
+            440.0.into()
+        );
+        assert_eq!(recorded_frequency(&engine), Some(440.0), "{n}");
+    }
+}
+
+#[test]
+fn an_authored_timed_write_moves_the_epoch_once_it_applies() {
+    let mut engine = engine();
+    render(&mut engine, LEAD_IN);
+    let at = ControlWhen::AtSample { sample: 7000 };
+    engine
+        .write_controls(&[timed(ControlWriteIntent::Author, at)])
+        .unwrap();
+    let (_, before) = engine.document_with_epoch();
+    render(&mut engine, 10);
+    // Read with its epoch, as a host keeping a revision reads it.
+    let (_, applied) = engine.document_with_epoch();
+    assert!(applied > before);
+    assert_eq!(recorded_frequency(&engine), Some(330.0));
 }
 
 #[test]

@@ -29,6 +29,7 @@ use crate::invention::publish::{
 };
 use crate::invention::request_log::LoggedBeat;
 use crate::payload::{RetireQueue, Retirer};
+use crate::ControlValue;
 
 /// The control side of an offline render's request queue: where its front
 /// doors submit timed writes, and what became of each.
@@ -44,6 +45,11 @@ pub(crate) struct OfflineRequests {
     /// Timed writes settled and not yet taken, oldest first: the latest
     /// [`TIMED_WRITE_ROOM`], as many as may wait at once.
     settled: VecDeque<SettledWrite>,
+    /// The values authored timed writes applied and the document has yet
+    /// to record, by `(module_id, key)`, in the order they applied: the
+    /// last applied of each, so no more than the piece's controls, and
+    /// none lost to the cap on `settled`.
+    authored: IndexMap<(String, String), ControlValue>,
 }
 
 /// A timed write waiting in an offline render.
@@ -56,6 +62,9 @@ pub(crate) struct OfflineWrite {
     pub(crate) when: When,
     /// Its beat, for a write timed in beats, as the request log shows it.
     pub(crate) beat: Option<LoggedBeat>,
+    /// The value the document records once it applies, for an authored
+    /// write.
+    pub(crate) authored: Option<ControlValue>,
 }
 
 /// A timed write an offline render settled.
@@ -97,6 +106,7 @@ pub(crate) fn offline_timed_requests(graph: &mut SignalGraph) {
         payloads,
         waiting: IndexMap::new(),
         settled: VecDeque::with_capacity(TIMED_WRITE_ROOM),
+        authored: IndexMap::new(),
     }));
 }
 
@@ -120,15 +130,26 @@ impl OfflineRequests {
         (on_sample, self.waiting.len())
     }
 
-    /// Receives what the drain settled since the last call. The payloads
-    /// it retired are freed by [`settle_offline`], off the render's lock.
-    /// Control thread, off the render.
+    /// Receives what the drain settled since the last call, keeping the
+    /// value of each authored write that applied for the document. The
+    /// payloads it retired are freed by [`settle_offline`], off the
+    /// render's lock. Control thread, off the render.
     pub(crate) fn settle(&mut self) {
         while let Some((id, outcome, _)) = self.outcomes.try_recv() {
             // Others settled are untimed: a table's, say.
-            if let Some(write) = self.waiting.shift_remove(&id) {
-                self.keep(SettledWrite { id, write, outcome });
+            let Some(write) = self.waiting.shift_remove(&id) else {
+                continue;
+            };
+            let applied = matches!(
+                outcome,
+                Outcome::Applied { .. } | Outcome::AppliedLate { .. }
+            );
+            if let Some(value) = write.authored.clone().filter(|_| applied) {
+                let control = (write.module_id.clone(), write.key.clone());
+                self.authored.shift_remove(&control);
+                self.authored.insert(control, value);
             }
+            self.keep(SettledWrite { id, write, outcome });
         }
     }
 
@@ -155,24 +176,46 @@ impl OfflineRequests {
     }
 }
 
+/// What an offline render's timed writes settled, taken from its graph:
+/// the authored values to record, in the order they applied, and each
+/// write's settling when asked for.
+#[derive(Default)]
+pub(crate) struct OfflineSettled {
+    pub(crate) authored: IndexMap<(String, String), ControlValue>,
+    pub(crate) writes: Vec<SettledWrite>,
+}
+
 /// Receives what an offline render's `graph` settled since the last call
-/// (see [`OfflineRequests::settle`]) and takes each write's settling. With
-/// `stop`, or once a render failed (its drain reports nothing more), each
-/// write still waiting is settled refused first. The payloads the drain
-/// retired are freed once the lock is released, so a render waiting on it
-/// never waits on a free. Control thread.
-pub(crate) fn settle_offline(graph: &Mutex<SignalGraph>, stop: bool) -> Vec<SettledWrite> {
+/// (see [`OfflineRequests::settle`]) and takes the authored values that
+/// applied, and each write's settling too when `writes`. With `stop`, or
+/// once a render failed (its drain reports nothing more), each write still
+/// waiting is settled refused first. The payloads the drain retired are
+/// freed once the lock is released, so a render waiting on it never waits
+/// on a free. Control thread.
+pub(crate) fn settle_offline(
+    graph: &Mutex<SignalGraph>,
+    writes: bool,
+    stop: bool,
+) -> OfflineSettled {
     let (settled, retired) = {
         let mut graph = graph.lock().unwrap();
         let failed = graph.failed;
         let Some(offline) = graph.offline.as_mut() else {
-            return Vec::new();
+            return OfflineSettled::default();
         };
         offline.settle();
         if stop || failed {
             offline.stop();
         }
-        (offline.take_settled(), Arc::clone(&offline.payloads))
+        let settled = OfflineSettled {
+            authored: std::mem::take(&mut offline.authored),
+            writes: if writes {
+                offline.take_settled()
+            } else {
+                Vec::new()
+            },
+        };
+        (settled, Arc::clone(&offline.payloads))
     };
     retired.drain();
     settled

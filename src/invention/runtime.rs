@@ -327,6 +327,7 @@ impl RunningInvention {
             control_surfaces: self.control_surfaces.clone(),
             event_sink: self.event_sink.clone(),
             live: Some(self.live.clone()),
+            offline: None,
         }
     }
 
