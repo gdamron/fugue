@@ -396,7 +396,14 @@ impl RuntimeSnapshot {
                 chained: false,
             };
             let authored = options.authored_as(&authoring);
-            let submitted = if authoring.timed { &authored } else { options };
+            let submitted = if authoring.timed {
+                // Those applied before it are taken first, so no more wait
+                // to be recorded than may wait to apply.
+                self.settle_offline_authored();
+                &authored
+            } else {
+                options
+            };
             let queued = self.submit_transient(module_id, key, load, submitted)?;
             if queued.id.is_none() && !queued.lost {
                 self.settle_offline_authored();
@@ -606,6 +613,9 @@ impl RuntimeSnapshot {
         if let Some(live) = &self.live {
             live.adopt_landed();
         }
+        // Offline, the authored timed writes the render applied are
+        // recorded first, for the same reason.
+        self.settle_offline_authored();
         self.state.lock().unwrap().document()
     }
 }
@@ -621,6 +631,9 @@ impl RuntimeController {
             .graph
             .as_ref()
             .ok_or(GraphCommandError::AudioThreadStopped)?;
+        // The authored timed writes the render applied are recorded before
+        // the edit rewrites the document, as the daemon recorded them.
+        self.snapshot.settle_offline_authored();
         let mirrors = (
             &self.snapshot.control_surfaces,
             &*self.module_ports,

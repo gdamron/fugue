@@ -217,6 +217,28 @@ fn an_authored_timed_write_is_recorded_once_it_applies() {
 }
 
 #[test]
+fn an_authored_timed_write_to_an_event_control_is_timed_as_a_gesture() {
+    let mut engine = engine();
+    let reset = ControlWrite {
+        intent: ControlWriteIntent::Author,
+        timing: ControlTiming {
+            when: Some(ControlWhen::AtSample { sample: 7000 }),
+            ttl_ms: None,
+        },
+        ..ControlWrite::new("clock", "reset", ControlValue::Bool(true))
+    };
+    let [ack] = &engine.write_controls(&[reset]).unwrap()[..] else {
+        panic!("one entry");
+    };
+    assert_eq!(ack.state, Some(ControlRequestState::Pending));
+    render(&mut engine, AFTER);
+    let [settled] = &engine.take_settled_writes()[..] else {
+        panic!("settled once");
+    };
+    assert_eq!(settled.state, ControlRequestState::Applied);
+}
+
+#[test]
 fn a_write_waiting_as_the_piece_is_replaced_is_refused_and_never_plays() {
     let mut engine = engine();
     let at = ControlWhen::AtSample { sample: 10_000 };
@@ -326,8 +348,11 @@ fn an_authored_timed_write_is_recorded_before_one_made_after_it_applied() {
         intent: ControlWriteIntent::Author,
         ..ControlWrite::new("osc", "frequency", ControlValue::Number(440.0))
     };
-    let later: [&dyn Fn(&RenderEngine); 2] = [
+    let rebuild_440 = serde_json::json!({ "frequency": 440.0 });
+    let later: [&dyn Fn(&RenderEngine); 3] = [
         &|engine| drop(engine.apply_edits(&edits(set_440)).unwrap()),
+        // Rebuilt in place, with its config.
+        &|engine| (engine.add_module("osc", "oscillator", &rebuild_440)).unwrap(),
         &|engine| {
             drop(
                 engine
@@ -352,6 +377,21 @@ fn an_authored_timed_write_is_recorded_before_one_made_after_it_applied() {
         );
         assert_eq!(recorded_frequency(&engine), Some(440.0), "{n}");
     }
+}
+
+#[test]
+fn a_script_reading_the_document_sees_an_authored_timed_write_once_it_applies() {
+    let mut engine = engine();
+    render(&mut engine, LEAD_IN);
+    let at = ControlWhen::AtSample { sample: 7000 };
+    engine
+        .write_controls(&[timed(ControlWriteIntent::Author, at)])
+        .unwrap();
+    render(&mut engine, 10);
+    // Read as a script or agent reads it, with no engine call between.
+    let document = engine.snapshot().document().unwrap();
+    let osc = document.modules.iter().find(|m| m.id == "osc").unwrap();
+    assert_eq!(osc.config["frequency"].as_f64(), Some(330.0));
 }
 
 #[test]

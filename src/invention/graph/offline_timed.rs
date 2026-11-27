@@ -45,11 +45,12 @@ pub(crate) struct OfflineRequests {
     /// Timed writes settled and not yet taken, oldest first: the latest
     /// [`TIMED_WRITE_ROOM`], as many as may wait at once.
     settled: VecDeque<SettledWrite>,
-    /// The values authored timed writes applied and the document has yet
-    /// to record, by `(module_id, key)`, in the order they applied: the
-    /// last applied of each, so no more than the piece's controls, and
-    /// none lost to the cap on `settled`.
-    authored: IndexMap<(String, String), ControlValue>,
+    /// The authored timed writes that applied and the document has yet to
+    /// record, in the order they applied, none lost to the cap on
+    /// `settled`: no more than may wait at once, as each authored one is
+    /// submitted only once those before it were taken (see
+    /// `RuntimeSnapshot::record_control`).
+    authored: Vec<AuthoredWrite>,
 }
 
 /// A timed write waiting in an offline render.
@@ -66,6 +67,9 @@ pub(crate) struct OfflineWrite {
     /// write.
     pub(crate) authored: Option<ControlValue>,
 }
+
+/// An authored timed write that applied: its control and value.
+pub(crate) type AuthoredWrite = (String, String, ControlValue);
 
 /// A timed write an offline render settled.
 #[derive(Clone, Debug)]
@@ -106,7 +110,7 @@ pub(crate) fn offline_timed_requests(graph: &mut SignalGraph) {
         payloads,
         waiting: IndexMap::new(),
         settled: VecDeque::with_capacity(TIMED_WRITE_ROOM),
-        authored: IndexMap::new(),
+        authored: Vec::new(),
     }));
 }
 
@@ -145,9 +149,7 @@ impl OfflineRequests {
                 Outcome::Applied { .. } | Outcome::AppliedLate { .. }
             );
             if let Some(value) = write.authored.clone().filter(|_| applied) {
-                let control = (write.module_id.clone(), write.key.clone());
-                self.authored.shift_remove(&control);
-                self.authored.insert(control, value);
+                (self.authored).push((write.module_id.clone(), write.key.clone(), value));
             }
             self.keep(SettledWrite { id, write, outcome });
         }
@@ -181,7 +183,7 @@ impl OfflineRequests {
 /// write's settling when asked for.
 #[derive(Default)]
 pub(crate) struct OfflineSettled {
-    pub(crate) authored: IndexMap<(String, String), ControlValue>,
+    pub(crate) authored: Vec<AuthoredWrite>,
     pub(crate) writes: Vec<SettledWrite>,
 }
 

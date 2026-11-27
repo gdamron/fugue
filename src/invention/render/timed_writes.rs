@@ -13,16 +13,13 @@
 
 use std::collections::VecDeque;
 
-use indexmap::IndexMap;
-
 use super::RenderEngine;
 use crate::audio_thread::ControlLock;
-use crate::invention::graph::{settle_offline, OfflineSettled, SettledWrite};
+use crate::invention::graph::{settle_offline, AuthoredWrite, OfflineSettled, SettledWrite};
 use crate::invention::orchestration::RuntimeSnapshot;
 use crate::invention::publish::timed_write::TIMED_WRITE_ROOM;
 use crate::invention::runtime::control_timing::settled_as;
 use crate::rpc::ControlRequestSettled;
-use crate::ControlValue;
 
 /// The timed writes settled and not yet taken, oldest first: the latest
 /// [`TIMED_WRITE_ROOM`], as many as may wait at once.
@@ -84,17 +81,14 @@ impl RuntimeSnapshot {
         self.record_offline_authored(settle_offline(&graph, false, false).authored);
     }
 
-    /// Records `authored`, values authored timed writes applied, by
-    /// control, in the order they applied.
-    pub(crate) fn record_offline_authored(
-        &self,
-        authored: IndexMap<(String, String), ControlValue>,
-    ) {
+    /// Records `authored`, the authored timed writes that applied, in the
+    /// order they applied.
+    pub(crate) fn record_offline_authored(&self, authored: Vec<AuthoredWrite>) {
         if authored.is_empty() {
             return;
         }
         let mut state = self.state.lock().unwrap();
-        for ((module_id, key), value) in authored {
+        for (module_id, key, value) in authored {
             state.record_authored_control(&module_id, &key, &value);
         }
     }
