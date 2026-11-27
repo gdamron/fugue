@@ -9,7 +9,7 @@
 use super::timed_edit_tests::{daemon, edits, next_bar, unnumbered, whens, ADD, SWAP};
 use super::timed_write_tests::{daemon_render, engine, render, AFTER, BLOCK, LEAD_IN};
 use crate::alloc_counter::allocator_events;
-use crate::rpc::RequestState;
+use crate::rpc::{ControlRequestState, RequestState};
 use crate::{ControlValue, ControlWrite, ControlWriteIntent};
 
 /// Adds a voice an octave down and retunes it, and retunes the sine the
@@ -102,11 +102,15 @@ fn cancelled_it_plays_none_of_its_writes() {
     engine.apply_edits(&edits(SWAP)).unwrap();
     let cancelled = engine.request_status(&queued.id).unwrap();
     assert_eq!(cancelled.state, RequestState::Cancelled);
+    // Its write to the sine is refused with it at the next block, not
+    // left waiting for the downbeat it would have landed on.
+    assert_eq!(render(&mut engine, 1), daemon_render(&pump, 1));
+    let settled = engine.take_settled_writes();
+    let write = settled.iter().find(|s| s.module_id == "osc" && s.key == "frequency");
+    let write = write.expect("its write settled");
+    assert_eq!(write.state, ControlRequestState::Refused, "{write:?}");
     assert_eq!(render(&mut engine, AFTER), daemon_render(&pump, AFTER));
-    assert_eq!(
-        engine.get_control("osc", "frequency").unwrap(),
-        220.0.into()
-    );
+    assert_eq!(engine.get_control("osc", "frequency").unwrap(), 220.0.into());
     assert_eq!(recorded(engine.document(), "osc"), Some(220.0));
     assert_eq!(recorded(engine.document(), "low"), None);
 }
