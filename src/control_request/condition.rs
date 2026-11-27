@@ -198,6 +198,17 @@ impl Condition {
         }
     }
 
+    /// [`Self::kept`] for a write that applied as it was made, on a render
+    /// no audio thread runs apart from (an offline render applies an
+    /// untimed write at once): met as edit `edit` lands, and replaced as
+    /// a later copy over the same edit replaces it.
+    pub(crate) fn kept_applied(edit: RequestId) -> Self {
+        Self {
+            kept: true,
+            ..Self::all(&[Predicate::Applied(edit)]).expect("one part")
+        }
+    }
+
     /// The timed edit a kept copy ([`Self::kept`]) is kept over.
     pub(crate) fn kept_over(&self) -> Option<RequestId> {
         match self.parts[0] {

@@ -43,6 +43,7 @@ mod authored;
 mod change;
 mod contested;
 mod held;
+mod offline_chain;
 mod offline_timed;
 mod pending;
 mod policy;
@@ -71,6 +72,7 @@ pub(crate) use change::{
     edit_offline, kept_by_swap, BuiltModule, GraphChange, PreparedChange, TopologyMirror,
 };
 pub(crate) use contested::Contested;
+pub(crate) use offline_chain::keep_offline_authored;
 pub(crate) use offline_timed::{
     adopt_offline, queue_offline, reconcile_offline, OfflineAdoption, QueueRefused,
 };

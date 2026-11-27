@@ -73,6 +73,10 @@ pub(crate) struct OfflineWrite {
     /// The request generation it was resolved against (see
     /// `SignalGraph::request_generation`).
     pub(crate) generation: u64,
+    /// Whether its settling is reported (see `take_settled`): a write
+    /// chained to a timed edit is not, as a live graph announces none, and
+    /// is followed through the edit's status instead.
+    pub(crate) announced: bool,
 }
 
 /// An authored timed write that applied: its control and value, and the
@@ -162,7 +166,9 @@ impl OfflineRequests {
                 let control = (write.module_id.clone(), write.key.clone());
                 (self.authored).push((control.0, control.1, value, write.generation));
             }
-            self.keep(SettledWrite { id, write, outcome });
+            if write.announced {
+                self.keep(SettledWrite { id, write, outcome });
+            }
         }
     }
 
@@ -173,7 +179,9 @@ impl OfflineRequests {
         self.cancel_edit(|| CancelCause::Stopping);
         for (id, write) in std::mem::take(&mut self.waiting) {
             let outcome = Outcome::Refused(Refusal::Stopped);
-            self.keep(SettledWrite { id, write, outcome });
+            if write.announced {
+                self.keep(SettledWrite { id, write, outcome });
+            }
         }
     }
 
@@ -185,6 +193,9 @@ impl OfflineRequests {
         let Some(id) = self.edits.cancel(cause) else {
             return false;
         };
+        // The render would refuse the edit by its fate anyway, and its
+        // writes with it; this frees their slots as the live publisher
+        // does, and is what breaks a chain whose edit was never queued.
         self.sender.cancelled(id);
         true
     }

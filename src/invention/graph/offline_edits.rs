@@ -31,6 +31,9 @@ pub(crate) struct WaitingEdit {
     /// The request generation it was queued against, which it replaces as
     /// it lands (see `SignalGraph::request_generation`).
     pub(crate) replaces: u64,
+    /// The controls of modules it keeps that it writes as it lands (see
+    /// `publish::offline_chain`).
+    pub(crate) chained: Vec<(String, String)>,
 }
 
 /// A timed edit the render landed, to adopt as the render settles: after

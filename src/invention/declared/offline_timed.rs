@@ -93,6 +93,7 @@ impl DeclaredSurface {
             beat,
             authored,
             generation: target.generation,
+            announced: true,
         };
         offline.submitted(id, write);
         Ok(Queued {

@@ -402,17 +402,18 @@ impl RuntimeSnapshot {
                 chained: false,
             };
             let authored = options.authored_as(&authoring);
-            let submitted = if authoring.timed {
+            if authoring.timed {
                 // Those applied before it are taken first, so no more wait
                 // to be recorded than may wait to apply.
                 self.settle_offline_authored();
-                &authored
-            } else {
-                options
-            };
-            let queued = self.submit_transient(module_id, key, load, submitted)?;
+            }
+            // Authored, so it is kept over a timed edit that writes the
+            // control as it lands (see `publish::offline_chain`).
+            let queued = self.submit_transient(module_id, key, load, &authored)?;
             if !authoring.timed {
-                self.reconcile_offline_edit(module_id, key);
+                // One kept over the timed edit, or lost, leaves it waiting.
+                let spared = queued.safe.is_some() || queued.lost;
+                self.reconcile_offline_edit((module_id, key), spared);
             }
             if queued.id.is_none() && !queued.lost {
                 self.settle_offline_authored();

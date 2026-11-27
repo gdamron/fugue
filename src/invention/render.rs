@@ -560,6 +560,8 @@ mod retarget_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod timed_batch_write_tests;
+#[cfg(test)]
 mod timed_edit_race_tests;
 #[cfg(test)]
 mod timed_edit_tests;
