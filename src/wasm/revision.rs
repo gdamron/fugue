@@ -6,7 +6,7 @@
 use wasm_bindgen::prelude::*;
 
 use super::{rpc_error_value, WasmFugueEngine};
-use crate::rpc::{RpcCommand, RpcError, RpcErrorCode, RuntimeRevision};
+use crate::rpc::{EditTiming, RpcCommand, RpcError, RpcErrorCode, RuntimeRevision};
 use crate::ControlWrite;
 
 #[wasm_bindgen(js_class = FugueEngine)]
@@ -14,42 +14,36 @@ impl WasmFugueEngine {
     #[wasm_bindgen(js_name = advancesRevision)]
     /// Whether a host advances its revision once a call has run, by the
     /// daemon's rule: `command` is `set_control`, `set_controls` or
-    /// `apply_edits` (an untimed batch), `writes_json` the call's control
-    /// writes as JSON (`[]` for an edit batch), and `committed` whether it
-    /// made its change. A control write advances once when one of its
-    /// writes authors (the default intent), never when all perform, and not
-    /// when it was refused; an edit batch advances when it commits. Which
-    /// writes the document recorded is `documentWithEpoch`'s to say.
+    /// `apply_edits`, `writes_json` the call's control writes as JSON (`[]`
+    /// for an edit batch), `committed` whether it made its change, and
+    /// `timing_json` an edit batch's `{"when", "ttl_ms"}` when it is timed
+    /// (`null` or omitted when it is not). A control write advances once
+    /// when one of its writes authors (the default intent), never when all
+    /// perform, and not when it was refused; an untimed edit batch advances
+    /// when it commits, and a timed one as it is adopted, not as it is
+    /// queued. Which writes the document recorded is `documentWithEpoch`'s
+    /// to say.
     ///
     /// It takes the call's parts rather than a whole daemon command, so the
     /// engine carries no parser for commands it never runs. Another command,
-    /// or writes that do not parse, throw the daemon's error as JSON text,
+    /// parts that do not fit the call (see [`RpcCommand::revision_call`]),
+    /// or JSON that does not parse throw the daemon's error as JSON text,
     /// code `invalid_request`.
     pub fn advances_revision(
         command: &str,
         writes_json: &str,
         committed: bool,
+        timing_json: Option<String>,
     ) -> Result<bool, JsValue> {
         let writes: Vec<ControlWrite> = serde_json::from_str(writes_json)
             .map_err(|err| invalid(format!("invalid control writes JSON: {err}")))?;
-        let command = match (command, writes.as_slice()) {
-            ("set_control", [write]) => RpcCommand::SetControl {
-                module_id: write.module_id.clone(),
-                key: write.key.clone(),
-                value: write.value.clone(),
-                intent: write.intent,
-                source: write.source,
-                priority: write.priority,
-                timing: write.timing.clone(),
-            },
-            ("set_control", _) => return Err(invalid("a set_control makes one write".to_string())),
-            ("set_controls", _) => RpcCommand::SetControls { writes },
-            ("apply_edits", _) => RpcCommand::ApplyEdits {
-                edits: Vec::new(),
-                timing: Default::default(),
-            },
-            (other, _) => return Err(invalid(format!("no revision rule for `{other}` here"))),
+        let timing: Option<EditTiming> = match timing_json.as_deref() {
+            Some(json) => serde_json::from_str(json)
+                .map_err(|err| invalid(format!("invalid edit timing JSON: {err}")))?,
+            None => None,
         };
+        let command = RpcCommand::revision_call(command, writes, timing.unwrap_or_default())
+            .map_err(|err| rpc_error_value(&err))?;
         Ok(command.advances_revision_after(committed))
     }
 

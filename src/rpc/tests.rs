@@ -15,6 +15,7 @@ mod pins;
 mod recovery;
 mod request;
 mod response;
+mod revision_call;
 mod scope;
 mod snapshot;
 mod spectrogram;
