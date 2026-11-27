@@ -261,28 +261,52 @@ fn a_write_waiting_as_the_piece_is_replaced_is_refused_and_never_plays() {
 #[test]
 fn a_write_after_another_request_refuses_its_batch_with_nothing_written() {
     let mut engine = engine();
-    let after = ControlWhen::AfterRequest {
-        request: "1".into(),
-        offset_samples: 0,
-    };
-    let untimed = ControlWrite::performed("osc", "frequency", ControlValue::Number(440.0));
-    let writes = [untimed, timed(ControlWriteIntent::Perform, after)];
-    let error = engine.write_controls(&writes).unwrap_err();
-    let refusal = error.write.expect("names the write");
-    assert_eq!(refusal.index, 1);
-    assert_eq!(refusal.reason, ControlWriteReason::InvalidTiming);
-    assert!(
-        refusal.message.contains("after_request"),
-        "{}",
-        refusal.message
-    );
-    assert!(refusal.message.contains("nothing was written"));
+    // Whatever request it names, known or not.
+    for request in ["1", "not-a-request"] {
+        let after = ControlWhen::AfterRequest {
+            request: request.into(),
+            offset_samples: 0,
+        };
+        let untimed = ControlWrite::performed("osc", "frequency", ControlValue::Number(440.0));
+        let writes = [untimed, timed(ControlWriteIntent::Perform, after)];
+        let error = engine.write_controls(&writes).unwrap_err();
+        let refusal = error.write.expect("names the write");
+        assert_eq!(refusal.index, 1);
+        assert_eq!(refusal.reason, ControlWriteReason::InvalidTiming);
+        assert!(
+            refusal.message.contains("after_request"),
+            "{}",
+            refusal.message
+        );
+        assert!(refusal.message.contains("nothing was written"));
+    }
     assert_eq!(
         engine.get_control("osc", "frequency").unwrap(),
         220.0.into()
     );
     render(&mut engine, 10);
     assert!(engine.take_settled_writes().is_empty());
+}
+
+#[test]
+fn a_write_before_one_after_another_request_is_refused_first() {
+    let engine = engine();
+    let unplaced = ControlWhen::NextBar {
+        beats_per_bar: Some(4.0),
+        clock: Some("no_such_clock".into()),
+    };
+    let after = ControlWhen::AfterRequest {
+        request: "1".into(),
+        offset_samples: 0,
+    };
+    let writes = [
+        timed(ControlWriteIntent::Perform, unplaced),
+        timed(ControlWriteIntent::Perform, after),
+    ];
+    let error = engine.write_controls(&writes).unwrap_err();
+    let refusal = error.write.expect("names the write");
+    assert_eq!(refusal.index, 0, "{}", refusal.message);
+    assert_eq!(refusal.reason, ControlWriteReason::InvalidTiming);
 }
 
 #[test]

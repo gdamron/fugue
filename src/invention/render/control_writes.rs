@@ -11,7 +11,7 @@ use crate::invention::runtime::control_timing::{landing, timing_time, ttl_sample
 use crate::invention::runtime::GraphCommandError;
 use crate::invention::write_rule::CheckedWrite;
 use crate::rpc::{
-    AppliedControl, ControlRequestState, ControlWriteIntent, ControlWriteReason,
+    AppliedControl, ControlRequestState, ControlWhen, ControlWriteIntent, ControlWriteReason,
     ControlWriteRefusal, RequestLanding, RpcError,
 };
 use crate::ControlWrite;
@@ -39,10 +39,18 @@ impl RenderEngine {
     /// written.
     pub fn write_controls(&self, writes: &[ControlWrite]) -> Result<Vec<AppliedControl>, RpcError> {
         // The daemon's checks first, so a batch the daemon would refuse is
-        // refused at the same write, with the same message.
+        // refused at the same write, with the same message, up to one timed
+        // after another request: this render can follow none, whatever
+        // request it names, so it is refused as such.
         let snapshot = self.snapshot();
-        let checked = snapshot.check_writes(writes)?;
-        self.check_write_times(&snapshot, writes)?;
+        let after = (writes.iter())
+            .position(|write| matches!(write.timing.when, Some(ControlWhen::AfterRequest { .. })));
+        let prefix = &writes[..after.unwrap_or(writes.len())];
+        let checked = snapshot.check_writes(prefix)?;
+        self.check_write_times(&snapshot, prefix)?;
+        if let Some(index) = after {
+            return Err(timing_refused(writes, index, AFTER_UNTIMED.into()));
+        }
         self.settle_timed_writes();
         let mut controls = Vec::with_capacity(writes.len());
         for (write, checked) in writes.iter().zip(checked) {
