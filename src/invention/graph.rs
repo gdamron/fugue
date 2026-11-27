@@ -73,7 +73,8 @@ pub(crate) use compile::{compile_topology, CompiledTopology, TopologyFacts};
 pub use master::MasterLevels;
 pub(crate) use master::MasterObservers;
 pub(crate) use offline_timed::{
-    offline_timed_requests, settle_offline, OfflineWrite, SettledWrite,
+    offline_timed_requests, settle_offline, AuthoredWrite, OfflineSettled, OfflineWrite,
+    SettledWrite,
 };
 pub(crate) use publication::{
     vacant, AudioLink, Fate, Handover, InputWrite, Publication, SurvivorRemap, MAX_INPUT_PORT_NAME,

@@ -478,6 +478,7 @@ fn a_clockless_graph_cancels_an_edit_rather_than_keep_a_write_over_it() {
         control_surfaces: Arc::clone(&live.control_surfaces),
         event_sink: Default::default(),
         live: Some(live.clone()),
+        offline: None,
     };
     let author = crate::ControlWriteIntent::Author;
     for frequency in [660.0, 700.0] {

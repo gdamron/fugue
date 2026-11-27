@@ -169,7 +169,7 @@ mod surface;
 #[cfg(test)]
 pub(crate) use offline::{add_offline, remove_offline};
 pub(crate) use offline::{bind_offline, offline_route, retire_offline};
-pub(crate) use offline_timed::{AFTER_UNTIMED, AUTHORED_UNTIMED};
+pub(crate) use offline_timed::AFTER_UNTIMED;
 use options::Write;
 pub(crate) use options::{Checked, Queued, Resolved, WriteOptions, STALE};
 

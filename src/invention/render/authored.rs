@@ -15,6 +15,7 @@ impl RenderEngine {
     /// A performed write, a write to an event control and one that failed
     /// as it was made record nothing.
     pub fn document_with_epoch(&self) -> (Option<Invention>, u64) {
+        self.settle_timed_writes();
         let state = self.state.lock().unwrap();
         (state.document(), state.authored_epoch)
     }

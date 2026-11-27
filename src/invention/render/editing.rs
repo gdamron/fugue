@@ -83,11 +83,16 @@ impl RenderEngine {
             .ok_or_else(|| GraphCommandError::ControlError("no invention loaded".to_string()))
     }
 
+    /// [`Self::edit_landing`] of an edit made now: the authored timed
+    /// writes the last renders applied are recorded first, before the
+    /// edit rewrites the document, as the daemon recorded them. Control
+    /// thread: a timed edit landing in a render is not made here.
     pub(super) fn edit(
         &self,
         graph: &Arc<Mutex<SignalGraph>>,
         edit: impl FnOnce(&mut GraphChange) -> Result<(), GraphCommandError>,
     ) -> Result<Committed, GraphCommandError> {
+        self.settle_timed_writes();
         self.edit_landing(graph, false, edit)
     }
 

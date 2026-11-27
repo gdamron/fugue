@@ -25,6 +25,7 @@ pub(super) fn front_door(rig: &Rig) -> RuntimeSnapshot {
         control_surfaces: Arc::clone(&rig.live.control_surfaces),
         event_sink: Default::default(),
         live: Some(rig.live.clone()),
+        offline: None,
     }
 }
 

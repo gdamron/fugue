@@ -2,8 +2,8 @@
 //! with nothing written, as a daemon's `SetControls` is.
 
 use super::RenderEngine;
-use crate::invention::declared::{WriteOptions, AFTER_UNTIMED, AUTHORED_UNTIMED};
-use crate::invention::orchestration::{ControlAck, RuntimeSnapshot};
+use crate::invention::declared::{WriteOptions, AFTER_UNTIMED};
+use crate::invention::orchestration::ControlAck;
 use crate::invention::publish::timed_write::{self, BatchTime};
 use crate::invention::publish::TopologyMirror;
 use crate::invention::runtime::acks::source;
@@ -11,8 +11,8 @@ use crate::invention::runtime::control_timing::{landing, timing_time, ttl_sample
 use crate::invention::runtime::GraphCommandError;
 use crate::invention::write_rule::CheckedWrite;
 use crate::rpc::{
-    AppliedControl, ControlRequestState, ControlWhen, ControlWriteIntent, ControlWriteReason,
-    ControlWriteRefusal, RequestLanding, RpcError,
+    AppliedControl, ControlRequestState, ControlWhen, ControlWriteReason, ControlWriteRefusal,
+    RequestLanding, RpcError,
 };
 use crate::ControlWrite;
 
@@ -34,8 +34,7 @@ impl RenderEngine {
     /// sample, or on its beat as the render's clock plays it, as later
     /// renders reach it (see [`Self::take_settled_writes`]). Its `ttl_ms`
     /// bounds how late it may apply, as the daemon's does. One timed after
-    /// another request (`after_request`), or an authored one timed (only a
-    /// `perform` write can be timed here yet), refuses the batch, nothing
+    /// another request (`after_request`) refuses the batch, nothing
     /// written.
     pub fn write_controls(&self, writes: &[ControlWrite]) -> Result<Vec<AppliedControl>, RpcError> {
         // The daemon's checks first, so a batch the daemon would refuse is
@@ -47,7 +46,7 @@ impl RenderEngine {
             .position(|write| matches!(write.timing.when, Some(ControlWhen::AfterRequest { .. })));
         let prefix = &writes[..after.unwrap_or(writes.len())];
         let checked = snapshot.check_writes(prefix)?;
-        self.check_write_times(&snapshot, prefix)?;
+        self.check_write_times(prefix)?;
         if let Some(index) = after {
             return Err(timing_refused(writes, index, AFTER_UNTIMED.into()));
         }
@@ -76,21 +75,7 @@ impl RenderEngine {
     /// Whether each timed write of `writes` would be placed now, as the
     /// daemon checks a batch's before making any: the first that would
     /// not refuses the batch.
-    fn check_write_times(
-        &self,
-        snapshot: &RuntimeSnapshot,
-        writes: &[ControlWrite],
-    ) -> Result<(), RpcError> {
-        // One to an event control is performed whatever its intent, as
-        // `RuntimeSnapshot::submit_control` makes it.
-        let authored = writes.iter().position(|write| {
-            write.intent == ControlWriteIntent::Author
-                && write.timing.when.is_some()
-                && !snapshot.is_event(&write.module_id, &write.key)
-        });
-        if let Some(index) = authored {
-            return Err(timing_refused(writes, index, AUTHORED_UNTIMED.into()));
-        }
+    fn check_write_times(&self, writes: &[ControlWrite]) -> Result<(), RpcError> {
         let times: Vec<BatchTime<'_>> = (writes.iter().enumerate())
             .filter_map(|(index, write)| {
                 let time = timing_time(&write.timing).ok()??;

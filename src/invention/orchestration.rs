@@ -1,5 +1,5 @@
 use crate::control_request::{RequestId, Source};
-use crate::invention::declared::{Queued, WriteOptions, AUTHORED_UNTIMED};
+use crate::invention::declared::{Queued, WriteOptions};
 use crate::invention::graph::SignalGraph;
 use crate::invention::publish::{edge, edit_offline, Authoring, Committed, GraphChange, LiveGraph};
 use crate::invention::runtime::{control_timing, ControlSurfaceInstance, GraphCommandError};
@@ -124,6 +124,10 @@ pub struct RuntimeSnapshot {
     /// The live graph, whose request log counts the writes that reach a
     /// module without a request. `None` offline.
     pub(crate) live: Option<LiveGraph>,
+    /// An offline render's graph, whose timed writes that applied are
+    /// recorded before an authored write made now (see
+    /// `render::timed_writes`). `None` live.
+    pub(crate) offline: Option<std::sync::Weak<Mutex<SignalGraph>>>,
 }
 
 /// Cloneable mutation handle used by orchestration hosts and external APIs.
@@ -379,18 +383,34 @@ impl RuntimeSnapshot {
         let value = self.coerced(module_id, key, value)?;
         let (load, origin) = self.asset_to_load((module_id, key), &value)?;
         let Some(live) = &self.live else {
-            // Offline, only a live gesture can be timed (see
-            // `render::control_writes`).
-            if options.time.is_some() {
-                return Err(GraphCommandError::ControlError(AUTHORED_UNTIMED.into()));
-            }
-            let queued = self.submit_transient(module_id, key, load, options)?;
-            // Offline, a write applies as it is made, unless it lost.
-            if !queued.lost {
+            // Offline, an untimed write applies as it is made, unless it
+            // lost, and is recorded now, after the timed ones that applied
+            // before it; a timed one carries its value, recorded as it
+            // applies, once its render settles it (see `render::timed_writes`).
+            let authoring = Authoring {
+                value,
+                origin,
+                safe: None,
+                then: Vec::new(),
+                timed: options.time.is_some(),
+                chained: false,
+            };
+            let authored = options.authored_as(&authoring);
+            let submitted = if authoring.timed {
+                // Those applied before it are taken first, so no more wait
+                // to be recorded than may wait to apply.
+                self.settle_offline_authored();
+                &authored
+            } else {
+                options
+            };
+            let queued = self.submit_transient(module_id, key, load, submitted)?;
+            if queued.id.is_none() && !queued.lost {
+                self.settle_offline_authored();
                 let mut state = self.state.lock().unwrap();
-                state.record_authored_control(module_id, key, &value);
+                state.record_authored_control(module_id, key, &authoring.value);
             }
-            return Ok(ControlAck::new(value, &queued));
+            return Ok(ControlAck::new(authoring.value, &queued));
         };
         // Submitted as a request, the write is recorded in the document
         // once it applies, in the order the audio thread applied it (see
@@ -593,6 +613,9 @@ impl RuntimeSnapshot {
         if let Some(live) = &self.live {
             live.adopt_landed();
         }
+        // Offline, the authored timed writes the render applied are
+        // recorded first, for the same reason.
+        self.settle_offline_authored();
         self.state.lock().unwrap().document()
     }
 }
@@ -608,6 +631,9 @@ impl RuntimeController {
             .graph
             .as_ref()
             .ok_or(GraphCommandError::AudioThreadStopped)?;
+        // The authored timed writes the render applied are recorded before
+        // the edit rewrites the document, as the daemon recorded them.
+        self.snapshot.settle_offline_authored();
         let mirrors = (
             &self.snapshot.control_surfaces,
             &*self.module_ports,
