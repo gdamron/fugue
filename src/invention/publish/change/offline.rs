@@ -16,14 +16,14 @@
 use indexmap::IndexMap;
 use std::sync::{Arc, Mutex};
 
-use super::{GraphChange, PreparedChange, TopologyMirror};
+use super::{BuiltModule, GraphChange, PreparedChange, TopologyMirror};
 use crate::invention::declared::offline_route;
-use crate::invention::graph::SignalGraph;
+use crate::invention::graph::{Publication, SignalGraph};
 use crate::invention::orchestration::ModulePorts;
 use crate::invention::publish::{connection_info, rebind, Committed};
 use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
-use crate::modules::control_scheduler::SurfaceDirectory;
+use crate::modules::control_scheduler::{SurfaceDirectory, Written};
 
 /// The runtime mirrors an offline edit commits with the graph: the
 /// control-surface directory, module ports and runtime state.
@@ -52,6 +52,59 @@ pub(crate) fn edit_offline(
 ) -> Result<Committed, GraphCommandError> {
     let (directory, module_ports, state) = mirrors;
     let mut locked = graph.lock().unwrap();
+    let (prepared, discarded) = prepare_offline(&mut locked, directory, edit);
+    let prepared = match prepared {
+        Ok(Some(prepared)) => prepared,
+        Ok(None) => return Ok(Committed::default()),
+        Err(error) => {
+            drop(locked);
+            drop(discarded);
+            return Err(error);
+        }
+    };
+    let OfflinePrepared {
+        publication,
+        prepared,
+        written,
+        previous,
+    } = prepared;
+    let publication = locked.install_offline(publication, landing);
+    for schedule in written {
+        schedule.record();
+    }
+    let committed = commit_mirrors(graph, &previous, prepared, (directory, module_ports, state));
+    drop(locked);
+    // What the change displaced drops off the lock.
+    drop(publication);
+    drop(discarded);
+    Ok(committed)
+}
+
+/// A change prepared against an offline render's graph: compiled, its
+/// handovers packed and its survivors mapped onto the modules running, to
+/// install in place.
+pub(crate) struct OfflinePrepared {
+    pub(crate) publication: Box<Publication>,
+    /// The change, its publication taken.
+    pub(crate) prepared: PreparedChange,
+    /// The schedules it hands surviving schedulers, to record once it is
+    /// committed.
+    pub(crate) written: Vec<Written>,
+    /// The modules running as it was prepared, in order.
+    pub(crate) previous: Vec<String>,
+}
+
+/// Prepares `edit` against `locked`, an offline render's graph, as
+/// [`edit_offline`] makes it: `None` when it edits nothing. Returns with it
+/// what the change built and set aside, to drop off the graph's lock.
+pub(crate) fn prepare_offline(
+    locked: &mut SignalGraph,
+    directory: &SurfaceDirectory,
+    edit: impl FnOnce(&mut GraphChange) -> Result<(), GraphCommandError>,
+) -> (
+    Result<Option<OfflinePrepared>, GraphCommandError>,
+    Vec<BuiltModule>,
+) {
     let mut mirror = TopologyMirror::of(&locked.modules, &locked.edges);
     mirror.table_ramps = locked.fit_table_ramps();
     let mut change = GraphChange::new(0, mirror, directory.clone(), locked.block_size);
@@ -67,14 +120,10 @@ pub(crate) fn edit_offline(
     });
     let (mut prepared, written) = match prepared {
         Ok(prepared) => prepared,
-        Err(error) => {
-            drop(locked);
-            drop(discarded);
-            return Err(error);
-        }
+        Err(error) => return (Err(error), discarded),
     };
     let Some(mut publication) = prepared.publication.take() else {
-        return Ok(Committed::default());
+        return (Ok(None), discarded);
     };
     publication.map_survivors(locked.modules.keys().map(String::as_str));
     // A render that follows notes taps the new topology, as a live
@@ -82,17 +131,14 @@ pub(crate) fn edit_offline(
     if let Some(keys) = &locked.note_keys {
         publication.note_taps = Some(keys.taps(&prepared.mirror));
     }
-    let previous: Vec<String> = locked.modules.keys().cloned().collect();
-    let publication = locked.install_offline(publication, landing);
-    for schedule in written {
-        schedule.record();
-    }
-    let committed = commit_mirrors(graph, &previous, prepared, (directory, module_ports, state));
-    drop(locked);
-    // What the change displaced drops off the lock.
-    drop(publication);
-    drop(discarded);
-    Ok(committed)
+    let previous = locked.modules.keys().cloned().collect();
+    let prepared = OfflinePrepared {
+        publication,
+        prepared,
+        written,
+        previous,
+    };
+    (Ok(Some(prepared)), discarded)
 }
 
 /// Commits the runtime mirrors to `prepared`, now installed in `graph` in
@@ -100,7 +146,7 @@ pub(crate) fn edit_offline(
 /// does for a published change: surfaces of removed and replaced modules
 /// retire, built modules' surfaces route to the graph, and the module
 /// ports and runtime state follow the new topology.
-fn commit_mirrors(
+pub(in crate::invention::publish) fn commit_mirrors(
     graph: &Arc<Mutex<SignalGraph>>,
     previous: &[String],
     prepared: PreparedChange,

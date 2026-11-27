@@ -22,7 +22,7 @@ use super::watch::{condition_of, Part};
 use super::{authored, rebind};
 use super::{
     publisher, Committed, DocumentStep, LiveGraph, Mirrors, PendingLog, PreparedChange, Publisher,
-    Refused,
+    Refused, TopologyMirror,
 };
 use crate::control_request::{BeatSpec, BeatTime, Outcome, Refusal, RequestId, When};
 use crate::invention::audio_assets;
@@ -246,50 +246,71 @@ impl LiveGraph {
         time: EditTime<'_>,
     ) -> Result<(When, Option<LoggedBeat>), GraphCommandError> {
         let control = GraphCommandError::ControlError;
-        let state = self.state.lock().unwrap();
-        let followed = |id: &String| {
-            let module_type = state.modules.get(id).map(|info| info.module_type.as_str());
-            module_type.is_some_and(|t| FOLLOWED_UP.contains(&t))
-        };
         let mirror = publisher.mirror();
-        let gone = mirror
-            .modules
-            .keys()
-            .filter(|id| !prepared.mirror.modules.contains_key(*id));
-        let builds = |module: &BuiltModule| FOLLOWED_UP.contains(&module.info.module_type.as_str());
-        if gone.chain(prepared.built.keys()).any(followed) || prepared.built.values().any(builds) {
-            let message = "A timed edit cannot add or remove a code or agent module yet";
-            return Err(control(message.into()));
-        }
-        drop(state);
-        let beat = |clock: u32, spec: BeatSpec| {
-            let id = mirror.modules.get_index(clock as usize).map(|(id, _)| id);
-            let when = When::Beat(BeatTime {
-                clock,
-                spec,
-                ramp: None,
-            });
-            (when, id.map(|id| logged_beat(id, spec)))
+        refuse_followed(&self.state.lock().unwrap(), mirror, prepared)?;
+        let EditTime::Condition(parts) = time else {
+            return edit_when(mirror, time);
         };
-        Ok(match time {
-            EditTime::AtSample(sample) => (When::AtSample(sample), None),
-            EditTime::AfterSamples(samples) => (When::AfterSamples(samples), None),
-            EditTime::Beat { clock, spec } => beat(publisher.beat_clock(clock, Some(clock))?, spec),
-            EditTime::BeatOf { module, spec } => beat(publisher.beat_clock(module, None)?, spec),
-            EditTime::FirstClock(spec) => beat(publisher.first_clock()?, spec),
-            EditTime::Condition(parts) => {
-                if self.requests.watchers_full(false) {
-                    let full = "Too many requests wait on a condition; try again once some apply";
-                    return Err(control(full.into()));
-                }
-                let surfaces = self.control_surfaces.lock().unwrap();
-                (
-                    When::Condition(condition_of(mirror, &surfaces, parts)?),
-                    None,
-                )
-            }
-        })
+        if self.requests.watchers_full(false) {
+            let full = "Too many requests wait on a condition; try again once some apply";
+            return Err(control(full.into()));
+        }
+        let surfaces = self.control_surfaces.lock().unwrap();
+        let condition = condition_of(mirror, &surfaces, parts)?;
+        Ok((When::Condition(condition), None))
     }
+}
+
+/// Refuses `prepared`, a change to the graph `running` mirrors, when it
+/// adds, removes or rebuilds a module that runs a script or an agent
+/// (`state` names the running ones' types): a timed edit cannot start or
+/// stop one as it lands.
+pub(super) fn refuse_followed(
+    state: &RuntimeState,
+    running: &TopologyMirror,
+    prepared: &PreparedChange,
+) -> Result<(), GraphCommandError> {
+    let followed = |id: &String| {
+        let module_type = state.modules.get(id).map(|info| info.module_type.as_str());
+        module_type.is_some_and(|t| FOLLOWED_UP.contains(&t))
+    };
+    let gone = (running.modules.keys()).filter(|id| !prepared.mirror.modules.contains_key(*id));
+    let builds = |module: &BuiltModule| FOLLOWED_UP.contains(&module.info.module_type.as_str());
+    if gone.chain(prepared.built.keys()).any(followed) || prepared.built.values().any(builds) {
+        let message = "A timed edit cannot add or remove a code or agent module yet";
+        return Err(GraphCommandError::ControlError(message.into()));
+    }
+    Ok(())
+}
+
+/// The request time `time`, any but a condition, resolves to on the graph
+/// `mirror` describes, with its beat for the ledger when it is timed in
+/// beats: a beat counts on the clock it names, the clock its module counts
+/// on, or the first clock.
+pub(super) fn edit_when(
+    mirror: &TopologyMirror,
+    time: EditTime<'_>,
+) -> Result<(When, Option<LoggedBeat>), GraphCommandError> {
+    let beat = |clock: u32, spec: BeatSpec| {
+        let id = mirror.modules.get_index(clock as usize).map(|(id, _)| id);
+        let when = When::Beat(BeatTime {
+            clock,
+            spec,
+            ramp: None,
+        });
+        (when, id.map(|id| logged_beat(id, spec)))
+    };
+    Ok(match time {
+        EditTime::AtSample(sample) => (When::AtSample(sample), None),
+        EditTime::AfterSamples(samples) => (When::AfterSamples(samples), None),
+        EditTime::Beat { clock, spec } => beat(mirror.beat_clock(clock, Some(clock))?, spec),
+        EditTime::BeatOf { module, spec } => beat(mirror.beat_clock(module, None)?, spec),
+        EditTime::FirstClock(spec) => beat(mirror.first_clock()?, spec),
+        EditTime::Condition(_) => {
+            let message = "This edit cannot be timed on a condition";
+            return Err(GraphCommandError::ControlError(message.into()));
+        }
+    })
 }
 
 /// Adopts the timed edit the audio thread landed, if any, under

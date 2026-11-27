@@ -3,7 +3,7 @@
 //!
 //! Worked out on a control thread each time a topology is compiled for
 //! publication, never on the audio thread. A front door resolves the clock
-//! before it submits ([`Publisher::beat_clock`]), and the request carries it
+//! before it submits ([`TopologyMirror::beat_clock`]), and the request carries it
 //! as a named clock ([`BeatTime::clock`]). Later graph changes recompute the
 //! context, but a pending request keeps the clock it resolved against, and
 //! is refused (`TimelineGone`) if that clock goes away.
@@ -28,7 +28,7 @@
 //!   clocks, it is the first of them, enclosed, and an unnamed request is
 //!   refused. With no clock at all there is none, and it is refused too.
 //!
-//! [`Publisher::beat_clock`]: crate::invention::publish::Publisher::beat_clock
+//! [`TopologyMirror::beat_clock`]: crate::invention::publish::TopologyMirror::beat_clock
 //! [`BeatTime::clock`]: crate::control_request::BeatTime
 
 use std::cmp::Reverse;

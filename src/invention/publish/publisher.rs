@@ -318,17 +318,11 @@ impl Publisher {
         })
     }
 
-    /// The index of the invention's first clock, the one a timed edit
-    /// batch or reload counts beats on unless it names one (see
-    /// [`TopologyMirror::first_clock`]).
-    pub(crate) fn first_clock(&self) -> Result<u32, GraphCommandError> {
-        self.mirror.first_clock()
-    }
-
     /// Resolves the clock a request timed in beats on `module_id` counts on
     /// against the mirror (see [`TopologyMirror::beat_clock`]), as
     /// [`Self::control_target`] resolves its target, and submitted under
     /// the same lock.
+    #[cfg(test)]
     pub(crate) fn beat_clock(
         &self,
         module_id: &str,

@@ -42,7 +42,7 @@ use crate::RuntimeConnectionInfo;
 /// What building an `add_module`'s or a `swap_module`'s module came to,
 /// kept until its edit's turn so a refusal names the first edit that
 /// cannot apply.
-type Build = Option<Result<BuiltModule, Refusal>>;
+pub(super) type Build = Option<Result<BuiltModule, Refusal>>;
 
 impl RenderEngine {
     /// Applies `edits` to the loaded graph as one change, in order, or
@@ -71,42 +71,14 @@ impl RenderEngine {
         check_edit_batch(edits)?;
         // Timed writes that applied are recorded before the batch's.
         self.settle_timed_writes();
-        for (index, edit) in edits.iter().enumerate() {
-            edit.check_names(index).map_err(RpcError::invalid_edit)?;
-            if !matches!(
-                edit.op(),
-                EditOp::AddModule
-                    | EditOp::RemoveModule
-                    | EditOp::SwapModule
-                    | EditOp::Connect
-                    | EditOp::Disconnect
-                    | EditOp::SetControl
-            ) {
-                return Err(RpcError::new(
-                    RpcErrorCode::InvalidRequest,
-                    format!(
-                        "edit {index} ({}) refused: an offline render applies only add_module, \
-                         remove_module, swap_module, connect, disconnect and set_control; \
-                         nothing was applied",
-                        edit.op()
-                    ),
-                ));
-            }
-        }
+        check_ops(edits)?;
         let graph = self.loaded().map_err(RpcError::from)?;
         let candidate = self.checked_writes(edits)?;
         let mut built = self.build_added(edits, candidate.as_ref())?;
         let mut failure = None;
         let mut swapped = Vec::new();
         let committed = self.edit(graph, |change| {
-            for (index, edit) in edits.iter().enumerate() {
-                let made = apply_one(change, (index, edit), &mut built[index], &mut swapped);
-                if let Err(Refusal(reason, message)) = made {
-                    failure = Some(EditFailure::new(index, edit.op(), reason, message.clone()));
-                    return Err(GraphCommandError::ControlError(message));
-                }
-            }
-            Ok(())
+            apply_all(change, edits, &mut built, &mut swapped, &mut failure)
         });
         // A module built for an edit that never got its turn drops here,
         // after the graph's lock.
@@ -122,13 +94,7 @@ impl RenderEngine {
                 report.swapped = swapped;
                 Ok(report)
             }
-            (Err(_), Some(failure)) => Err(RpcError::invalid_edit(failure)),
-            // A schedule the batch leaves unable to resolve, as building
-            // the edited invention refuses it in the daemon.
-            (Err(GraphCommandError::ModuleBuildFailed(reason)), None) => {
-                Err(build_failed("does not build", reason))
-            }
-            (Err(error), None) => Err(graph_refusal(error)),
+            (Err(error), failure) => Err(batch_refusal(error, failure)),
         }
     }
 
@@ -139,7 +105,7 @@ impl RenderEngine {
     /// each module the batch leaves is built from the candidate's config
     /// and given the batch's writes, as the daemon builds it; a write it
     /// refuses refuses the batch.
-    fn build_added(
+    pub(super) fn build_added(
         &self,
         edits: &[StructuralEdit],
         candidate: Option<&EditedCandidate>,
@@ -175,6 +141,68 @@ impl RenderEngine {
             builds.push(Some(built));
         }
         Ok(builds)
+    }
+}
+
+/// Refuses `edits` whole, with no edit detail, when one is an operation an
+/// offline render does not apply, after checking each edit's names.
+pub(super) fn check_ops(edits: &[StructuralEdit]) -> Result<(), RpcError> {
+    for (index, edit) in edits.iter().enumerate() {
+        edit.check_names(index).map_err(RpcError::invalid_edit)?;
+        if !matches!(
+            edit.op(),
+            EditOp::AddModule
+                | EditOp::RemoveModule
+                | EditOp::SwapModule
+                | EditOp::Connect
+                | EditOp::Disconnect
+                | EditOp::SetControl
+        ) {
+            return Err(RpcError::new(
+                RpcErrorCode::InvalidRequest,
+                format!(
+                    "edit {index} ({}) refused: an offline render applies only add_module, \
+                     remove_module, swap_module, connect, disconnect and set_control; \
+                     nothing was applied",
+                    edit.op()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Makes every edit of the batch in `change`, in order, with `built`, what
+/// building each one's module came to, recording in `swapped` what each
+/// swap removed and in `failure` the first edit that cannot apply.
+pub(super) fn apply_all(
+    change: &mut GraphChange,
+    edits: &[StructuralEdit],
+    built: &mut [Build],
+    swapped: &mut Vec<SwappedModule>,
+    failure: &mut Option<EditFailure>,
+) -> Result<(), GraphCommandError> {
+    for (index, edit) in edits.iter().enumerate() {
+        let made = apply_one(change, (index, edit), &mut built[index], swapped);
+        if let Err(Refusal(reason, message)) = made {
+            *failure = Some(EditFailure::new(index, edit.op(), reason, message.clone()));
+            return Err(GraphCommandError::ControlError(message));
+        }
+    }
+    Ok(())
+}
+
+/// The refusal of a batch whose change failed with `error`: the edit that
+/// could not apply, when `failure` names one.
+pub(super) fn batch_refusal(error: GraphCommandError, failure: Option<EditFailure>) -> RpcError {
+    match (error, failure) {
+        (_, Some(failure)) => RpcError::invalid_edit(failure),
+        // A schedule the batch leaves unable to resolve, as building the
+        // edited invention refuses it in the daemon.
+        (GraphCommandError::ModuleBuildFailed(reason), None) => {
+            build_failed("does not build", reason)
+        }
+        (error, None) => graph_refusal(error),
     }
 }
 
