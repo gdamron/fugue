@@ -86,6 +86,18 @@ catalog ref's interface without loading it. Do not interpret independently
 loaded files as part of the same revision. Snapshot/file delivery remains
 `GetInvention`'s responsibility.
 
+## In the browser engine
+
+A host with no daemon, such as the in-chat player, holds its document itself.
+The browser engine's static `FugueEngine.inspectInvention(document, revision,
+query, expected_revision?)` runs the same query on that document text
+(`rpc::inspect_document`): the same selections, limits, continuations and
+refusals, thrown as the daemon's error JSON. `revision` is the host's own
+`{session_id, revision}` token, stamped on the page and checked against
+cursors and `expected_revision` as above. The page's `source_path` is null.
+It reads no engine state, so it answers whether or not a piece is loaded;
+saying nothing is running is the host's to do.
+
 ## A development's inside
 
 `RpcCommand::GetDevelopment { path }` reads one development's definition as

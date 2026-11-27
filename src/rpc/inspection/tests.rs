@@ -1,7 +1,7 @@
 mod dependencies;
 
 use super::*;
-use crate::Invention;
+use crate::{rpc::ConflictReason, Invention};
 use serde_json::json;
 
 fn snapshot(value: Value) -> AuthoredSnapshot {
