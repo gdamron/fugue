@@ -101,7 +101,8 @@ whose batch the control rule makes whole or refuses with nothing written. A
 control write needs no ticket all the same. A browser host that keeps its
 own revision asks the engine the same rule (`FugueEngine.advancesRevision`)
 and checks a precondition with `FugueEngine.checkRevision`, so its answers
-are the daemon's.
+are the daemon's; `FugueEngine.documentWithEpoch` shows which writes its
+document recorded.
 
 ### Preconditions
 

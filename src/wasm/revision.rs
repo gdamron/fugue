@@ -7,23 +7,49 @@ use wasm_bindgen::prelude::*;
 
 use super::{rpc_error_value, WasmFugueEngine};
 use crate::rpc::{RpcCommand, RpcError, RpcErrorCode, RuntimeRevision};
+use crate::ControlWrite;
 
 #[wasm_bindgen(js_class = FugueEngine)]
 impl WasmFugueEngine {
     #[wasm_bindgen(js_name = advancesRevision)]
-    /// Whether a host advances its revision once `command_json` (a daemon
-    /// command as JSON, e.g. `{"command":"set_controls","writes":[...]}`)
-    /// has run; `committed` is whether it made its change. A control write
-    /// advances once when one of its writes authors (the default intent),
-    /// never when all perform, and not when it was refused; a structural
-    /// edit advances when it commits. Which writes the document recorded
-    /// is `documentWithEpoch`'s to say.
+    /// Whether a host advances its revision once a call has run, by the
+    /// daemon's rule: `command` is `set_control`, `set_controls` or
+    /// `apply_edits` (an untimed batch), `writes_json` the call's control
+    /// writes as JSON (`[]` for an edit batch), and `committed` whether it
+    /// made its change. A control write advances once when one of its
+    /// writes authors (the default intent), never when all perform, and not
+    /// when it was refused; an edit batch advances when it commits. Which
+    /// writes the document recorded is `documentWithEpoch`'s to say.
     ///
-    /// A command that does not parse throws the daemon's error as JSON
-    /// text, code `invalid_request`.
-    pub fn advances_revision(command_json: &str, committed: bool) -> Result<bool, JsValue> {
-        let command: RpcCommand = serde_json::from_str(command_json)
-            .map_err(|err| invalid(format!("invalid command JSON: {err}")))?;
+    /// It takes the call's parts rather than a whole daemon command, so the
+    /// engine carries no parser for commands it never runs. Another command,
+    /// or writes that do not parse, throw the daemon's error as JSON text,
+    /// code `invalid_request`.
+    pub fn advances_revision(
+        command: &str,
+        writes_json: &str,
+        committed: bool,
+    ) -> Result<bool, JsValue> {
+        let writes: Vec<ControlWrite> = serde_json::from_str(writes_json)
+            .map_err(|err| invalid(format!("invalid control writes JSON: {err}")))?;
+        let command = match (command, writes.as_slice()) {
+            ("set_control", [write]) => RpcCommand::SetControl {
+                module_id: write.module_id.clone(),
+                key: write.key.clone(),
+                value: write.value.clone(),
+                intent: write.intent,
+                source: write.source,
+                priority: write.priority,
+                timing: write.timing.clone(),
+            },
+            ("set_control", _) => return Err(invalid("a set_control makes one write".to_string())),
+            ("set_controls", _) => RpcCommand::SetControls { writes },
+            ("apply_edits", _) => RpcCommand::ApplyEdits {
+                edits: Vec::new(),
+                timing: Default::default(),
+            },
+            (other, _) => return Err(invalid(format!("no revision rule for `{other}` here"))),
+        };
         Ok(command.advances_revision_after(committed))
     }
 
