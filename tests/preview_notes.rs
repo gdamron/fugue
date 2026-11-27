@@ -214,17 +214,16 @@ fn matches_live(document: &str, seed: u64, bars: u64) {
             assert!((got - beats).abs() < 1e-6, "{context}");
         }
         // Live runs at least as long as the preview, so a note that ended
-        // live by then has a duration in the preview too.
+        // live by then has an end in the preview too.
         match want.end {
-            None => assert!(got["duration_seconds"].is_null(), "{context}"),
+            None => assert!(got["end_seconds"].is_null(), "{context}"),
             Some(end) if (end.frame as f64) < (end_seconds + bar_seconds) * rate => {
-                assert!(!got["duration_seconds"].is_null(), "{context}");
+                assert!(!got["end_seconds"].is_null(), "{context}");
             }
             Some(_) => {}
         }
-        if let (Some(duration), Some(end)) = (got["duration_seconds"].as_f64(), want.end) {
-            let live = (end.frame - want.start.frame) as f64 / rate;
-            assert!((duration - live).abs() < 1e-6, "{context}");
+        if let (Some(got), Some(end)) = (got["end_seconds"].as_f64(), want.end) {
+            assert!((got - end.frame as f64 / rate).abs() < 1e-6, "{context}");
         }
     }
 }

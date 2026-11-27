@@ -73,7 +73,7 @@ pub use graph_change::{
     ChangedModule, GraphChange, GraphShape, MAX_GRAPH_CHANGE_BYTES, MAX_GRAPH_CHANGE_ITEMS,
 };
 pub use identity::{verify_daemon_identity, BuildFingerprint, DaemonIdentity, IdentityMismatch};
-pub use notes::{NotePage, NoteTimeUnit, SeqNote};
+pub use notes::{ListedNote, NotePage, PlayedNote};
 pub use package::{
     PackageInfo, PackageInstallReport, PackageInstallRequest, PackageList, PackageListQuery,
     PackageSource, MAX_PACKAGE_DIAGNOSTICS, MAX_PACKAGE_LIST_BYTES, MAX_PACKAGE_SUMMARY_BYTES,

@@ -157,7 +157,7 @@ fn a_peak_only_meter_level_from_an_older_daemon_still_decodes() {
 
 #[test]
 fn poll_notes_request_and_page_round_trip() {
-    use crate::{NotePage, NoteTimeUnit, SeqNote};
+    use crate::{ListedNote, NotePage, PlayedNote};
 
     let bare: RpcRequest =
         serde_json::from_str(r#"{"schema_version":1,"kind":"poll_notes","module_id":"seq"}"#)
@@ -169,18 +169,23 @@ fn poll_notes_request_and_page_round_trip() {
     assert_eq!(bare.payload, poll);
     assert_eq!(poll.replay_policy(), ReplayPolicy::Resend, "a read");
 
-    let held = SeqNote {
+    let held = PlayedNote {
         seq: 12,
         id: "3".to_string(),
-        voice: "0".to_string(),
-        pitch: 64,
-        velocity: 0.8,
-        start: 3.0,
-        end: None,
+        note: ListedNote {
+            module_id: "seq".to_string(),
+            voice: "0".to_string(),
+            pitch: 64,
+            velocity: 0.8,
+            clock: Some("clock".to_string()),
+            start_beats: Some(3.0),
+            end_beats: None,
+            start_seconds: 1.5,
+            end_seconds: None,
+        },
     };
     let page = NotePage {
         module_id: "seq".to_string(),
-        time_unit: NoteTimeUnit::Beats,
         clock: Some("clock".to_string()),
         notes: vec![held],
         latest_seq: 12,
@@ -188,8 +193,15 @@ fn poll_notes_request_and_page_round_trip() {
         playhead: Some(3.25),
     };
     let wire = serde_json::to_value(&page).unwrap();
-    assert_eq!(wire["time_unit"], "beats");
-    assert_eq!(wire["notes"][0]["end"], serde_json::Value::Null, "held");
+    let note = &wire["notes"][0];
+    assert_eq!(
+        (&note["seq"], &note["id"]),
+        (&12.into(), &"3".into()),
+        "flat"
+    );
+    assert_eq!(note["start_beats"], 3.0);
+    assert_eq!(note["end_beats"], serde_json::Value::Null, "held");
+    assert_eq!(note["end_seconds"], serde_json::Value::Null, "held");
     let response = RpcResponse::ok(None, RpcResponsePayload::Notes(page.clone()));
     let decoded: RpcResponse =
         serde_json::from_str(&serde_json::to_string(&response).unwrap()).unwrap();

@@ -22,15 +22,19 @@ mod backend;
 mod request;
 mod walk;
 
-pub use request::MAX_BARS;
+pub use request::{DEFAULT_BARS, MAX_BARS};
 
-use answer::{Collected, Outcome, Range};
+use answer::{Outcome, Range};
 use backend::{Pull, PullBackend};
 use request::Request;
 
 /// The most audio one preview works through, in seconds at the preview's
 /// sample rate.
 pub const MAX_SECONDS: u64 = 300;
+
+/// The sample rate the note tools preview at, whatever the host plays at,
+/// so every host lists the same notes at the same seconds for a document.
+pub const PREVIEW_SAMPLE_RATE: u32 = 48_000;
 
 /// Seconds in a bar for a piece with no clock.
 const CLOCKLESS_BAR_SECONDS: f64 = 2.0;
@@ -64,7 +68,7 @@ pub struct NotePreview {
     /// The frames at which the main clock crossed the range's first and
     /// last bar lines, found between two looks.
     crossed: [Option<f64>; 2],
-    collected: Vec<Collected>,
+    collected: Vec<NoteChange>,
     held: HashMap<(String, u64), usize>,
     walk: walk::Walk,
     /// Note starts and ends the taps dropped, their ring full.
@@ -95,6 +99,33 @@ impl NotePreview {
     /// engine cannot load (with the error loading it gives), an unknown
     /// module, and a range past the limits.
     pub fn new(document: &str, request: &str, sample_rate: u32) -> Result<Self, String> {
+        // Read exactly as `RenderEngine::load_json` reads it, so a document
+        // it refuses is refused here with the same words.
+        let invention =
+            serde_json::from_str::<Invention>(document).map_err(|error| error.to_string())?;
+        Self::starting(invention, document, request, sample_rate)
+    }
+
+    /// As [`NotePreview::new`], for a document already read: one loaded
+    /// from a file keeps its `source_path`, so the assets and developments
+    /// it names by relative path are found as they are when it plays.
+    pub fn for_invention(
+        invention: Invention,
+        request: &str,
+        sample_rate: u32,
+    ) -> Result<Self, String> {
+        let document = serde_json::to_string(&invention).map_err(|error| error.to_string())?;
+        Self::starting(invention, &document, request, sample_rate)
+    }
+
+    /// Builds the copy of `invention`, whose text `document` the request's
+    /// cursor is checked against.
+    fn starting(
+        invention: Invention,
+        document: &str,
+        request: &str,
+        sample_rate: u32,
+    ) -> Result<Self, String> {
         let request = Request::parse(request)?;
         let fingerprint = request.fingerprint(document, sample_rate);
         if let Some(cursor) = &request.cursor {
@@ -106,10 +137,6 @@ impl NotePreview {
                 );
             }
         }
-        // Read and built exactly as `RenderEngine::load_json` does, so a
-        // document it refuses is refused here with the same words.
-        let invention =
-            serde_json::from_str::<Invention>(document).map_err(|error| error.to_string())?;
         if let Some(id) = &request.module_id {
             if !invention.modules.iter().any(|module| &module.id == id) {
                 return Err(format!("module_id '{id}' is not a module of the invention"));
@@ -286,7 +313,7 @@ impl NotePreview {
             Some(&index) => self.collected[index].end = change.end,
             None => {
                 self.held.insert(key, self.collected.len());
-                self.collected.push(Collected::from(change));
+                self.collected.push(change);
             }
         }
     }

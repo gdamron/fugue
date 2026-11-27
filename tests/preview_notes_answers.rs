@@ -383,7 +383,7 @@ fn only_where_a_note_starts_counts_and_bars_follow_the_meter() {
     let block = 1024.0 / f64::from(SAMPLE_RATE);
     assert!((listed[0]["start_seconds"].as_f64().unwrap() - 2.5).abs() < block * 1.5);
 
-    // A note still sounding a bar past the range has no duration; one that
+    // A note still sounding a bar past the range has no end; one that
     // ended has one.
     let mut long = vec![json!({ "held": true }); 64];
     long[0] = json!({ "note": 0 });
@@ -413,10 +413,14 @@ fn only_where_a_note_starts_counts_and_bars_follow_the_meter() {
     };
     let (held_on, brief) = (lane("long"), lane("short"));
     assert_eq!(held_on.len(), 1);
-    assert!(held_on[0]["duration_beats"].is_null() && held_on[0]["duration_seconds"].is_null());
+    assert!(held_on[0]["end_beats"].is_null() && held_on[0]["end_seconds"].is_null());
     assert_eq!(brief.len(), 1);
-    assert!((brief[0]["duration_beats"].as_f64().unwrap() - 1.5).abs() < 0.3);
-    assert!(!brief[0]["duration_seconds"].is_null());
+    let length =
+        brief[0]["end_beats"].as_f64().unwrap() - brief[0]["start_beats"].as_f64().unwrap();
+    assert!((length - 1.5).abs() < 0.3, "{length}");
+    assert!(
+        brief[0]["end_seconds"].as_f64().unwrap() > brief[0]["start_seconds"].as_f64().unwrap()
+    );
 
     let mut first = vec![json!({ "note": null }); 16];
     first[0] = json!({ "note": 0 });

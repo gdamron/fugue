@@ -18,12 +18,17 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod history;
+
+pub use history::{NoteHistory, NOTES_PER_MODULE};
+
 use super::graph::notes::{NoteEdge, NoteOut, NoteTap, NoteTaps, TapVoice, NOTE_EDGE_CAPACITY};
 use super::publish::TopologyMirror;
 use super::timelines::Context;
 use crate::audio_thread::ControlLock;
 use crate::control_request::{EventCounter, EventCursor};
 use crate::modules::divisi::MAX_VOICES;
+use crate::rpc::ListedNote;
 use crate::spsc::Ring;
 
 /// A note starting, or ending, on one voice of a module.
@@ -50,6 +55,39 @@ pub struct NoteChange {
     pub start: NoteTime,
     /// `None` while it is held.
     pub end: Option<NoteTime>,
+}
+
+impl NoteChange {
+    /// The note as the note tools list it, its frames counted at
+    /// `sample_rate` Hz from the start of the piece: the one shape a played
+    /// note and a previewed one share.
+    pub fn listed(&self, sample_rate: u32) -> ListedNote {
+        let rate = f64::from(sample_rate);
+        let seconds = |at: &NoteTime| round(at.frame as f64 / rate);
+        let end = self.end.as_ref();
+        ListedNote {
+            module_id: self.module_id.clone(),
+            voice: self.voice.to_string(),
+            pitch: self.midi(),
+            velocity: (f64::from(self.velocity.clamp(0.0, 1.0)) * 1e4).round() / 1e4,
+            clock: self.clock.clone(),
+            start_beats: self.start.beats.map(round),
+            end_beats: end.and_then(|end| end.beats).map(round),
+            start_seconds: seconds(&self.start),
+            end_seconds: end.map(seconds),
+        }
+    }
+
+    /// The MIDI note, rounded, as the note tools report it.
+    pub(crate) fn midi(&self) -> u8 {
+        self.pitch.round().clamp(0.0, 127.0) as u8
+    }
+}
+
+/// Rounds a time to the millionth (of a second or a beat), which keeps
+/// answers small and is far finer than a frame.
+fn round(value: f64) -> f64 {
+    (value * 1e6).round() / 1e6
 }
 
 /// When a note starts or ends.

@@ -3,6 +3,9 @@
 
 use serde_json::{Map, Value};
 
+/// The bars a request without `bars` spans.
+pub const DEFAULT_BARS: u64 = 4;
+
 /// The most bars one request may span.
 pub const MAX_BARS: u64 = 64;
 
@@ -73,7 +76,7 @@ impl Request {
                 "the request has an unknown field '{unknown}'; it takes bars, start_bar, module_id, seed and cursor"
             ));
         }
-        let bars = whole(&fields, "bars")?.ok_or("bars is required: how many bars to list")?;
+        let bars = whole(&fields, "bars")?.unwrap_or(DEFAULT_BARS);
         if bars == 0 {
             return Err("bars is 0; it must be at least 1".to_string());
         }
@@ -161,8 +164,9 @@ mod tests {
         let request = Request::parse(r#"{"bars":8}"#).unwrap();
         assert_eq!((request.bars, request.start_bar, request.seed), (8, 0, 0));
         assert_eq!(request.module_id, None);
+        let bare = Request::parse("{}").unwrap();
+        assert_eq!(bare.bars, DEFAULT_BARS, "four bars when none are asked for");
         for (json, field) in [
-            ("{}", "bars"),
             (r#"{"bars":0}"#, "bars"),
             (r#"{"bars":1.5}"#, "bars"),
             (r#"{"bars":-1}"#, "bars"),
