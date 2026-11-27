@@ -27,6 +27,7 @@ mod notes;
 mod options;
 mod pause;
 mod replay;
+mod timed_writes;
 mod view_reading;
 
 pub use batch_writes::{AuthoredConfig, RenderEditsReport};
@@ -62,6 +63,8 @@ pub struct RenderEngine {
     /// The notes it plays, once asked to follow them (see
     /// [`Self::follow_notes`]).
     notes: Option<notes::Followed>,
+    /// Timed writes settled and not yet taken (see [`Self::take_settled_writes`]).
+    settled_writes: timed_writes::SettledWrites,
 }
 
 impl RenderEngine {
@@ -86,6 +89,7 @@ impl RenderEngine {
             seed: None,
             clamp_counts: levels::ClampCounts::default(),
             notes: None,
+            settled_writes: Default::default(),
         }
     }
 
@@ -112,6 +116,8 @@ impl RenderEngine {
     /// authored document as loaded, updated by runtime mutations, with
     /// connections mirrored from the live topology.
     pub fn document(&self) -> Option<Invention> {
+        // With every timed write that applied recorded.
+        self.settle_timed_writes();
         self.snapshot().document()
     }
 
@@ -452,6 +458,8 @@ impl RenderEngine {
         if let Some(previous) = &self.graph {
             super::declared::retire_offline(previous, &self.control_surfaces);
         }
+        // Once nothing can queue another to the graph it replaces.
+        self.stop_timed_writes();
         *self.module_ports.lock().unwrap() = module_ports(&runtime.modules);
         let mut graph = SignalGraph::new(
             runtime.modules,
@@ -463,8 +471,8 @@ impl RenderEngine {
         );
         graph.set_sample_rate(self.sample_rate);
         graph.end_watch = Some(Default::default());
-        // No request reaches it, but it plays the modules' tables.
-        super::graph::offline_requests(&mut graph);
+        // It plays the modules' tables, and takes timed writes.
+        super::graph::offline_timed_requests(&mut graph);
         self.tap_notes(&mut graph);
         let graph = Arc::new(Mutex::new(graph));
         super::declared::bind_offline(&graph, &runtime.control_surfaces);
@@ -542,5 +550,7 @@ mod remap_tests;
 mod retarget_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod timed_write_tests;
 #[cfg(test)]
 mod view_reading_tests;

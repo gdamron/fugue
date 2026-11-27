@@ -56,6 +56,7 @@ mod edges;
 pub(crate) mod ended;
 mod master;
 pub(crate) mod notes;
+mod offline_timed;
 mod onsets;
 mod pause;
 mod process;
@@ -71,12 +72,16 @@ pub use chunks::{feedback_chunks, set_feedback_chunks, FEEDBACK_CHUNKS_ENV};
 pub(crate) use compile::{compile_topology, CompiledTopology, TopologyFacts};
 pub use master::MasterLevels;
 pub(crate) use master::MasterObservers;
+pub(crate) use offline_timed::{
+    offline_timed_requests, settle_offline, OfflineWrite, SettledWrite,
+};
 pub(crate) use publication::{
     vacant, AudioLink, Fate, Handover, InputWrite, Publication, SurvivorRemap, MAX_INPUT_PORT_NAME,
     MAX_INSTALLS_PER_BLOCK, TIMED_EDIT_MODULE,
 };
 #[cfg(test)]
 pub(crate) use requests::link_requests;
+#[cfg(test)]
 pub(crate) use requests::offline_requests;
 pub(crate) use requests::RequestDrain;
 
@@ -166,6 +171,9 @@ pub(crate) struct SignalGraph {
     pub(crate) link: Option<AudioLink>,
     /// The live graph's control requests; `None` for offline render.
     pub(crate) requests: Option<RequestDrain>,
+    /// Where an offline render's timed requests are submitted, and what
+    /// became of each (see [`offline_timed`]); `None` for a live graph.
+    pub(crate) offline: Option<Box<offline_timed::OfflineRequests>>,
     /// Applies requests in tests, in place of the modules' own `apply`.
     #[cfg(test)]
     pub(crate) request_hook: Option<requests::RequestHook>,
@@ -290,6 +298,7 @@ impl SignalGraph {
             current_sample: 0,
             transport: Arc::new(Transport::new()),
             link: None,
+            offline: None,
             requests: None,
             #[cfg(test)]
             request_hook: None,
@@ -333,6 +342,7 @@ impl SignalGraph {
 
     pub(crate) fn ensure_process_order(&mut self) {
         self.drain_link();
+        self.take_offline();
         if self.topo_dirty {
             self.recompile();
         }

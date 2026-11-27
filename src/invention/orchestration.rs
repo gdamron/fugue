@@ -1,5 +1,5 @@
 use crate::control_request::{RequestId, Source};
-use crate::invention::declared::{Queued, WriteOptions};
+use crate::invention::declared::{Queued, WriteOptions, AUTHORED_UNTIMED};
 use crate::invention::graph::SignalGraph;
 use crate::invention::publish::{edge, edit_offline, Authoring, Committed, GraphChange, LiveGraph};
 use crate::invention::runtime::{control_timing, ControlSurfaceInstance, GraphCommandError};
@@ -379,6 +379,11 @@ impl RuntimeSnapshot {
         let value = self.coerced(module_id, key, value)?;
         let (load, origin) = self.asset_to_load((module_id, key), &value)?;
         let Some(live) = &self.live else {
+            // Offline, only a live gesture can be timed (see
+            // `render::control_writes`).
+            if options.time.is_some() {
+                return Err(GraphCommandError::ControlError(AUTHORED_UNTIMED.into()));
+            }
             let queued = self.submit_transient(module_id, key, load, options)?;
             // Offline, a write applies as it is made, unless it lost.
             if !queued.lost {

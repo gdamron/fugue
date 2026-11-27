@@ -162,6 +162,27 @@ pub(crate) fn check_times(
     Ok(())
 }
 
+/// [`check_times`] for a graph no request log reaches (an offline
+/// render's), against `mirror`, its topology: a write timed after another
+/// request is refused with `unplaced`.
+pub(crate) fn check_placed(
+    times: &[BatchTime<'_>],
+    mirror: &TopologyMirror,
+    unplaced: &str,
+) -> Result<(), (usize, String)> {
+    for &(index, module_id, time, _) in times {
+        let Some(module) = checked_module(module_id, time, mirror) else {
+            continue;
+        };
+        match placed(time, module, mirror) {
+            Some(Ok(_)) => {}
+            Some(Err(error)) => return Err((index, error)),
+            None => return Err((index, unplaced.to_string())),
+        }
+    }
+    Ok(())
+}
+
 /// The module a batch check reads for a write to `module_id` timed `time`:
 /// only a beat reads the written module, for its clock. `None` to leave
 /// it to the write, for a beat on the own clock of a module `mirror` does

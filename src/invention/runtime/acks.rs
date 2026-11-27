@@ -192,7 +192,7 @@ fn failed(write: &ControlWrite, checked: CheckedWrite, error: GraphCommandError)
 
 /// What a request that got as far as `progress` reports, and why it was
 /// refused, if it was.
-pub(super) fn state_of(progress: Progress) -> (ControlRequestState, Option<String>) {
+pub(crate) fn state_of(progress: Progress) -> (ControlRequestState, Option<String>) {
     match progress {
         Progress::Waiting => (ControlRequestState::Pending, None),
         Progress::Applied
