@@ -10,6 +10,7 @@ mod notes;
 mod preview;
 mod revision;
 mod timed;
+mod timed_edits;
 mod views;
 
 #[wasm_bindgen(js_name = FugueEngine)]

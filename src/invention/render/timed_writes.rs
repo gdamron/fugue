@@ -54,6 +54,7 @@ impl RenderEngine {
     pub(super) fn stop_timed_writes(&self) {
         if let Some(graph) = &self.graph {
             self.keep_settled(graph, settle_offline(graph, true, true));
+            self.keep_request_changes();
         }
     }
 

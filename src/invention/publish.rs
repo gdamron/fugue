@@ -43,8 +43,6 @@ mod authored;
 mod change;
 mod contested;
 mod held;
-// Queued through by the render's timed edit batches, still to come.
-#[allow(dead_code)]
 mod offline_timed;
 mod pending;
 mod policy;
@@ -73,9 +71,9 @@ pub(crate) use change::{
     edit_offline, kept_by_swap, BuiltModule, GraphChange, PreparedChange, TopologyMirror,
 };
 pub(crate) use contested::Contested;
-pub(crate) use offline_timed::{adopt_offline, reconcile_offline, OfflineAdoption};
-#[allow(unused_imports)]
-pub(crate) use offline_timed::{queue_offline, QueueRefused};
+pub(crate) use offline_timed::{
+    adopt_offline, queue_offline, reconcile_offline, OfflineAdoption, QueueRefused,
+};
 pub(crate) use pending::{Announcement, Authoring, DocumentStep, PendingLog, PendingWrite};
 pub(crate) use publisher::{kept_until, Publisher, Refused};
 pub(crate) use publisher::{
@@ -86,7 +84,9 @@ pub(crate) use reclaim::Reclaimer;
 use registry::LiveRegistry;
 pub(crate) use retarget::Retarget;
 pub(crate) use timed::EditTime;
-pub(crate) use timed_status::{CancelCause, EditState, EditStatus, Ledger, Touched};
+pub(crate) use timed_status::{
+    CancelCause, EditState, EditStatus, Ledger, Touched, LEDGER_CAPACITY,
+};
 pub(crate) use timed_write::WriteTime;
 
 /// How many times an edit that builds a module ([`LiveGraph::add_module`],
