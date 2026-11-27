@@ -5,7 +5,7 @@
 use super::acks::state_of;
 use super::timed::{edit_time, parse_id};
 use super::{GraphCommandError, RunningInvention};
-use crate::control_request::{Outcome, When};
+use crate::control_request::{Outcome, RequestId, When};
 use crate::invention::orchestration::ControlAck;
 use crate::invention::publish::{Announcement, EditTime, Progress, WriteTime};
 use crate::invention::request_log::LoggedBeat;
@@ -89,7 +89,7 @@ fn write_time(when: &ControlWhen) -> Result<WriteTime<'_>, GraphCommandError> {
 /// Where a write timed `when` (with `beat`, timed in beats) lands, as far
 /// as `outcome` says: the sample it applied on, or is timed to, and the
 /// one it was due on when it applied late.
-pub(super) fn landing(
+pub(crate) fn landing(
     when: Option<When>,
     beat: Option<LoggedBeat>,
     outcome: Option<Outcome>,
@@ -107,16 +107,34 @@ pub(super) fn landing(
 /// for an untimed write.
 pub(crate) fn settled(applied: &Announcement) -> Option<ControlRequestSettled> {
     let beat = applied.timed.clone()?;
-    let progress = applied.outcome.map_or(Progress::Applied, Progress::Settled);
+    let written = (applied.module_id.clone(), applied.key.clone());
+    Some(settled_as(applied.request, written, beat, applied.outcome))
+}
+
+/// The settled event of timed write `request` to `(module_id, key)`, timed
+/// on `beat` when in beats, which settled as `outcome`: `None` for one
+/// applied as it was made.
+pub(crate) fn settled_as(
+    request: RequestId,
+    (module_id, key): (String, String),
+    beat: Option<LoggedBeat>,
+    outcome: Option<Outcome>,
+) -> ControlRequestSettled {
+    let progress = outcome.map_or(Progress::Applied, Progress::Settled);
     let (state, reason) = state_of(progress);
-    Some(ControlRequestSettled {
-        request: applied.request.0.to_string(),
-        module_id: applied.module_id.clone(),
-        key: applied.key.clone(),
+    ControlRequestSettled {
+        request: request.0.to_string(),
+        module_id,
+        key,
         state,
-        landing: landing(None, beat, applied.outcome),
+        landing: landing(None, beat, outcome),
         reason,
-    })
+    }
+}
+
+/// `ttl_ms` in samples at `sample_rate`.
+pub(crate) fn ttl_samples(sample_rate: u32, ttl_ms: Option<u64>) -> Option<u64> {
+    ttl_ms.map(|ms| ms.saturating_mul(u64::from(sample_rate)) / 1000)
 }
 
 impl RunningInvention {

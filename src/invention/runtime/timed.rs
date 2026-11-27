@@ -57,7 +57,7 @@ impl RunningInvention {
 
     /// `ttl_ms` in samples.
     pub(crate) fn ttl_samples(&self, ttl_ms: Option<u64>) -> Option<u64> {
-        ttl_ms.map(|ms| ms.saturating_mul(u64::from(self.sample_rate)) / 1000)
+        super::control_timing::ttl_samples(self.sample_rate, ttl_ms)
     }
 
     /// Where timed request `id` stands, while the runtime remembers it (its

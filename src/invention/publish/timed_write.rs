@@ -27,6 +27,7 @@
 //! note. So a timed write stays listed until its own outcome settles
 //! it, even when the audio thread drops untimed ones.
 
+use super::change::TopologyMirror;
 use super::publisher::{BEAT_WATCH_CAPACITY, PENDING_REQUEST_CAPACITY};
 use super::timed_status::EditState;
 use super::{PendingLog, Publisher};
@@ -97,7 +98,23 @@ pub(crate) fn resolve(
     (conditions, reserved): (Result<(), &str>, bool),
 ) -> Result<Timed, String> {
     let timed = time_of(time, module_id, (publisher, pending), conditions)?;
-    let on_sample = matches!(timed.when, When::AtSample(_) | When::AfterSamples(_));
+    let waiting = (pending.on_sample(), pending.timed_waiting());
+    check_room(&timed, waiting, reserved)?;
+    Ok(timed)
+}
+
+/// Whether one more write timed as `timed` has room to wait, with
+/// `(on_sample, waiting)` timed writes waiting already: those on a sample,
+/// and all of them. One on a sample is refused while
+/// [`SAMPLE_TIMED_CAPACITY`] such writes wait, and any while
+/// [`TIMED_WRITE_CAPACITY`] timed writes do; a `reserved` one while
+/// [`SAMPLE_TIMED_RESERVE`] and [`TIMED_RESERVE`] more do.
+pub(crate) fn check_room(
+    timed: &Timed,
+    (on_sample, waiting): (usize, usize),
+    reserved: bool,
+) -> Result<(), String> {
+    let timed_on_sample = matches!(timed.when, When::AtSample(_) | When::AfterSamples(_));
     let (on_sample_room, room) = match reserved {
         true => (
             SAMPLE_TIMED_CAPACITY + SAMPLE_TIMED_RESERVE,
@@ -105,13 +122,13 @@ pub(crate) fn resolve(
         ),
         false => (SAMPLE_TIMED_CAPACITY, TIMED_WRITE_CAPACITY),
     };
-    if on_sample && pending.on_sample() >= on_sample_room {
+    if timed_on_sample && on_sample >= on_sample_room {
         return Err(sample_room_full(on_sample_room));
     }
-    if pending.timed_waiting() >= room {
+    if waiting >= room {
         return Err(room_full(room));
     }
-    Ok(timed)
+    Ok(())
 }
 
 /// A payload write chained after a request, which its control cannot take.
@@ -131,14 +148,8 @@ pub(crate) fn check_times(
     (publisher, pending): (&mut Publisher, &mut PendingLog),
 ) -> Result<(), (usize, String)> {
     for &(index, module_id, time, payload) in times {
-        let held = publisher.mirror().modules.contains_key(module_id);
-        // Only a beat reads the written module, for its clock.
-        let module = match time {
-            WriteTime::Beat { clock: None, .. } if !held => continue,
-            WriteTime::Beat {
-                clock: Some(clock), ..
-            } if !held => clock,
-            _ => module_id,
+        let Some(module) = checked_module(module_id, time, publisher.mirror()) else {
+            continue;
         };
         let conditions = if payload {
             Err(PAYLOAD_UNCHAINED)
@@ -149,6 +160,25 @@ pub(crate) fn check_times(
         time_of(time, module, locked, conditions).map_err(|e| (index, e))?;
     }
     Ok(())
+}
+
+/// The module a batch check reads for a write to `module_id` timed `time`:
+/// only a beat reads the written module, for its clock. `None` to leave
+/// it to the write, for a beat on the own clock of a module `mirror` does
+/// not hold itself.
+fn checked_module<'a>(
+    module_id: &'a str,
+    time: WriteTime<'a>,
+    mirror: &TopologyMirror,
+) -> Option<&'a str> {
+    let held = mirror.modules.contains_key(module_id);
+    match time {
+        WriteTime::Beat { clock: None, .. } if !held => None,
+        WriteTime::Beat {
+            clock: Some(clock), ..
+        } if !held => Some(clock),
+        _ => Some(module_id),
+    }
 }
 
 impl super::LiveGraph {
@@ -182,47 +212,66 @@ fn time_of(
     (publisher, pending): (&mut Publisher, &mut PendingLog),
     conditions: Result<(), &str>,
 ) -> Result<Timed, String> {
+    if let Some(placed) = placed(time, module_id, publisher.mirror()) {
+        return placed;
+    }
+    let WriteTime::After { request, offset } = time else {
+        unreachable!("only a time after a request is left unplaced");
+    };
     let at = |when| Timed { when, beat: None };
-    match time {
+    let after = |sample: u64| at(When::AtSample(sample.saturating_add(offset.into())));
+    let waits = |conditions: Result<(), &str>| {
+        conditions.map_err(str::to_string)?;
+        let applied = Condition::all(&[Predicate::Applied(request)]).expect("one part");
+        Ok(at(When::Condition(applied.delayed(offset))))
+    };
+    let never = || format!("request {} never applied, so nothing follows it", request.0);
+    if let Some(outcome) = pending.outcome_of(request) {
+        return match outcome {
+            Outcome::Applied { at } | Outcome::AppliedLate { at, .. } => Ok(after(at)),
+            _ => Err(never()),
+        };
+    }
+    if pending.waiting(request) {
+        return waits(conditions);
+    }
+    match publisher.ledger().status(request) {
+        Some(status) => match (status.state, status.sample) {
+            (EditState::Queued, _) => waits(conditions),
+            (EditState::Landed | EditState::Adopted, Some(sample)) => Ok(after(sample)),
+            _ => Err(never()),
+        },
+        None => Err(format!("no request {} is known to follow", request.0)),
+    }
+}
+
+/// The time of a write timed on a sample or a beat, as [`resolve`] takes
+/// it, against `mirror`, the graph it is submitted to: on a beat, counted
+/// on the clock [`TopologyMirror::beat_clock`] resolves. `None` for one
+/// timed after another request, which only what has applied can place.
+pub(crate) fn placed(
+    time: WriteTime<'_>,
+    module_id: &str,
+    mirror: &TopologyMirror,
+) -> Option<Result<Timed, String>> {
+    let at = |when| Timed { when, beat: None };
+    Some(match time {
         WriteTime::AtSample(sample) => Ok(at(When::AtSample(sample))),
         WriteTime::AfterSamples(samples) => Ok(at(When::AfterSamples(samples))),
-        WriteTime::Beat { clock, spec } => {
-            let index = (publisher.beat_clock(module_id, clock)).map_err(|e| e.to_string())?;
-            let mirror = &publisher.mirror().modules;
-            let id = mirror.get_index(index as usize).map(|(id, _)| id.as_str());
-            let when = When::Beat(BeatTime {
-                clock: index,
-                spec,
-                ramp: None,
-            });
-            let beat = id.map(|id| super::timed::logged_beat(id, spec));
-            Ok(Timed { when, beat })
-        }
-        WriteTime::After { request, offset } => {
-            let after = |sample: u64| at(When::AtSample(sample.saturating_add(offset.into())));
-            let waits = |conditions: Result<(), &str>| {
-                conditions.map_err(str::to_string)?;
-                let applied = Condition::all(&[Predicate::Applied(request)]).expect("one part");
-                Ok(at(When::Condition(applied.delayed(offset))))
-            };
-            let never = || format!("request {} never applied, so nothing follows it", request.0);
-            if let Some(outcome) = pending.outcome_of(request) {
-                return match outcome {
-                    Outcome::Applied { at } | Outcome::AppliedLate { at, .. } => Ok(after(at)),
-                    _ => Err(never()),
-                };
-            }
-            if pending.waiting(request) {
-                return waits(conditions);
-            }
-            match publisher.ledger().status(request) {
-                Some(status) => match (status.state, status.sample) {
-                    (EditState::Queued, _) => waits(conditions),
-                    (EditState::Landed | EditState::Adopted, Some(sample)) => Ok(after(sample)),
-                    _ => Err(never()),
-                },
-                None => Err(format!("no request {} is known to follow", request.0)),
-            }
-        }
-    }
+        WriteTime::Beat { clock, spec } => mirror
+            .beat_clock(module_id, clock)
+            .map_err(|e| e.to_string())
+            .map(|index| {
+                let id = mirror.modules.get_index(index as usize).map(|(id, _)| id);
+                Timed {
+                    when: When::Beat(BeatTime {
+                        clock: index,
+                        spec,
+                        ramp: None,
+                    }),
+                    beat: id.map(|id| super::timed::logged_beat(id, spec)),
+                }
+            }),
+        WriteTime::After { .. } => return None,
+    })
 }
