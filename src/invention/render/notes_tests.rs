@@ -3,6 +3,7 @@
 //! does unfollowed.
 
 use super::RenderEngine;
+use crate::alloc_counter::allocator_events;
 use crate::invention::notes::{NoteHistory, PlayedNotes, NOTE_WORDS_LEN};
 
 const RATE: u32 = 48_000;
@@ -147,6 +148,59 @@ fn a_new_load_is_a_new_run_and_resyncs_its_readers() {
         .notes
         .iter()
         .all(|note| [60, 67].contains(&note.note.pitch)));
+}
+
+#[test]
+fn names_fetched_for_one_piece_still_hold_for_the_next() {
+    let mut engine = followed(&bass(48));
+    let mut played = PlayedNotes::starting_at(1);
+    render(&mut engine, 1.0, Some(&mut played));
+    // The next piece's modules have other ids, as many of them.
+    let mut renamed = bass(60);
+    for (from, to) in [("clock", "tempo"), ("seq", "melody")] {
+        for field in ["id", "from", "to"] {
+            renamed = renamed.replace(
+                &format!("\"{field}\":\"{from}\""),
+                &format!("\"{field}\":\"{to}\""),
+            );
+        }
+    }
+    assert!(renamed.contains("\"id\":\"melody\"") && renamed.contains("\"to_port\":\"clock\""));
+    engine.load_json(&renamed).unwrap();
+    render(&mut engine, 1.0, Some(&mut played));
+    let melody = played.page("melody", None, RATE);
+    assert!(!melody.notes.is_empty());
+    assert!(
+        melody
+            .notes
+            .iter()
+            .all(|note| [60, 67].contains(&note.note.pitch)
+                && note.note.clock.as_deref() == Some("tempo")),
+        "{:?}",
+        melody.notes
+    );
+    let seq = played.page("seq", None, RATE);
+    assert!(seq
+        .notes
+        .iter()
+        .all(|note| [48, 55].contains(&note.note.pitch)));
+}
+
+#[test]
+fn draining_neither_allocates_nor_frees() {
+    let mut engine = followed(&bass(48));
+    let mut words = vec![0.0; NOTE_WORDS_LEN];
+    let mut chunk = vec![0.0f32; CHUNK * 2];
+    let mut written = 0;
+    // Allocation the render itself may do is not the drain's: count only
+    // the drains, each after a render that ends a note or starts one.
+    for _ in 0..24 {
+        engine.render_interleaved(&mut chunk).unwrap();
+        let (n, allocs, frees) = allocator_events(|| engine.take_note_words(&mut words));
+        assert_eq!((allocs, frees), (0, 0));
+        written += n;
+    }
+    assert!(written > 0);
 }
 
 #[test]

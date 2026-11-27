@@ -5,21 +5,29 @@
 //! Following taps the render's graph as a live graph is tapped: the taps
 //! read the rendered gate outputs after each segment and change nothing
 //! the render writes. Each load starts a new run with a feed of its own,
-//! and each edit taps its new topology (see `publish::edit_offline`).
+//! and each edit taps its new topology (see `publish::edit_offline`). The
+//! feeds share their keys, so a key names one module or clock for as long
+//! as the engine lives, and names a reader fetched for one run still hold
+//! for the next.
 
 use std::sync::Arc;
 
 use super::RenderEngine;
 use crate::control_request::EventCursor;
+use crate::invention::graph::notes::NoteEdge;
 use crate::invention::graph::SignalGraph;
-use crate::invention::notes::{self, NoteChanges, NoteFeed};
+use crate::invention::notes::{self, NoteChanges, NoteFeed, NoteKeys};
 use crate::invention::publish::TopologyMirror;
+use crate::spsc::Consumer;
 
 /// The feed of a render that follows notes.
 #[derive(Default)]
 pub(super) struct Followed {
-    /// `None` until a piece is loaded.
-    feed: Option<Arc<NoteFeed>>,
+    /// The feed, and its one reader, which pops without a lock; `None`
+    /// until a piece is loaded.
+    feed: Option<(Arc<NoteFeed>, Consumer<NoteEdge>)>,
+    /// Names every feed's modules and clocks.
+    keys: Arc<NoteKeys>,
     missed: EventCursor,
     /// Counts the loads followed, so a reader tells one piece's notes from
     /// the next one's.
@@ -45,12 +53,13 @@ impl RenderEngine {
         let Some(followed) = self.notes.as_mut() else {
             return;
         };
-        let (feed, out) = NoteFeed::new();
+        let (feed, out) = NoteFeed::with_keys(Arc::clone(&followed.keys));
         let mirror = TopologyMirror::of(&graph.modules, &graph.edges);
         graph.note_taps = feed.keys().taps(&mirror);
         graph.note_out = Some(out);
         graph.note_keys = Some(Arc::clone(feed.keys()));
-        followed.feed = Some(feed);
+        let edges = feed.claim();
+        followed.feed = Some((feed, edges));
         followed.missed = EventCursor::new();
         followed.run += 1;
     }
@@ -59,13 +68,13 @@ impl RenderEngine {
     /// [`crate::RunningInvention::take_notes`] gives them; nothing when
     /// not following. One reader: it and [`Self::take_note_words`] drain
     /// the same feed.
-    pub fn take_notes(&self) -> NoteChanges {
+    pub fn take_notes(&mut self) -> NoteChanges {
         match self
             .notes
-            .as_ref()
-            .and_then(|followed| followed.feed.as_ref())
+            .as_mut()
+            .and_then(|followed| followed.feed.as_mut())
         {
-            Some(feed) => feed.take(),
+            Some((feed, edges)) => feed.take_from(edges),
             None => NoteChanges::default(),
         }
     }
@@ -74,18 +83,20 @@ impl RenderEngine {
     /// words a [`notes::PlayedNotes`] takes (`out` of
     /// [`notes::NOTE_WORDS_LEN`] holds any drain). Returns the words
     /// written: 0 when not following, or with nothing loaded. Neither
-    /// allocates nor frees, so a player may call it from its audio thread
-    /// between renders.
+    /// allocates nor frees, and takes no lock but the graph's, which each
+    /// render takes on the same thread, so a player may call it from its
+    /// audio thread between renders.
     pub fn take_note_words(&mut self, out: &mut [f64]) -> usize {
         let (Some(followed), Some(graph)) = (self.notes.as_mut(), self.graph.as_ref()) else {
             return 0;
         };
-        let Some(feed) = followed.feed.as_ref() else {
+        let Some((feed, edges)) = followed.feed.as_mut() else {
             return 0;
         };
         let graph = graph.lock().unwrap();
         notes::write_words(
             feed,
+            edges,
             &graph.note_taps,
             followed.run,
             &mut followed.missed,
@@ -97,12 +108,8 @@ impl RenderEngine {
     /// [`notes::PlayedNotes::set_names`] takes. Allocates; ask again only
     /// when a drain counts more keys than were named.
     pub fn note_names(&self) -> Vec<String> {
-        match self
-            .notes
-            .as_ref()
-            .and_then(|followed| followed.feed.as_ref())
-        {
-            Some(feed) => feed.keys().names(),
+        match &self.notes {
+            Some(followed) => followed.keys.names(),
             None => Vec::new(),
         }
     }

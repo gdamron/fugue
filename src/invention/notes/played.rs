@@ -23,12 +23,14 @@ use super::{NoteChanges, NoteEdge, NoteFeed, NoteTaps, Pairing, Playhead};
 use crate::control_request::EventCursor;
 use crate::invention::graph::notes::NOTE_EDGE_CAPACITY;
 use crate::rpc::NotePage;
+use crate::spsc::Consumer;
 
 const HEADER_WORDS: usize = 5;
 const TAP_WORDS: usize = 3;
 const EDGE_WORDS: usize = 9;
 
-/// The most tapped modules one drain reports.
+/// The most tapped modules one drain reports: the notes of a module past
+/// them are still read, but a page for it has no playhead.
 const MAX_TAPS: usize = 256;
 
 /// The length of a buffer that holds any drain: every tap, and as many
@@ -36,12 +38,14 @@ const MAX_TAPS: usize = 256;
 pub const NOTE_WORDS_LEN: usize =
     HEADER_WORDS + MAX_TAPS * TAP_WORDS + NOTE_EDGE_CAPACITY * EDGE_WORDS;
 
-/// Writes the edges `feed` holds, and where `taps` stand, into `out` as
-/// words (see the module docs), stopping where `out` is full; the edges
-/// left wait for the next drain. Returns the words written, 0 when `out`
-/// cannot hold a header. Allocation-, free- and lock-free.
+/// Writes the edges `feed` holds, popped through `edges` (its claimed
+/// reader), and where `taps` stand, into `out` as words (see the module
+/// docs), stopping where `out` is full; the edges left wait for the next
+/// drain. Returns the words written, 0 when `out` cannot hold a header.
+/// Allocation-, free- and lock-free.
 pub(crate) fn write_words(
     feed: &NoteFeed,
+    edges: &mut Consumer<NoteEdge>,
     taps: &NoteTaps,
     run: u64,
     missed: &mut EventCursor,
@@ -62,9 +66,9 @@ pub(crate) fn write_words(
         tapped += 1;
     }
     let lost = feed.missed_since(missed);
-    let mut edges = 0;
+    let mut written = 0;
     while out.len() >= at + EDGE_WORDS {
-        let Some(edge) = feed.pop() else {
+        let Some(edge) = edges.pop() else {
             break;
         };
         out[at..at + EDGE_WORDS].copy_from_slice(&[
@@ -79,14 +83,14 @@ pub(crate) fn write_words(
             f64::from(u8::from(edge.after_loss)),
         ]);
         at += EDGE_WORDS;
-        edges += 1;
+        written += 1;
     }
     out[..HEADER_WORDS].copy_from_slice(&[
         run as f64,
         f64::from(lost),
         feed.keys().count() as f64,
         tapped as f64,
-        edges as f64,
+        written as f64,
     ]);
     at
 }
@@ -118,8 +122,9 @@ impl PlayedNotes {
     }
 
     /// The id of each key, by key, as [`RenderEngine::note_names`] gives
-    /// them. Keys only grow within a run: set them again when a feed's
-    /// header counts more keys than [`Self::names_known`].
+    /// them. A key names one id for as long as the engine lives, across
+    /// loads, and keys only grow: set them again when a feed's header
+    /// counts more keys than [`Self::names_known`].
     ///
     /// [`RenderEngine::note_names`]: crate::RenderEngine::note_names
     pub fn set_names(&mut self, names: Vec<String>) {
@@ -136,16 +141,24 @@ impl PlayedNotes {
         words.get(2).map_or(0, |&keys| keys as usize)
     }
 
-    /// Takes one drain's words. Refuses words it cannot read, and words
-    /// naming keys it has no names for, with nothing taken.
+    /// Takes one drain's words; an empty drain takes nothing. Refuses
+    /// words it cannot read, and words naming keys it has no names for,
+    /// with nothing taken.
     pub fn feed(&mut self, words: &[f64]) -> Result<(), String> {
+        if words.is_empty() {
+            return Ok(());
+        }
         let [run, missed, keys, taps, edges] = match words.get(..HEADER_WORDS) {
             Some(&[a, b, c, d, e]) => [a, b, c, d, e],
             _ => return Err("note words hold no header".to_string()),
         };
         let (taps, edges) = (taps as usize, edges as usize);
-        let tap_words = taps * TAP_WORDS;
-        if words.len() < HEADER_WORDS + tap_words + edges * EDGE_WORDS {
+        let tap_words = taps.saturating_mul(TAP_WORDS);
+        let needed = edges
+            .saturating_mul(EDGE_WORDS)
+            .saturating_add(tap_words)
+            .saturating_add(HEADER_WORDS);
+        if words.len() < needed {
             return Err(format!(
                 "note words are cut short: {} words for {taps} taps and {edges} edges",
                 words.len()

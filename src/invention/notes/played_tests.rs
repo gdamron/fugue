@@ -94,7 +94,10 @@ fn a_new_run_starts_over_and_resyncs_every_cursor() {
 fn words_it_cannot_read_are_refused_with_nothing_taken() {
     let mut played = played();
     let on = [0.0, 0.0, 1.0, 0.0, 0.0, 440.0];
+    assert!(played.feed(&[]).is_ok(), "an empty drain takes nothing");
     assert!(played.feed(&[1.0, 0.0]).unwrap_err().contains("header"));
+    let huge = [1.0, 0.0, 2.0, f64::MAX, f64::INFINITY];
+    assert!(played.feed(&huge).unwrap_err().contains("cut short"));
     let mut short = words(1, 2, &[], &[on]);
     short.pop();
     assert!(played.feed(&short).unwrap_err().contains("cut short"));

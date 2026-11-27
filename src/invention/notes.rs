@@ -33,7 +33,7 @@ use crate::audio_thread::ControlLock;
 use crate::control_request::{EventCounter, EventCursor};
 use crate::modules::divisi::MAX_VOICES;
 use crate::rpc::ListedNote;
-use crate::spsc::Ring;
+use crate::spsc::{Consumer, Ring};
 
 /// A note starting, or ending, on one voice of a module.
 #[derive(Clone, Debug, PartialEq)]
@@ -149,13 +149,20 @@ struct Pairing {
 impl NoteFeed {
     /// A feed, and the end the audio thread sends to. Control thread.
     pub(crate) fn new() -> (Arc<Self>, NoteOut) {
+        Self::with_keys(Arc::default())
+    }
+
+    /// As [`Self::new`], naming modules and clocks with `keys`, which may
+    /// have named them for an earlier feed: a key keeps its id for as long
+    /// as `keys` lives. Control thread.
+    pub(crate) fn with_keys(keys: Arc<NoteKeys>) -> (Arc<Self>, NoteOut) {
         let ring = Ring::with_capacity(NOTE_EDGE_CAPACITY);
         let missed = Arc::new(EventCounter::new());
         let out = NoteOut::new(Arc::clone(&ring), Arc::clone(&missed));
         let feed = Self {
             ring,
             missed,
-            keys: Arc::default(),
+            keys,
             pairing: ControlLock::new(Pairing::default()),
         };
         (Arc::new(feed), out)
@@ -167,19 +174,31 @@ impl NoteFeed {
 
     /// Drains the ring and pairs what it held. Control thread.
     pub(crate) fn take(&self) -> NoteChanges {
+        self.take_with(|| self.ring.pop())
+    }
+
+    /// As [`Self::take`], popping through `edges`, the reader
+    /// [`Self::claim`] gave.
+    pub(crate) fn take_from(&self, edges: &mut Consumer<NoteEdge>) -> NoteChanges {
+        self.take_with(|| edges.pop())
+    }
+
+    fn take_with(&self, mut pop: impl FnMut() -> Option<NoteEdge>) -> NoteChanges {
         let mut pairing = self.pairing.lock().unwrap_or_else(|e| e.into_inner());
         let missed = pairing.missed.take(&self.missed);
         let mut notes = Vec::new();
-        while let Some(edge) = self.ring.pop() {
+        while let Some(edge) = pop() {
             pairing.pair(&edge, |key| self.keys.id(key), &mut notes);
         }
         NoteChanges { notes, missed }
     }
 
-    /// The next edge, unpaired, for a reader that pairs them elsewhere
-    /// (see [`PlayedNotes`]). Allocation-, free- and lock-free.
-    pub(crate) fn pop(&self) -> Option<NoteEdge> {
-        self.ring.pop()
+    /// The feed's one reader from here on, whose pops take no lock: for a
+    /// drain that may run on an audio thread, unpaired (see
+    /// [`PlayedNotes`]), or paired through [`Self::take_from`].
+    /// [`Self::take`] panics while it lives. Control thread.
+    pub(crate) fn claim(&self) -> Consumer<NoteEdge> {
+        Consumer::claim(Arc::clone(&self.ring))
     }
 
     /// The edges a full ring dropped since `cursor` last looked.
@@ -277,9 +296,10 @@ impl NoteKeys {
     }
 
     /// How many ids have a key: keys only grow, so a reader holding fewer
-    /// names than this asks for them again.
-    /// Lock-free. Release and acquire pair the count with the ids
-    /// `taps` wrote before it, though a reader takes the lock to read them.
+    /// names than this asks for them again. Lock-free, for a drain that
+    /// may run on an audio thread. Release and acquire pair the count with
+    /// the ids `taps` wrote before it; readers of the ids take the lock
+    /// anyway, so the pairing matters only to a drain on another thread.
     pub(crate) fn count(&self) -> usize {
         self.count.load(Ordering::Acquire)
     }
