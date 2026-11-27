@@ -84,13 +84,7 @@ fn pages_follow_inspection_limits_and_carry_the_revision() {
     let first = read(SAVED, CURRENT, &values, &limit(6, None)).unwrap();
     assert_eq!((first.changes.len(), first.performed.len()), (6, 0));
     let cursor = first.next_cursor.clone().unwrap();
-    assert_eq!(
-        cursor,
-        DiffCursor {
-            revision: revision(4),
-            offset: 6
-        }
-    );
+    assert_eq!((&cursor.revision, cursor.offset), (&revision(4), 6));
     let rest = read(SAVED, CURRENT, &values, &limit(6, Some(cursor))).unwrap();
     assert_eq!(
         (rest.offset, rest.changes.len(), rest.performed.len()),
@@ -104,7 +98,7 @@ fn pages_follow_inspection_limits_and_carry_the_revision() {
     }
     let stale = DiffCursor {
         revision: revision(3),
-        offset: 1,
+        ..first.next_cursor.clone().unwrap()
     };
     let refused = read(SAVED, CURRENT, &[], &limit(6, Some(stale))).unwrap_err();
     assert_eq!(refused.code, RpcErrorCode::RevisionConflict);
@@ -170,5 +164,22 @@ fn the_text_entry_answers_as_the_typed_one() {
             diff_documents(&broken).unwrap_err().code,
             RpcErrorCode::InvalidRequest
         );
+    }
+}
+
+#[test]
+fn a_cursor_is_refused_once_the_differences_move_at_the_same_revision() {
+    let values = [sounding("voice", "waveform", json!("saw"))];
+    let first = read(SAVED, CURRENT, &values, &limit(2, None)).unwrap();
+    let cursor = first.next_cursor.unwrap();
+    // The same read follows on.
+    let same = read(SAVED, CURRENT, &values, &limit(2, Some(cursor.clone())));
+    assert_eq!(same.unwrap().offset, 2);
+    // A save (the baseline is now the current piece), or a value performed
+    // back, moves what is measured but not the revision.
+    for (saved, values) in [(CURRENT, &values[..]), (SAVED, &[][..])] {
+        let refused = read(saved, CURRENT, values, &limit(2, Some(cursor.clone()))).unwrap_err();
+        assert_eq!(refused.code, RpcErrorCode::InvalidRequest);
+        assert!(refused.message.contains("read again from the first page"));
     }
 }

@@ -2,7 +2,7 @@
 //! loaded or saved, one sentence on the whole, and pages that hold the
 //! inspection limits with the revision in the cursor.
 
-use super::{differences, invalid, DiffEntry, PerformedValue, SoundingValue};
+use super::{differences, invalid, DiffEntry, Differences, PerformedValue, SoundingValue};
 use crate::rpc::inspection::fits;
 use crate::rpc::{RevisionConflict, RpcError, RpcErrorCode, RuntimeRevision};
 use crate::rpc::{MAX_INSPECTION_BYTES, MAX_INSPECTION_ENTRIES};
@@ -46,7 +46,9 @@ fn default_limit() -> usize {
     50
 }
 
-/// Continuation bound to the revision that produced it.
+/// Continuation bound to the revision and the differences that produced it:
+/// a save or a performed value moves what is measured without moving the
+/// revision, so the cursor also carries a digest of every record.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct DiffCursor {
@@ -54,6 +56,8 @@ pub struct DiffCursor {
     pub revision: RuntimeRevision,
     /// Zero-based record offset across changes, then performed values.
     pub offset: usize,
+    /// Digest of the baseline kind and every record this read paged.
+    pub digest: String,
 }
 
 /// One page of the differences since the baseline.
@@ -95,16 +99,20 @@ impl DiffSource<'_> {
         if !(1..=MAX_INSPECTION_ENTRIES).contains(&query.limit) {
             return Err(invalid("limit must be between 1 and 100"));
         }
-        let offset = match &query.cursor {
-            Some(cursor) => {
-                if let Some(conflict) = RevisionConflict::between(&cursor.revision, self.revision) {
-                    return Err(RpcError::revision_conflict(conflict));
-                }
-                cursor.offset
+        if let Some(cursor) = &query.cursor {
+            if let Some(conflict) = RevisionConflict::between(&cursor.revision, self.revision) {
+                return Err(RpcError::revision_conflict(conflict));
             }
+        }
+        let found = differences(self.baseline.0, self.current, self.sounding)?;
+        let digest = digest(self.baseline.1, &found)?;
+        let offset = match &query.cursor {
+            Some(cursor) if cursor.digest != digest => {
+                return Err(invalid(CHANGED));
+            }
+            Some(cursor) => cursor.offset,
             None => 0,
         };
-        let found = differences(self.baseline.0, self.current, self.sounding)?;
         let (changes, performed) = (found.changes, found.performed);
         let total = changes.len() + performed.len();
         if offset > total {
@@ -130,14 +138,14 @@ impl DiffSource<'_> {
                 Ok(change) => page.changes.push(change),
                 Err(value) => page.performed.push(value),
             }
-            page.update_cursor(total);
+            page.update_cursor(total, &digest);
             if !fits(&page, MAX_INSPECTION_BYTES) {
                 if is_change {
                     page.changes.pop();
                 } else {
                     page.performed.pop();
                 }
-                page.update_cursor(total);
+                page.update_cursor(total, &digest);
                 break;
             }
         }
@@ -153,13 +161,28 @@ impl DiffSource<'_> {
 }
 
 impl DiffPage {
-    fn update_cursor(&mut self, total: usize) {
+    fn update_cursor(&mut self, total: usize, digest: &str) {
         let offset = self.offset + self.changes.len() + self.performed.len();
         self.next_cursor = (offset < total).then(|| DiffCursor {
             revision: self.revision.clone(),
             offset,
+            digest: digest.to_owned(),
         });
     }
+}
+
+/// Why a cursor whose differences have moved is refused.
+const CHANGED: &str = "the differences changed since this cursor (a save or a performed value); read again from the first page";
+
+/// A digest of what one read pages: the baseline kind and every record, as
+/// 64-bit FNV-1a over their JSON, the same on every host.
+fn digest(baseline: DiffBaseline, found: &Differences) -> Result<String, RpcError> {
+    let text = serde_json::to_string(&(baseline, &found.changes, &found.performed))
+        .map_err(|e| RpcError::new(RpcErrorCode::Internal, e.to_string()))?;
+    let hash = text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    Ok(format!("{hash:016x}"))
 }
 
 /// The page's sentence: what changed since the baseline, and whether
