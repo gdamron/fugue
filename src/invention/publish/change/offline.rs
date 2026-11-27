@@ -77,6 +77,11 @@ pub(crate) fn edit_offline(
         return Ok(Committed::default());
     };
     publication.map_survivors(locked.modules.keys().map(String::as_str));
+    // A render that follows notes taps the new topology, as a live
+    // publisher does with each publication.
+    if let Some(keys) = &locked.note_keys {
+        publication.note_taps = Some(keys.taps(&prepared.mirror));
+    }
     let previous: Vec<String> = locked.modules.keys().cloned().collect();
     let publication = locked.install_offline(publication, landing);
     for schedule in written {

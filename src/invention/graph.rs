@@ -255,8 +255,13 @@ pub(crate) struct SignalGraph {
     pub(crate) end_watch: Option<ended::EndWatch>,
     /// The modules whose notes the audio thread reports (see [`notes`]).
     pub(crate) note_taps: notes::NoteTaps,
-    /// Where it reports them; `None` for offline render.
+    /// Where it reports them; `None` for an offline render that follows
+    /// no notes.
     pub(crate) note_out: Option<notes::NoteOut>,
+    /// The keys an offline render that follows notes taps an edit's
+    /// modules with (see `publish::edit_offline`); `None` otherwise, a live
+    /// graph's publisher keeping its own.
+    pub(crate) note_keys: Option<Arc<crate::invention::notes::NoteKeys>>,
     /// The module outputs views tap (see [`taps`]); `None` for offline
     /// render.
     pub(crate) output_taps: Option<taps::OutputTaps>,
@@ -318,6 +323,7 @@ impl SignalGraph {
             end_watch: None,
             note_taps: Default::default(),
             note_out: None,
+            note_keys: None,
             output_taps: None,
             releases: Default::default(),
             onsets: Default::default(),

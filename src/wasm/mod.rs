@@ -6,6 +6,7 @@ use wasm_bindgen::prelude::*;
 use crate::{ControlValue, RenderEngine};
 
 mod inspection;
+mod notes;
 mod preview;
 mod revision;
 mod views;
@@ -21,6 +22,9 @@ pub struct WasmFugueEngine {
     render_buffer: Vec<f32>,
     /// The clock whose beats `takeViewsInto` reads.
     views_clock: Option<String>,
+    /// What `takeNoteWordsInto` drains into, allocated as notes are first
+    /// followed.
+    note_words: Vec<f64>,
 }
 
 #[wasm_bindgen(js_class = FugueEngine)]
@@ -32,6 +36,7 @@ impl WasmFugueEngine {
             inner: RenderEngine::new(sample_rate),
             render_buffer: Vec::new(),
             views_clock: None,
+            note_words: Vec::new(),
         }
     }
 

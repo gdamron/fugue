@@ -61,7 +61,10 @@ pub use graph::{feedback_chunks, set_feedback_chunks, MasterLevels, FEEDBACK_CHU
 pub use handles::InventionHandles;
 pub use layout::{Layout, Position};
 pub use names::MAX_MODULE_NAME_BYTES;
-pub use notes::{NoteChange, NoteChanges, NoteHistory, NoteTime, Playhead, NOTES_PER_MODULE};
+pub use notes::{
+    NoteChange, NoteChanges, NoteHistory, NoteTime, PlayedNotes, Playhead, NOTES_PER_MODULE,
+    NOTE_WORDS_LEN,
+};
 pub use orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
 pub use preview::{NotePreview, DEFAULT_BARS, MAX_BARS, PREVIEW_SAMPLE_RATE};
 pub use reload::{DevelopmentDefinitions, ReloadError, ReloadReport};

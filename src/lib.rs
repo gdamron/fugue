@@ -100,11 +100,11 @@ pub use invention::{
     InventionRuntime, LoggedBeat, LoggedConnection, LoggedEdit, LoggedEditOutcome, LoggedLatch,
     LoggedModule, LoggedRequest, LoggedSetting, LoggedValue, LoggedWhen, MasterLevels, ModuleSpec,
     NoteChange, NoteChanges, NoteHistory, NotePreview, NoteTime, OfflineLevels,
-    OrchestrationRuntime, OutputBins, OutputTap, Playhead, ReloadError, ReloadReport,
+    OrchestrationRuntime, OutputBins, OutputTap, PlayedNotes, Playhead, ReloadError, ReloadReport,
     RenderEditsReport, RenderEngine, RequestLog, RunningInvention, RuntimeConnectionInfo,
     RuntimeController, RuntimeModuleInfo, RuntimeSnapshot, RuntimeState, RuntimeStatus, Score,
     TimeSignature, ViewReading, FEEDBACK_CHUNKS_ENV, MAX_OUTPUT_TAPS, MAX_TAP_BINS,
-    NOTES_PER_MODULE, PREVIEW_SAMPLE_RATE, REQUEST_LOG_CAPACITY, SCORE_SCHEMA_V1,
+    NOTES_PER_MODULE, NOTE_WORDS_LEN, PREVIEW_SAMPLE_RATE, REQUEST_LOG_CAPACITY, SCORE_SCHEMA_V1,
     TIMED_EDIT_LOG_CAPACITY,
 };
 
