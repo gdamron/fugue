@@ -4,25 +4,26 @@
 //! [`RpcCommand::advances_revision_after`] without the engine parsing whole
 //! commands it never runs.
 
-use super::{ControlWrite, EditTiming, RpcCommand, RpcError, RpcErrorCode};
+use super::{ControlWrite, EditTiming, EditWhen, RpcCommand, RpcError, RpcErrorCode};
 
 impl RpcCommand {
     /// The command a host's `command` call stands for, for
     /// [`Self::advances_revision_after`]: `set_control` with its one write,
-    /// `set_controls` with its batch, or `apply_edits` with its `timing`
-    /// (a timed batch advances as it is adopted, not as it is queued). An
-    /// edit batch's rule never reads its edits, so it carries none.
+    /// `set_controls` with its batch, or `apply_edits`, `timed` when it has
+    /// a `when` (a timed batch advances as it is adopted, not as it is
+    /// queued). The rule reads neither an edit batch's edits nor when it
+    /// lands, only whether it is timed, so the batch carries no edits and a
+    /// stand-in time.
     ///
     /// Refused as `invalid_request`: a `set_control` without exactly one
-    /// write, writes or a timing given to a call that has none (a control
-    /// write carries its own timing), and any other command.
+    /// write, writes given to an edit batch, `timed` given to a control
+    /// write (it carries its own timing), and any other command.
     pub fn revision_call(
         command: &str,
         writes: Vec<ControlWrite>,
-        timing: EditTiming,
+        timed: bool,
     ) -> Result<Self, RpcError> {
         let refuse = |message: String| Err(RpcError::new(RpcErrorCode::InvalidRequest, message));
-        let timed = timing != EditTiming::default();
         match command {
             "set_control" | "set_controls" if timed => {
                 refuse(format!("a {command} carries its timing on its writes"))
@@ -48,7 +49,10 @@ impl RpcCommand {
             }
             "apply_edits" => Ok(Self::ApplyEdits {
                 edits: Vec::new(),
-                timing,
+                timing: EditTiming {
+                    when: timed.then_some(EditWhen::AfterSamples { samples: 0 }),
+                    ttl_ms: None,
+                },
             }),
             other => refuse(format!("no revision rule for `{other}` here")),
         }

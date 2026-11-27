@@ -6,7 +6,7 @@
 use wasm_bindgen::prelude::*;
 
 use super::{rpc_error_value, WasmFugueEngine};
-use crate::rpc::{EditTiming, RpcCommand, RpcError, RpcErrorCode, RuntimeRevision};
+use crate::rpc::{RpcCommand, RpcError, RpcErrorCode, RuntimeRevision};
 use crate::ControlWrite;
 
 #[wasm_bindgen(js_class = FugueEngine)]
@@ -16,13 +16,12 @@ impl WasmFugueEngine {
     /// daemon's rule: `command` is `set_control`, `set_controls` or
     /// `apply_edits`, `writes_json` the call's control writes as JSON (`[]`
     /// for an edit batch), `committed` whether it made its change, and
-    /// `timing_json` an edit batch's `{"when", "ttl_ms"}` when it is timed
-    /// (`null` or omitted when it is not). A control write advances once
-    /// when one of its writes authors (the default intent), never when all
-    /// perform, and not when it was refused; an untimed edit batch advances
-    /// when it commits, and a timed one as it is adopted, not as it is
-    /// queued. Which writes the document recorded is `documentWithEpoch`'s
-    /// to say.
+    /// `timed` whether an edit batch has a `when` (omitted: it has none). A
+    /// control write advances once when one of its writes authors (the
+    /// default intent), never when all perform, and not when it was
+    /// refused; an untimed edit batch advances when it commits, and a timed
+    /// one as it is adopted, not as it is queued. Which writes the document
+    /// recorded is `documentWithEpoch`'s to say.
     ///
     /// It takes the call's parts rather than a whole daemon command, so the
     /// engine carries no parser for commands it never runs. Another command,
@@ -33,16 +32,11 @@ impl WasmFugueEngine {
         command: &str,
         writes_json: &str,
         committed: bool,
-        timing_json: Option<String>,
+        timed: Option<bool>,
     ) -> Result<bool, JsValue> {
         let writes: Vec<ControlWrite> = serde_json::from_str(writes_json)
             .map_err(|err| invalid(format!("invalid control writes JSON: {err}")))?;
-        let timing: Option<EditTiming> = match timing_json.as_deref() {
-            Some(json) => serde_json::from_str(json)
-                .map_err(|err| invalid(format!("invalid edit timing JSON: {err}")))?,
-            None => None,
-        };
-        let command = RpcCommand::revision_call(command, writes, timing.unwrap_or_default())
+        let command = RpcCommand::revision_call(command, writes, timed.unwrap_or(false))
             .map_err(|err| rpc_error_value(&err))?;
         Ok(command.advances_revision_after(committed))
     }

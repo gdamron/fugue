@@ -14,18 +14,11 @@ fn performed() -> ControlWrite {
 }
 
 fn call(command: &str, writes: Vec<ControlWrite>) -> RpcCommand {
-    RpcCommand::revision_call(command, writes, EditTiming::default()).unwrap()
+    RpcCommand::revision_call(command, writes, false).unwrap()
 }
 
-fn timed() -> EditTiming {
-    EditTiming {
-        when: Some(EditWhen::AfterSamples { samples: 512 }),
-        ttl_ms: None,
-    }
-}
-
-fn refusal(command: &str, writes: Vec<ControlWrite>, timing: EditTiming) -> RpcError {
-    RpcCommand::revision_call(command, writes, timing).unwrap_err()
+fn refusal(command: &str, writes: Vec<ControlWrite>, timed: bool) -> RpcError {
+    RpcCommand::revision_call(command, writes, timed).unwrap_err()
 }
 
 #[test]
@@ -88,7 +81,8 @@ fn an_edit_batch_advances_when_it_commits_unless_it_is_timed() {
     let at_once = call("apply_edits", Vec::new());
     assert!(at_once.advances_revision_after(true));
     assert!(!at_once.advances_revision_after(false));
-    let queued = RpcCommand::revision_call("apply_edits", Vec::new(), timed()).unwrap();
+    let queued = RpcCommand::revision_call("apply_edits", Vec::new(), true).unwrap();
+    assert!(queued.edit_timing().is_some_and(EditTiming::is_timed));
     assert!(
         !queued.advances_revision_after(true),
         "it advances as it is adopted"
@@ -99,16 +93,12 @@ fn an_edit_batch_advances_when_it_commits_unless_it_is_timed() {
 #[test]
 fn parts_that_do_not_fit_the_call_are_refused() {
     let cases = [
-        refusal("set_control", Vec::new(), EditTiming::default()),
-        refusal(
-            "set_control",
-            vec![authored(), authored()],
-            EditTiming::default(),
-        ),
-        refusal("set_control", vec![authored()], timed()),
-        refusal("set_controls", vec![authored()], timed()),
-        refusal("apply_edits", vec![authored()], EditTiming::default()),
-        refusal("load_invention", Vec::new(), EditTiming::default()),
+        refusal("set_control", Vec::new(), false),
+        refusal("set_control", vec![authored(), authored()], false),
+        refusal("set_control", vec![authored()], true),
+        refusal("set_controls", vec![authored()], true),
+        refusal("apply_edits", vec![authored()], false),
+        refusal("load_invention", Vec::new(), false),
     ];
     for error in cases {
         assert_eq!(
