@@ -179,11 +179,8 @@ fn names_fetched_for_one_piece_still_hold_for_the_next() {
         "{:?}",
         melody.notes
     );
-    let seq = played.page("seq", None, RATE);
-    assert!(seq
-        .notes
-        .iter()
-        .all(|note| [48, 55].contains(&note.note.pitch)));
+    // The new run starts the history over: the last piece's module is gone.
+    assert!(played.page("seq", None, RATE).notes.is_empty());
 }
 
 #[test]
