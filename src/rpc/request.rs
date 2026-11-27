@@ -315,7 +315,9 @@ pub enum RpcCommand {
     /// that cannot load); its entry is then `refused` with the reason, and
     /// the rest are made. Each write coerces and emits a `ControlChanged`
     /// event exactly as a single [`RpcCommand::SetControl`] would, which is
-    /// a batch of one.
+    /// a batch of one. A batch with an authored write advances the revision
+    /// once; a refused one leaves it (see
+    /// [`RpcCommand::advances_revision_after`]).
     SetControls {
         writes: Vec<ControlWrite>,
     },

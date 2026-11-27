@@ -38,8 +38,8 @@ fn perform() -> RpcCommand {
     }
 }
 
-/// Stands in for the daemon: admit, run (advancing the revision as every
-/// attempted authoring command does), record.
+/// Stands in for the daemon: admit, run (advancing the revision as a
+/// committed authoring command does, whatever `response` says), record.
 fn run(
     ledger: &mut MutationLedger,
     revisions: &mut RevisionTracker,

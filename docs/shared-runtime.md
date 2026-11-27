@@ -91,11 +91,18 @@ peer's structural edit permanently stale.
 
 A host does not call that directly once a command has run; it calls
 `RpcCommand::advances_revision_after(committed)`. Most authoring commands
-advance on **any attempt**, even a refused one, because a batch that fails
-partway keeps the writes it made first. A spurious advance costs a peer one
-re-read; a missed one would let a stale edit overwrite real changes. An
-all-or-nothing command (`ApplyEdits`, per `is_all_or_nothing`) advances only
-when it commits, because its refusal changed nothing.
+advance on **any attempt**, even a refused one, because a command that fails
+partway (a load that stopped the old piece) keeps what it changed first. A
+spurious advance costs a peer one re-read; a missed one would let a stale
+edit overwrite real changes. A command whose refusal changes nothing
+advances only when it commits: an all-or-nothing command (`ApplyEdits`, per
+`is_all_or_nothing`), and a control write (`SetControl`, `SetControls`),
+whose batch the control rule makes whole or refuses with nothing written. A
+control write needs no ticket all the same. A browser host that keeps its
+own revision asks the engine the same rule (`FugueEngine.advancesRevision`)
+and checks a precondition with `FugueEngine.checkRevision`, so its answers
+are the daemon's; `FugueEngine.documentWithEpoch` shows which writes its
+document recorded.
 
 ### Preconditions
 

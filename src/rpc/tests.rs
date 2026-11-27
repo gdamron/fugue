@@ -1,6 +1,7 @@
 use super::*;
 use crate::{Invention, ModuleSpec};
 
+mod control_revision;
 mod control_timing;
 mod discovery;
 mod edits;
@@ -14,6 +15,7 @@ mod pins;
 mod recovery;
 mod request;
 mod response;
+mod revision_call;
 mod scope;
 mod snapshot;
 mod spectrogram;

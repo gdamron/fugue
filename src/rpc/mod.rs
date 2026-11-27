@@ -35,6 +35,7 @@ mod recovery;
 mod request;
 mod response;
 mod revision;
+mod revision_call;
 mod scope;
 mod snapshot;
 mod spectrogram;
