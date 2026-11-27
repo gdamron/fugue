@@ -23,8 +23,7 @@ use crate::invention::graph::SignalGraph;
 use crate::invention::publish::{queue_offline, QueueRefused, LEDGER_CAPACITY};
 use crate::invention::runtime::control_timing::ttl_samples;
 use crate::invention::runtime::timed::{edit_time, parse_id, wire_status};
-use crate::rpc::RpcError;
-use crate::rpc::{check_edit_batch, EditWhen, RequestStatus, StructuralEdit};
+use crate::rpc::{check_edit_batch, EditWhen, RequestStatus, RpcError, StructuralEdit};
 use crate::ControlValue;
 
 /// The statuses of a replaced invention's timed edits that changed before
@@ -128,7 +127,10 @@ impl RenderEngine {
 
 /// The last write `candidate`, the batch `edits` checked, makes to each
 /// control of a module it keeps (none it adds or swaps in), a sample's
-/// path resolved, as the daemon chains them to its landing.
+/// path resolved, as the daemon chains them to its landing. The daemon
+/// reads what is built from its plan's added and swapped modules; for the
+/// ops an offline batch takes these are the modules `builds_module` names,
+/// and the two must stay alike.
 fn kept_writes(
     edits: &[StructuralEdit],
     candidate: &EditedCandidate,

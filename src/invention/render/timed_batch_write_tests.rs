@@ -9,7 +9,7 @@
 use super::timed_edit_tests::{daemon, edits, next_bar, unnumbered, whens, ADD, SWAP};
 use super::timed_write_tests::{daemon_render, engine, render, AFTER, BLOCK, LEAD_IN};
 use crate::alloc_counter::allocator_events;
-use crate::rpc::{ControlRequestState, RequestState};
+use crate::rpc::RequestState;
 use crate::{ControlValue, ControlWrite, ControlWriteIntent};
 
 /// Adds a voice an octave down and retunes it, and retunes the sine the
@@ -72,6 +72,8 @@ fn its_writes_land_with_it_on_the_daemons_sample_and_are_recorded() {
             engine.get_control("osc", "frequency").unwrap(),
             330.0.into()
         );
+        // Followed through its status, not reported as a write.
+        assert!(engine.take_settled_writes().is_empty(), "{when:?}");
 
         // Its write to the sine is heard from the sample it lands on.
         let mut twin = self::engine();
@@ -102,15 +104,14 @@ fn cancelled_it_plays_none_of_its_writes() {
     engine.apply_edits(&edits(SWAP)).unwrap();
     let cancelled = engine.request_status(&queued.id).unwrap();
     assert_eq!(cancelled.state, RequestState::Cancelled);
-    // Its write to the sine is refused with it at the next block, not
-    // left waiting for the downbeat it would have landed on.
-    assert_eq!(render(&mut engine, 1), daemon_render(&pump, 1));
-    let settled = engine.take_settled_writes();
-    let write = settled.iter().find(|s| s.module_id == "osc" && s.key == "frequency");
-    let write = write.expect("its write settled");
-    assert_eq!(write.state, ControlRequestState::Refused, "{write:?}");
+    // Its write to the sine goes with it, followed through its status: as
+    // the daemon announces none, none is reported settled.
     assert_eq!(render(&mut engine, AFTER), daemon_render(&pump, AFTER));
-    assert_eq!(engine.get_control("osc", "frequency").unwrap(), 220.0.into());
+    assert!(engine.take_settled_writes().is_empty());
+    assert_eq!(
+        engine.get_control("osc", "frequency").unwrap(),
+        220.0.into()
+    );
     assert_eq!(recorded(engine.document(), "osc"), Some(220.0));
     assert_eq!(recorded(engine.document(), "low"), None);
 }
@@ -154,22 +155,34 @@ fn an_authored_write_to_a_control_it_writes_is_kept_over_it() {
 }
 
 #[test]
-fn a_batch_of_writes_alone_is_refused_as_the_daemon_refuses_it() {
-    let (mut running, _pump) = daemon();
-    let engine = engine();
-    let alone = r#"[{"op":"set_control","module_id":"osc","key":"frequency","value":330.0}]"#;
-    let daemon_refused = running
-        .apply_edits_at(&edits(alone), &next_bar(), None)
-        .unwrap_err();
-    let refused = engine
-        .apply_edits_at(&edits(alone), &next_bar(), None)
-        .unwrap_err();
-    assert_eq!(refused.code, daemon_refused.code);
-    assert_eq!(refused.message, daemon_refused.message);
-    assert_eq!(
-        engine.get_control("osc", "frequency").unwrap(),
-        220.0.into()
-    );
+fn a_batch_the_daemon_refuses_is_refused_as_it_refuses_it() {
+    let add = r#"{"op":"add_module","id":"low","module_type":"oscillator"},"#;
+    let write = |key: &str, value: &str| {
+        format!(r#"{{"op":"set_control","module_id":"osc","key":"{key}","value":{value}}}"#)
+    };
+    let batches = [
+        // Writes alone change no structure.
+        format!("[{}]", write("frequency", "330.0")),
+        // A write to a control the sine does not declare.
+        format!("[{add}{}]", write("no_such_control", "1.0")),
+        // A value its control does not take.
+        format!("[{add}{}]", write("waveform", r#""no_such_waveform""#)),
+    ];
+    for batch in batches {
+        let (mut running, _pump) = daemon();
+        let engine = engine();
+        let daemon_refused = running.apply_edits_at(&edits(&batch), &next_bar(), None);
+        let refused = engine.apply_edits_at(&edits(&batch), &next_bar(), None);
+        let (daemon_refused, refused) = (daemon_refused.unwrap_err(), refused.unwrap_err());
+        assert_eq!(refused.code, daemon_refused.code, "{batch}");
+        assert_eq!(refused.message, daemon_refused.message, "{batch}");
+        assert!(engine.take_request_changes().is_empty(), "{batch}");
+        assert_eq!(recorded(engine.document(), "low"), None, "{batch}");
+        assert_eq!(
+            engine.get_control("osc", "frequency").unwrap(),
+            220.0.into()
+        );
+    }
 }
 
 #[test]

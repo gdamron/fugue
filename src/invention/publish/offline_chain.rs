@@ -90,6 +90,7 @@ pub(super) fn resolve_offline_chain(
             // As the edit names it, never an event.
             authored: (!write.event).then(|| value.clone()),
             generation,
+            announced: false,
         };
         Ok(OfflineChained { request, write })
     };
@@ -98,10 +99,10 @@ pub(super) fn resolve_offline_chain(
 
 /// Submits `chain` on `locked`'s queue, each waiting on edit `edit`
 /// applying, before the edit itself is queued, so the render has every
-/// write waiting when it lands. Returns what each write is to. Refused
-/// `QueueFull` when one finds no room, which the caller checked for under
-/// the graph's lock, so never: the writes queued are then refused with
-/// the edit, which is never queued.
+/// write waiting when it lands. Returns what each write is to. Never
+/// fails, since the caller checked room for the chain and the edit under
+/// the graph's lock; if it does (`QueueFull`), the edit is marked
+/// cancelled, so the writes already queued are refused.
 pub(super) fn submit_offline_chain(
     locked: &mut SignalGraph,
     edit: RequestId,
@@ -137,7 +138,9 @@ pub(super) fn submit_offline_chain(
 /// landing and replaces any copy before it. Returns the edit it is kept
 /// over, or `None` with nothing queued when none waits, it does not write
 /// the control, or no request can wait (a write then cancels the edit, as
-/// it is reconciled).
+/// it is reconciled). Each copy holds a slot until the render takes it, so
+/// a host writing many times between two renders can run out of room, and
+/// the write then cancels the edit, as on a live graph whose queue fills.
 pub(crate) fn keep_offline_authored(
     locked: &mut SignalGraph,
     (module_id, key): (&str, &str),

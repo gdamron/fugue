@@ -89,16 +89,16 @@ pub(crate) enum QueueRefused {
 /// Queues the change `edit` makes to an offline render's `graph` to land
 /// at `time`, refused once `ttl` samples pass first, and returns its
 /// request's id. Its `writes` (module, control, value) to modules it keeps
-/// play from the sample it lands on (see `offline_chain`). It is adopted into `targets` once it lands (see
-/// [`adopt_offline`]). Build its modules before calling, so builds stay
-/// outside the graph's lock.
+/// play from the sample it lands on (see `offline_chain`). It is adopted
+/// into `targets` once it lands (see [`adopt_offline`]). Build its modules
+/// before calling, so builds stay outside the graph's lock.
 ///
 /// Refused with nothing queued as an untimed edit is (`Prepare`), and as a
 /// live graph's timed edit is (`Queue`): when it adds or removes a code or
 /// agent module, `time` names a clock or module that is not there, a write
-/// cannot be timed or does not fit its control, another timed edit waits, it changes no structure (`ControlError`), the queue
-/// is full, or a timed edit the render landed has yet to be adopted
-/// (`TopologyMoved`). What a refused change built drops off the lock.
+/// cannot be timed or does not fit its control, another timed edit waits,
+/// it changes no structure (`ControlError`), the queue is full, or a timed
+/// edit the render landed has yet to be adopted (`TopologyMoved`). What a refused change built drops off the lock.
 pub(crate) fn queue_offline(
     graph: &Arc<Mutex<SignalGraph>>,
     targets: OfflineTargets<'_>,
@@ -166,8 +166,9 @@ fn refuse_timed(locked: &SignalGraph, changes: bool) -> Result<(), GraphCommandE
 type TimedParts<'a> = (EditTime<'a>, (When, Option<LoggedBeat>), Option<u64>);
 
 /// Submits `prepared` as a timed edit request on `locked`'s queue, after
-/// its `chain` of writes waiting on it, and waits on it. Refused, it is left where it is, and a request the queue
-/// hands back in `unsent`, to drop off the lock.
+/// its `chain` of writes waiting on it, and waits on it. Refused, it is
+/// left where it is, and a request the queue hands back in `unsent`, to
+/// drop off the lock.
 fn submit(
     locked: &mut SignalGraph,
     prepared: &mut Option<OfflinePrepared>,
