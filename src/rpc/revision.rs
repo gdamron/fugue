@@ -26,11 +26,14 @@
 //! # When it advances
 //!
 //! Most authoring commands advance the revision whenever they are attempted,
-//! because a batch that fails part-way keeps the writes it made first. An
-//! all-or-nothing command (`ApplyEdits`) either commits every change or
-//! changes nothing, so it advances only when it commits.
+//! because a command that fails part-way (a load that stopped the old piece)
+//! keeps what it changed first. A command whose refusal changes nothing
+//! advances only when it commits: `ApplyEdits`, which commits every change
+//! or none, and the control writes (`SetControl`, `SetControls`), whose
+//! batch the control rule makes whole or refuses with nothing written.
 //! [`RpcCommand::advances_revision_after`] is the single rule a host applies
-//! once a command has run.
+//! once a command has run, and a browser host reaches it through the
+//! engine's `advancesRevision`.
 //!
 //! Deliberately absent: any automatic merge. A rejected client is handed the
 //! current revision and re-reads; reconciling is the client's business.
@@ -205,16 +208,27 @@ impl RevisionTracker {
         self.current()
     }
 
-    /// Checks a request's precondition.
+    /// Checks a request's precondition against the current revision (see
+    /// [`RuntimeRevision::check`]).
+    pub fn check(&self, expected: Option<&RuntimeRevision>) -> Result<(), RevisionConflict> {
+        self.current().check(expected)
+    }
+}
+
+impl RuntimeRevision {
+    /// Checks a request's precondition, `expected`, against this, the
+    /// revision a host holds now.
     ///
     /// `None` is an unconditional call and always passes — existing clients
     /// that never learned about revisions keep working, and a caller that
-    /// genuinely means "apply regardless" simply omits the field.
+    /// genuinely means "apply regardless" simply omits the field. A host
+    /// that keeps its own counter (a browser player) checks with this, so
+    /// its refusal is the daemon's.
     pub fn check(&self, expected: Option<&RuntimeRevision>) -> Result<(), RevisionConflict> {
         let Some(expected) = expected else {
             return Ok(());
         };
-        RevisionConflict::between(expected, &self.current()).map_or(Ok(()), Err)
+        RevisionConflict::between(expected, self).map_or(Ok(()), Err)
     }
 }
 
@@ -274,17 +288,31 @@ impl RpcCommand {
         matches!(self, Self::ApplyEdits { .. })
     }
 
-    /// Whether the daemon advances its revision once this command has run.
-    /// `committed` is whether the command succeeded.
+    /// Whether this command's refusal leaves the document exactly as it
+    /// was: an [all-or-nothing](Self::is_all_or_nothing) command, or a
+    /// control write, whose batch the control rule makes whole or refuses
+    /// with nothing written. Unlike `ApplyEdits`, a control write needs no
+    /// ticket.
+    fn refusal_changes_nothing(&self) -> bool {
+        self.is_all_or_nothing()
+            || matches!(self, Self::SetControl { .. } | Self::SetControls { .. })
+    }
+
+    /// Whether a host advances its revision once this command has run.
+    /// `committed` is whether the command made its change: it succeeded,
+    /// or it reported an error after making some of it.
     ///
     /// The single rule a host calls after dispatch, in place of calling
     /// [`Self::advances_revision`] directly. An authoring command advances on
-    /// any attempt, since a batch that fails part-way keeps its earlier
-    /// writes; an [all-or-nothing](Self::is_all_or_nothing) command advances
-    /// only when it commits, because a refusal changed nothing. Commands
-    /// that never author never advance.
+    /// any attempt, since one that fails part-way keeps what it changed
+    /// first; a command whose refusal changes nothing (`ApplyEdits`, a
+    /// control write) advances only when it commits. A control write
+    /// authors when one of its writes does (see [`ControlWriteIntent`]), so
+    /// a call advances once however many writes it carries, and a
+    /// performed one never advances. Commands that never author never
+    /// advance.
     pub fn advances_revision_after(&self, committed: bool) -> bool {
-        self.advances_revision() && (committed || !self.is_all_or_nothing())
+        self.advances_revision() && (committed || !self.refusal_changes_nothing())
     }
 }
 
@@ -340,6 +368,21 @@ mod tests {
         let tracker = RevisionTracker::new("s1");
         let _ = tracker.check(Some(&token("s1", 7)));
         assert_eq!(tracker.current(), token("s1", 0));
+    }
+
+    #[test]
+    fn a_held_revision_checks_as_its_tracker_does() {
+        let held = token("s1", 3);
+        assert!(held.check(None).is_ok());
+        assert!(held.check(Some(&token("s1", 3))).is_ok());
+        let stale = held.check(Some(&token("s1", 2))).expect_err("stale");
+        assert_eq!(stale.reason, ConflictReason::StaleRevision);
+        assert_eq!(
+            (stale.expected, stale.current),
+            (token("s1", 2), held.clone())
+        );
+        let replaced = held.check(Some(&token("s0", 3))).expect_err("replaced");
+        assert_eq!(replaced.reason, ConflictReason::SessionReplaced);
     }
 
     #[test]

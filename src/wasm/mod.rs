@@ -7,6 +7,7 @@ use crate::{ControlValue, RenderEngine};
 
 mod inspection;
 mod preview;
+mod revision;
 mod views;
 
 #[wasm_bindgen(js_name = FugueEngine)]

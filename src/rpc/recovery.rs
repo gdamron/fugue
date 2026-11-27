@@ -46,8 +46,8 @@
 //! The daemon advances the revision for every admitted command that may have
 //! changed state, whatever its outcome (a batch that fails part-way keeps its
 //! earlier writes). A command recorded without advancing the revision is taken
-//! to have changed nothing; a refused all-or-nothing command is recorded that
-//! way (see [`RpcCommand::advances_revision_after`]).
+//! to have changed nothing; a refused all-or-nothing command or control write
+//! is recorded that way (see [`RpcCommand::advances_revision_after`]).
 //!
 //! Evicting the outcome of a command that advanced the revision moves the
 //! ledger's horizon to the revision at which that command ran. A ticket issued

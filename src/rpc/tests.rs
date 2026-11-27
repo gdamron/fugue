@@ -1,6 +1,7 @@
 use super::*;
 use crate::{Invention, ModuleSpec};
 
+mod control_revision;
 mod control_timing;
 mod discovery;
 mod edits;
