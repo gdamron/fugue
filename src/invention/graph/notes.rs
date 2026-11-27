@@ -105,6 +105,12 @@ pub(crate) struct NoteTap {
 }
 
 impl NoteTap {
+    /// The beat its clock reached at the end of the latest segment; NaN
+    /// before one, or without a clock.
+    pub(crate) fn last_beats(&self) -> f64 {
+        self.last_beats
+    }
+
     pub(crate) fn new(
         module_idx: usize,
         key: u32,

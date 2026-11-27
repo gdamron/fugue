@@ -16,11 +16,15 @@
 //! [`RunningInvention::take_notes`]: crate::RunningInvention::take_notes
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 mod history;
+mod played;
 
 pub use history::{NoteHistory, NOTES_PER_MODULE};
+pub(crate) use played::write_words;
+pub use played::{PlayedNotes, NOTE_WORDS_LEN};
 
 use super::graph::notes::{NoteEdge, NoteOut, NoteTap, NoteTaps, TapVoice, NOTE_EDGE_CAPACITY};
 use super::publish::TopologyMirror;
@@ -29,7 +33,7 @@ use crate::audio_thread::ControlLock;
 use crate::control_request::{EventCounter, EventCursor};
 use crate::modules::divisi::MAX_VOICES;
 use crate::rpc::ListedNote;
-use crate::spsc::Ring;
+use crate::spsc::{Consumer, Ring};
 
 /// A note starting, or ending, on one voice of a module.
 #[derive(Clone, Debug, PartialEq)]
@@ -145,13 +149,20 @@ struct Pairing {
 impl NoteFeed {
     /// A feed, and the end the audio thread sends to. Control thread.
     pub(crate) fn new() -> (Arc<Self>, NoteOut) {
+        Self::with_keys(Arc::default())
+    }
+
+    /// As [`Self::new`], naming modules and clocks with `keys`, which may
+    /// have named them for an earlier feed: a key keeps its id for as long
+    /// as `keys` lives. Control thread.
+    pub(crate) fn with_keys(keys: Arc<NoteKeys>) -> (Arc<Self>, NoteOut) {
         let ring = Ring::with_capacity(NOTE_EDGE_CAPACITY);
         let missed = Arc::new(EventCounter::new());
         let out = NoteOut::new(Arc::clone(&ring), Arc::clone(&missed));
         let feed = Self {
             ring,
             missed,
-            keys: Arc::default(),
+            keys,
             pairing: ControlLock::new(Pairing::default()),
         };
         (Arc::new(feed), out)
@@ -163,18 +174,48 @@ impl NoteFeed {
 
     /// Drains the ring and pairs what it held. Control thread.
     pub(crate) fn take(&self) -> NoteChanges {
+        self.take_with(|| self.ring.pop())
+    }
+
+    /// As [`Self::take`], popping through `edges`, the reader
+    /// [`Self::claim`] gave.
+    pub(crate) fn take_from(&self, edges: &mut Consumer<NoteEdge>) -> NoteChanges {
+        self.take_with(|| edges.pop())
+    }
+
+    fn take_with(&self, mut pop: impl FnMut() -> Option<NoteEdge>) -> NoteChanges {
         let mut pairing = self.pairing.lock().unwrap_or_else(|e| e.into_inner());
         let missed = pairing.missed.take(&self.missed);
         let mut notes = Vec::new();
-        while let Some(edge) = self.ring.pop() {
-            pairing.pair(&edge, &self.keys, &mut notes);
+        while let Some(edge) = pop() {
+            pairing.pair(&edge, |key| self.keys.id(key), &mut notes);
         }
         NoteChanges { notes, missed }
+    }
+
+    /// The feed's one reader from here on, whose pops take no lock: for a
+    /// drain that may run on an audio thread, unpaired (see
+    /// [`PlayedNotes`]), or paired through [`Self::take_from`].
+    /// [`Self::take`] panics while it lives. Control thread.
+    pub(crate) fn claim(&self) -> Consumer<NoteEdge> {
+        Consumer::claim(Arc::clone(&self.ring))
+    }
+
+    /// The edges a full ring dropped since `cursor` last looked.
+    pub(crate) fn missed_since(&self, cursor: &mut EventCursor) -> u32 {
+        cursor.take(&self.missed)
     }
 }
 
 impl Pairing {
-    fn pair(&mut self, edge: &NoteEdge, keys: &NoteKeys, notes: &mut Vec<NoteChange>) {
+    /// Pairs `edge` with what its voice holds, naming modules and clocks by
+    /// `name`, and pushes the notes it starts or ends to `notes`.
+    fn pair(
+        &mut self,
+        edge: &NoteEdge,
+        name: impl Fn(u32) -> Option<String>,
+        notes: &mut Vec<NoteChange>,
+    ) {
         // Edges were dropped just before this one: a note held across them
         // may have ended unseen, and would otherwise hold until its voice
         // plays again, ended on whatever clock that is.
@@ -194,7 +235,7 @@ impl Pairing {
         if !edge.on || !pitch.is_finite() {
             return;
         }
-        let Some(module_id) = keys.id(edge.key) else {
+        let Some(module_id) = name(edge.key) else {
             return;
         };
         let key = edge.key as usize;
@@ -206,7 +247,7 @@ impl Pairing {
             note: self.next[key],
             voice: u32::from(edge.voice),
             pitch,
-            clock: edge.clock.and_then(|clock| keys.id(clock)),
+            clock: edge.clock.and_then(&name),
             velocity: if edge.velocity.is_nan() {
                 1.0
             } else {
@@ -225,7 +266,13 @@ impl Pairing {
 /// a number the audio thread sends in its place, for as long as the
 /// invention runs.
 #[derive(Default)]
-pub(crate) struct NoteKeys(ControlLock<Keys>);
+pub(crate) struct NoteKeys {
+    keys: ControlLock<Keys>,
+    /// How many ids have a key, stored as `taps` gives the last of them
+    /// one: read without the lock by a drain that may run on an audio
+    /// thread.
+    count: AtomicUsize,
+}
 
 #[derive(Default)]
 struct Keys {
@@ -235,14 +282,32 @@ struct Keys {
 
 impl NoteKeys {
     fn id(&self, key: u32) -> Option<String> {
-        let keys = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let keys = self.keys.lock().unwrap_or_else(|e| e.into_inner());
         keys.ids.get(key as usize).cloned()
+    }
+
+    /// Every id given a key so far, by key. Control thread: allocates.
+    pub(crate) fn names(&self) -> Vec<String> {
+        self.keys
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .ids
+            .clone()
+    }
+
+    /// How many ids have a key: keys only grow, so a reader holding fewer
+    /// names than this asks for them again. Lock-free, for a drain that
+    /// may run on an audio thread. Release and acquire pair the count with
+    /// the ids `taps` wrote before it; readers of the ids take the lock
+    /// anyway, so the pairing matters only to a drain on another thread.
+    pub(crate) fn count(&self) -> usize {
+        self.count.load(Ordering::Acquire)
     }
 
     /// Taps for every module of `mirror` that plays notes, by module index.
     /// Control thread: allocates.
     pub(crate) fn taps(&self, mirror: &TopologyMirror) -> NoteTaps {
-        let mut keys = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut keys = self.keys.lock().unwrap_or_else(|e| e.into_inner());
         let mut taps = Vec::new();
         for (module_idx, (id, module)) in mirror.modules.iter().enumerate() {
             let outputs = &module.ports.outputs;
@@ -262,6 +327,7 @@ impl NoteKeys {
             let key = keys.key(id);
             taps.push(NoteTap::new(module_idx, key, clock, voices));
         }
+        self.count.store(keys.ids.len(), Ordering::Release);
         NoteTaps(taps)
     }
 }

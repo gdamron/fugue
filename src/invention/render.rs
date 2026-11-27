@@ -23,6 +23,7 @@ mod code_modules;
 mod control_writes;
 mod editing;
 mod levels;
+mod notes;
 mod options;
 mod pause;
 mod replay;
@@ -58,6 +59,9 @@ pub struct RenderEngine {
     seed: Option<u64>,
     /// What the device clamp cut since [`Self::take_levels`] last read.
     clamp_counts: levels::ClampCounts,
+    /// The notes it plays, once asked to follow them (see
+    /// [`Self::follow_notes`]).
+    notes: Option<notes::Followed>,
 }
 
 impl RenderEngine {
@@ -81,6 +85,7 @@ impl RenderEngine {
             replay: replay::Replay::default(),
             seed: None,
             clamp_counts: levels::ClampCounts::default(),
+            notes: None,
         }
     }
 
@@ -460,6 +465,7 @@ impl RenderEngine {
         graph.end_watch = Some(Default::default());
         // No request reaches it, but it plays the modules' tables.
         super::graph::offline_requests(&mut graph);
+        self.tap_notes(&mut graph);
         let graph = Arc::new(Mutex::new(graph));
         super::declared::bind_offline(&graph, &runtime.control_surfaces);
         self.graph = Some(graph);
