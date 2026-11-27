@@ -13,8 +13,9 @@ pub use development::{
 };
 mod inspection;
 pub use inspection::{
-    inspect_document, InspectionCoverage, InspectionCursor, InspectionEntry, InspectionPage, InspectionQuery,
-    InspectionSelection, MAX_INSPECTION_BYTES, MAX_INSPECTION_ENTRIES, MAX_INSPECTION_VALUE_BYTES,
+    inspect_document, InspectionCoverage, InspectionCursor, InspectionEntry, InspectionPage,
+    InspectionQuery, InspectionSelection, MAX_INSPECTION_BYTES, MAX_INSPECTION_ENTRIES,
+    MAX_INSPECTION_VALUE_BYTES,
 };
 mod described_values;
 mod discovery;

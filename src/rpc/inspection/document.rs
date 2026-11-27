@@ -12,8 +12,8 @@ use crate::Invention;
 /// JSON text, the daemon's `InventionInspection` page; it has no
 /// `source_path`, which is null.
 ///
-/// `expected_revision`, when given, is checked first, as a daemon checks a
-/// request's: one other than `revision` is refused with the shared
+/// `expected_revision`, when given, is checked before the document is read,
+/// as a daemon checks a request's: one other than `revision` is refused with the shared
 /// [`RevisionConflict`]. Malformed JSON is `InvalidRequest`.
 pub fn inspect_document(
     document: &str,
@@ -22,13 +22,15 @@ pub fn inspect_document(
     expected_revision: Option<&str>,
 ) -> Result<String, RpcError> {
     let revision: RuntimeRevision = parse("revision", revision)?;
+    // A malformed request is refused before its precondition, as a daemon
+    // reads the whole request first.
+    let query: InspectionQuery = parse("inspection query", query)?;
     if let Some(expected) = expected_revision {
         let expected: RuntimeRevision = parse("expected_revision", expected)?;
         if let Some(conflict) = RevisionConflict::between(&expected, &revision) {
             return Err(RpcError::revision_conflict(conflict));
         }
     }
-    let query: InspectionQuery = parse("inspection query", query)?;
     let document = Invention::from_json(document)
         .map_err(|error| invalid(&format!("invalid invention JSON: {error}")))?;
     let page = AuthoredSnapshot::new(document, revision)?.inspect(&query)?;
