@@ -1,14 +1,15 @@
 //! Bounded, revision-stamped views of retained authored declarations.
 
+mod document;
 mod selection;
 #[cfg(test)]
 mod tests;
 
-use super::{
-    AuthoredSnapshot, ConflictReason, RevisionConflict, RpcError, RpcErrorCode, RuntimeRevision,
-};
+use super::{AuthoredSnapshot, RevisionConflict, RpcError, RpcErrorCode, RuntimeRevision};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+pub use document::inspect_document;
 
 /// Compact JSON payload budget, before RPC or MCP string escaping.
 pub const MAX_INSPECTION_BYTES: usize = 16 * 1024;
@@ -138,16 +139,8 @@ impl AuthoredSnapshot {
             return Err(invalid("limit must be between 1 and 100"));
         }
         let offset = if let Some(cursor) = &query.cursor {
-            if cursor.revision != self.revision {
-                return Err(RpcError::revision_conflict(RevisionConflict {
-                    expected: cursor.revision.clone(),
-                    current: self.revision.clone(),
-                    reason: if cursor.revision.session_id == self.revision.session_id {
-                        ConflictReason::StaleRevision
-                    } else {
-                        ConflictReason::SessionReplaced
-                    },
-                }));
+            if let Some(conflict) = RevisionConflict::between(&cursor.revision, &self.revision) {
+                return Err(RpcError::revision_conflict(conflict));
             }
             if cursor.selection != query.selection {
                 return Err(invalid("continuation belongs to a different selection"));

@@ -103,6 +103,24 @@ pub struct RevisionConflict {
 }
 
 impl RevisionConflict {
+    /// The conflict between a client's `expected` token and the host's
+    /// `current` one, or none when they are the same.
+    pub fn between(expected: &RuntimeRevision, current: &RuntimeRevision) -> Option<Self> {
+        if expected == current {
+            return None;
+        }
+        let reason = if expected.session_id == current.session_id {
+            ConflictReason::StaleRevision
+        } else {
+            ConflictReason::SessionReplaced
+        };
+        Some(Self {
+            expected: expected.clone(),
+            current: current.clone(),
+            reason,
+        })
+    }
+
     /// A one-line description suitable for [`RpcError::message`].
     ///
     /// [`RpcError::message`]: super::RpcError::message
@@ -196,20 +214,7 @@ impl RevisionTracker {
         let Some(expected) = expected else {
             return Ok(());
         };
-        let current = self.current();
-        if expected == &current {
-            return Ok(());
-        }
-        let reason = if expected.session_id == current.session_id {
-            ConflictReason::StaleRevision
-        } else {
-            ConflictReason::SessionReplaced
-        };
-        Err(RevisionConflict {
-            expected: expected.clone(),
-            current,
-            reason,
-        })
+        RevisionConflict::between(expected, &self.current()).map_or(Ok(()), Err)
     }
 }
 

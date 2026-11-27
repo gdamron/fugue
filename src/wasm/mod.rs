@@ -5,6 +5,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::{ControlValue, RenderEngine};
 
+mod inspection;
 mod preview;
 mod views;
 
