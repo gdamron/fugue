@@ -18,7 +18,6 @@ use crate::invention::graph::{
 use crate::invention::notes::{NoteFeed, NoteKeys};
 use crate::invention::runtime::GraphCommandError;
 use crate::invention::taps::TapRegistry;
-use crate::invention::timelines::{Context, Flow};
 use crate::payload::{self, Payload, RetireQueue, Retirer, MAX_RETIRES_PER_REQUEST};
 use crate::spsc::{Consumer, Producer, Ring};
 
@@ -320,71 +319,23 @@ impl Publisher {
     }
 
     /// The index of the invention's first clock, the one a timed edit
-    /// batch or reload counts beats on unless it names one.
+    /// batch or reload counts beats on unless it names one (see
+    /// [`TopologyMirror::first_clock`]).
     pub(crate) fn first_clock(&self) -> Result<u32, GraphCommandError> {
-        let mut modules = self.mirror.modules.values();
-        let clock = modules.position(|module| matches!(module.flow, Flow::Clock));
-        let none = "The invention has no clock to count beats on: time this edit in samples";
-        // Module counts are far below u32::MAX (`BeatTime` keeps it narrow).
-        clock
-            .map(|index| index as u32)
-            .ok_or_else(|| GraphCommandError::ControlError(none.into()))
+        self.mirror.first_clock()
     }
 
-    /// Resolves the clock a request timed in beats on `module_id` counts on,
-    /// for [`BeatTime::clock`](crate::control_request::BeatTime): `clock`
-    /// by id when the request names one, otherwise the module's timeline
-    /// context (see `crate::invention::timelines`). Resolved against the
-    /// mirror, as [`Self::control_target`] is, and submitted under the same
-    /// lock. The request keeps this clock whatever later changes do to the
-    /// context, and is refused `TimelineGone` if the clock goes.
-    ///
-    /// Fails with [`GraphCommandError::UnknownModule`], or with
-    /// [`GraphCommandError::ControlError`] when the named module is not a
-    /// clock, or an unnamed clock cannot be resolved: the invention has no
-    /// clock a request can name, or the module is driven by a clock inside a
-    /// development, which a request cannot name yet.
+    /// Resolves the clock a request timed in beats on `module_id` counts on
+    /// against the mirror (see [`TopologyMirror::beat_clock`]), as
+    /// [`Self::control_target`] resolves its target, and submitted under
+    /// the same lock.
     pub(crate) fn beat_clock(
         &self,
         module_id: &str,
         clock: Option<&str>,
     ) -> Result<u32, GraphCommandError> {
         debug_assert_control_thread("Publisher::beat_clock");
-        let modules = &self.mirror.modules;
-        let index_of = |id: &str| {
-            modules
-                .get_index_of(id)
-                .ok_or_else(|| GraphCommandError::UnknownModule(id.to_string()))
-        };
-        let module = index_of(module_id)?;
-        let clock = match clock {
-            Some(id) => match index_of(id)? {
-                clock if matches!(modules[clock].flow, Flow::Clock) => clock,
-                _ => {
-                    return Err(GraphCommandError::ControlError(format!(
-                        "module '{id}' is not a clock"
-                    )));
-                }
-            },
-            None => match self.mirror.timelines.get(module) {
-                Some(Context::Connected { clock, .. } | Context::Fallback { clock }) => *clock,
-                Some(Context::Enclosed { development }) => {
-                    let development = modules.get_index(*development).map_or("?", |(id, _)| id);
-                    return Err(GraphCommandError::ControlError(format!(
-                        "module '{module_id}' counts on a clock inside development \
-                         '{development}', which a request cannot name yet; name a clock"
-                    )));
-                }
-                Some(Context::None) | None => {
-                    return Err(GraphCommandError::ControlError(format!(
-                        "module '{module_id}' has no timeline: the invention has no clock \
-                         a request can name"
-                    )));
-                }
-            },
-        };
-        // Module counts are far below u32::MAX (`BeatTime` keeps it narrow).
-        Ok(clock as u32)
+        self.mirror.beat_clock(module_id, clock)
     }
 
     /// Queues a write resolved by [`Self::input_write`] for the next block.
