@@ -88,12 +88,19 @@ fn performed_values_stand_apart_from_the_document() {
     let values = [
         // The document holds 220 as an f32 reads it: not performed.
         sounding("voice", "frequency", json!(220.0)),
+        // A control holds an f32, so it sounds the document's 0.123456789
+        // as 0.12345679: not performed either.
+        sounding("hat", "decay", json!(0.12345679)),
         sounding("voice", "waveform", json!("saw")),
         // Nothing in the document for it: it plays its default there.
         sounding("hat", "level", json!(0.5)),
         sounding("voice", "waveform", json!("square")),
     ];
-    let found = compare(SAVED, SAVED, &values);
+    let saved = SAVED.replace(
+        r#""type":"noise""#,
+        r#""type":"noise","config":{"decay":0.123456789}"#,
+    );
+    let found = compare(&saved, &saved, &values);
     assert!(found.changes.is_empty());
     assert_eq!(
         serde_json::to_value(&found.performed).unwrap(),

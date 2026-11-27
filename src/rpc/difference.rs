@@ -5,7 +5,8 @@
 //! document order, changed (each config key with its saved and current
 //! value) or added; connections removed and added; then the piece's other
 //! fields (title, description, each development and asset by name). Fields
-//! and keys come in name order. Then, apart, the values that sound but that
+//! and keys come in name order, the saved piece's first and then those only
+//! the current one has. Then, apart, the values that sound but that
 //! the document does not hold because they were only performed: a save
 //! would not keep them.
 
