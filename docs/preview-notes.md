@@ -18,7 +18,8 @@ a string.
 
 ## What it does
 
-The engine builds a private copy of the document at its own sample rate.
+The engine builds a private copy of the document at `PREVIEW_SAMPLE_RATE`
+(48 kHz), whatever its own rate.
 The copy is built under the request's seed and started without script hosts
 or agent workers. The engine then runs the copy offline, reading the notes
 from the same note taps the live `get_notes` drains. The engine's own piece
@@ -51,9 +52,9 @@ when it reports none. Without a clock, a bar is 2 seconds. The range is
 These are refused before any audio is rendered:
 
 - `bars` at most **64**: `bars is 65; the largest allowed is 64`.
-- At most **300 seconds** of audio, `300 × sampleRate` frames, counted from
+- At most **300 seconds** of audio, `300 × 48000` frames, counted from
   the start of the piece to one bar past the range at the starting tempo:
-  `the range needs 13671000 frames (310 seconds at 44100 Hz); the largest allowed is 13230000 frames (300 seconds)`.
+  `the range needs 14880000 frames (310 seconds at 48000 Hz); the largest allowed is 14400000 frames (300 seconds)`.
 - A document the engine cannot load is refused with exactly the string
   `loadInvention` throws for it.
 - An unknown `module_id` is refused, naming the id.
@@ -80,7 +81,7 @@ run stops there and the answer says `limit_reached: true`.
   "truncated": false,
   "cursor": null,
   "limit_reached": false,
-  "limits": { "max_bars": 64, "max_frames": 13230000 }
+  "limits": { "max_bars": 64, "max_frames": 14400000 }
 }
 ```
 

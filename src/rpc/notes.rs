@@ -38,7 +38,8 @@ pub struct NotePage {
     /// notes held for this module and take `notes` in their place.
     pub resync_required: bool,
     /// Where the module's clock is now, in beats on `clock`; `None` without
-    /// a clock.
+    /// a clock, or while the module's kept notes count on another clock
+    /// than the one the playhead was read from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub playhead: Option<f64>,
 }
