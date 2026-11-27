@@ -15,14 +15,17 @@ pub(crate) type Settled = (RequestId, Outcome, Option<u64>);
 
 /// Creates a channel for up to `capacity` outcomes (rounded up to a power
 /// of two). Allocates once: call it on a control thread.
+#[cfg(test)]
 pub(crate) fn outcome_channel(capacity: usize) -> (OutcomeSender, OutcomeReceiver) {
     outcome_channel_reserving(capacity, 0)
 }
 
-/// [`outcome_channel`], with `timed` more slots that only timed requests'
+/// A channel for up to `capacity` outcomes (rounded up to a power of
+/// two), with `timed` more slots that only timed requests'
 /// outcomes may take: an untimed one finding only those free is dropped.
 /// While no more timed requests wait unreceived than `timed`, none of
-/// their outcomes is ever dropped.
+/// their outcomes is ever dropped. Allocates once: call it on a control
+/// thread.
 pub(crate) fn outcome_channel_reserving(
     capacity: usize,
     timed: usize,

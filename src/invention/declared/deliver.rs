@@ -8,11 +8,12 @@ use crate::control_request::{
 };
 use crate::invention::publish::{kept_until, timed_write, Authoring, CancelCause, PendingWrite};
 
-const QUEUE_FULL: &str = "The control request queue is full; try again";
+pub(super) const QUEUE_FULL: &str = "The control request queue is full; try again";
 
 /// Why a timed write is refused where it cannot wait for its time.
-const UNTIMED: &str = "A timed control write needs a running graph and a declared control";
-const SCHEDULE_UNTIMED: &str =
+pub(super) const UNTIMED: &str =
+    "A timed control write needs a running graph and a declared control";
+pub(super) const SCHEDULE_UNTIMED: &str =
     "A schedule write cannot be timed yet: time an edit batch that writes it instead";
 const CHAINS_FULL: &str = "Too many requests wait on another; try again once some apply";
 
@@ -79,7 +80,7 @@ impl DeclaredSurface {
             }
             route.clone()
         };
-        if timed && !matches!(route, Route::Live(_)) {
+        if timed && !matches!(route, Route::Live(_) | Route::Offline { .. }) {
             return Err(UNTIMED.into());
         }
         match route {
@@ -331,6 +332,12 @@ impl DeclaredSurface {
                 let graph = graph.upgrade().ok_or("The render has been replaced")?;
                 let mut graph = graph.lock().unwrap();
                 self.check_still(|route| matches!(route, Route::Offline { .. }))?;
+                if timed {
+                    let write = (index, write);
+                    let control = (event, reserved);
+                    return self
+                        .deliver_offline_timed(&mut graph, &module_id, write, options, control);
+                }
                 match write {
                     Write::Value(value) => graph.apply_control(&module_id, index, value, rank),
                     Write::Payload(payload, shown, checked) => {

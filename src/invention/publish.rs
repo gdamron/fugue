@@ -71,9 +71,11 @@ pub(crate) use change::{
 };
 pub(crate) use contested::Contested;
 pub(crate) use pending::{Announcement, Authoring, DocumentStep, PendingLog, PendingWrite};
-#[cfg(test)]
-pub(crate) use publisher::OUTCOME_QUEUE_CAPACITY;
 pub(crate) use publisher::{kept_until, Publisher, Refused};
+pub(crate) use publisher::{
+    BEAT_WATCH_CAPACITY, OUTCOME_QUEUE_CAPACITY, PAYLOAD_RETIRE_HOLD, PENDING_REQUEST_CAPACITY,
+    REQUEST_QUEUE_CAPACITY, TIMED_OUTCOME_RESERVE,
+};
 pub(crate) use reclaim::Reclaimer;
 use registry::LiveRegistry;
 pub(crate) use retarget::Retarget;

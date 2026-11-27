@@ -92,7 +92,7 @@ impl SignalGraph {
     /// Keeps a publication a render held as it panicked, for teardown. A
     /// render holds one at a time, so a second never comes; were one to,
     /// it is leaked rather than freed here.
-    fn keep(&mut self, publication: Box<Publication>) {
+    pub(super) fn keep(&mut self, publication: Box<Publication>) {
         match self.unwound {
             None => self.unwound = Some(publication),
             Some(_) => std::mem::forget(publication),

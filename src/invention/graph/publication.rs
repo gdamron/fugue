@@ -471,6 +471,10 @@ impl SignalGraph {
         publication: Box<Publication>,
         landing: bool,
     ) -> Box<Publication> {
+        // What is queued for the generation it replaces is taken first, as
+        // a live link takes what was queued ahead of an edit, so it maps
+        // through the install with what already waits.
+        self.take_offline();
         let installed = self.requests.as_ref().map_or(0, |drain| drain.installed);
         let mut publication = self.play_before_offline_install(publication, landing);
         self.install(&mut publication);

@@ -9,6 +9,7 @@ mod inspection;
 mod notes;
 mod preview;
 mod revision;
+mod timed;
 mod views;
 
 #[wasm_bindgen(js_name = FugueEngine)]
@@ -123,16 +124,20 @@ impl WasmFugueEngine {
 
     #[wasm_bindgen(js_name = setControls)]
     /// Makes a JSON array of control writes (each `module_id`, `key`,
-    /// `value`, and optionally `intent`, `source` and `priority`) in order,
-    /// or none of them, as a daemon's `set_controls` does: a value in a
-    /// loose form (number text, a choice in another case) is read as its
-    /// control's kind, and a number outside the range its control holds is
-    /// set to the nearer limit.
+    /// `value`, and optionally `intent`, `source`, `priority`, `when` and
+    /// `ttl_ms`) in order, or none of them, as a daemon's `set_controls`
+    /// does: a value in a loose form (number text, a choice in another
+    /// case) is read as its control's kind, and a number outside the range
+    /// its control holds is set to the nearer limit. A write with a `when`
+    /// waits and applies where the daemon's would, on its sample or beat
+    /// as later renders reach it (see `takeSettledWrites`); one timed after
+    /// another request (`after_request`) is refused.
     ///
     /// Returns `{"controls": [...]}` as JSON text, an entry per write with
     /// the daemon's fields: `module_id`, `key`, `value` (read back),
     /// `state`, `requested`, `clamped` when it was clamped, and `reason`
-    /// when it failed as it was made. A refusal throws the daemon's error
+    /// when it failed as it was made; a timed one is `pending`, with its
+    /// `request` id and its `landing`. A refusal throws the daemon's error
     /// as JSON text: `code` `invalid_control_write`, `message`, and `write`
     /// with the refused write's `index`, `module_id`, `key`, `reason` and
     /// `message`; nothing was written.

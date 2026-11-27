@@ -5,10 +5,11 @@
 //! bounded, allocation-free MPSC queue ([`bounded`](self::queue::bounded)).
 //! The audio thread is the queue's only consumer and the only mutator of
 //! module control state, and it reports what became of each request through
-//! an outcome channel ([`outcome_channel`]). Modules declare their controls in a
-//! [`ControlTable`], which control threads resolve keys and coerce values
-//! against, apply them with [`Module::apply`](crate::Module::apply) and
-//! publish what they hold to [`ControlCells`] for read-back. Requests are
+//! an outcome channel ([`outcome_channel_reserving`]). Modules declare their
+//! controls in a [`ControlTable`], which control threads resolve keys and
+//! coerce values against, apply them with
+//! [`Module::apply`](crate::Module::apply) and publish what they hold to
+//! [`ControlCells`] for read-back. Requests are
 //! timed on the engine's sample transport ([`Transport`]): now, at a
 //! sample, or some samples from submission, with an optional ttl.
 //!
@@ -87,9 +88,9 @@ pub(crate) use declare::{
 pub(crate) use event::{EventCounter, EventCursor};
 pub(crate) use hold::{admits_hold, kept_hold, take_hold, FrameScope, Rank, Standing};
 pub(crate) use local::{local_controls, local_get, local_set};
-pub(crate) use outcome::{
-    outcome_channel, outcome_channel_reserving, OutcomeReceiver, OutcomeSender,
-};
+#[cfg(test)]
+pub(crate) use outcome::outcome_channel;
+pub(crate) use outcome::{outcome_channel_reserving, OutcomeReceiver, OutcomeSender};
 pub(crate) use pending::{expired, Outcome, Outcomes, PendingStore, Refusal};
 pub(crate) use queue::QueueConsumer;
 pub(crate) use ramps::Ramps;
