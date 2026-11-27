@@ -14,7 +14,7 @@ use crate::invention::request_log::LoggedBeat;
 
 /// The timed edits a ledger remembers. One waits at a time, so this covers
 /// a long run of them between two reads.
-const LEDGER_CAPACITY: usize = 32;
+pub(crate) const LEDGER_CAPACITY: usize = 32;
 
 /// Where a timed edit stands.
 #[derive(Clone, Debug, PartialEq)]

@@ -22,12 +22,12 @@ use crate::{
     RunningInvention,
 };
 
-const RATE: u32 = 48_000;
-const BLOCK: usize = 64;
+pub(super) const RATE: u32 = 48_000;
+pub(super) const BLOCK: usize = 64;
 
 /// A sine under a clock keeping bars at 480 BPM: a bar every 24,000
 /// samples.
-const DOCUMENT: &str = r#"{
+pub(super) const DOCUMENT: &str = r#"{
     "version": "1.0.0",
     "modules": [
         { "id": "clock", "type": "clock", "config": { "bpm": 480.0 } },
@@ -40,9 +40,9 @@ const DOCUMENT: &str = r#"{
 }"#;
 
 /// Blocks into the first bar, where each write is made.
-const LEAD_IN: usize = 100;
+pub(super) const LEAD_IN: usize = 100;
 /// Blocks rendered after it: past the second downbeat.
-const AFTER: usize = 24_000 / BLOCK + 8;
+pub(super) const AFTER: usize = 24_000 / BLOCK + 8;
 
 #[derive(Default)]
 struct Settled(Mutex<Vec<ControlRequestSettled>>);
@@ -64,7 +64,7 @@ fn daemon() -> (RunningInvention, Pump, Arc<Settled>) {
     (running, pump, sink)
 }
 
-fn engine() -> RenderEngine {
+pub(super) fn engine() -> RenderEngine {
     let mut engine = RenderEngine::new(RATE);
     engine.set_block_size(BLOCK);
     engine.load_json(DOCUMENT).unwrap();
@@ -72,7 +72,7 @@ fn engine() -> RenderEngine {
 }
 
 /// `blocks` blocks of the daemon's output as the device receives it.
-fn daemon_render(pump: &Pump, blocks: usize) -> Vec<f32> {
+pub(super) fn daemon_render(pump: &Pump, blocks: usize) -> Vec<f32> {
     let (left, right) = pump.render_stereo(blocks);
     let frames = left.iter().zip(&right);
     frames
@@ -80,7 +80,7 @@ fn daemon_render(pump: &Pump, blocks: usize) -> Vec<f32> {
         .collect()
 }
 
-fn render(engine: &mut RenderEngine, blocks: usize) -> Vec<f32> {
+pub(super) fn render(engine: &mut RenderEngine, blocks: usize) -> Vec<f32> {
     let mut out = vec![0.0f32; 2 * BLOCK * blocks];
     engine.render_interleaved(&mut out).unwrap();
     out
@@ -98,7 +98,7 @@ fn timed(intent: ControlWriteIntent, when: ControlWhen) -> ControlWrite {
 }
 
 /// The sample the clock reaches beat `beat` on.
-fn beat_sample(beat: f64) -> u64 {
+pub(super) fn beat_sample(beat: f64) -> u64 {
     let mut clock = Clock::new(RATE, 480.0);
     (0..)
         .find(|_| {

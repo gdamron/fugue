@@ -77,7 +77,6 @@ impl OfflineEdits {
 
     /// Waits on `edit`, just queued for `sample` or `beat`, whose graph has
     /// `gates`. Nothing else waits.
-    #[allow(dead_code)] // Queued by the render's timed edit batches, still to come.
     pub(crate) fn queued(
         &mut self,
         edit: WaitingEdit,

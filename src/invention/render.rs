@@ -27,6 +27,7 @@ mod notes;
 mod options;
 mod pause;
 mod replay;
+mod timed_edits;
 mod timed_writes;
 mod view_reading;
 
@@ -65,6 +66,9 @@ pub struct RenderEngine {
     notes: Option<notes::Followed>,
     /// Timed writes settled and not yet taken (see [`Self::take_settled_writes`]).
     settled_writes: timed_writes::SettledWrites,
+    /// A replaced invention's timed edit changes not yet taken (see
+    /// [`Self::take_request_changes`]).
+    edit_changes: timed_edits::EditChanges,
 }
 
 impl RenderEngine {
@@ -90,6 +94,7 @@ impl RenderEngine {
             clamp_counts: levels::ClampCounts::default(),
             notes: None,
             settled_writes: Default::default(),
+            edit_changes: Default::default(),
         }
     }
 
@@ -554,6 +559,10 @@ mod remap_tests;
 mod retarget_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod timed_edit_race_tests;
+#[cfg(test)]
+mod timed_edit_tests;
 #[cfg(test)]
 mod timed_write_tests;
 #[cfg(test)]

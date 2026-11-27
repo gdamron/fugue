@@ -117,7 +117,6 @@ pub(crate) struct EndGates {
 impl EndGates {
     /// The gates of `modules` (each id with its output ports, in module
     /// order). Allocates.
-    #[allow(dead_code)] // Queued by the render's timed edit batches, still to come.
     pub(crate) fn of<'a>(modules: impl Iterator<Item = (&'a String, &'a [String])>) -> Self {
         let gates: Vec<_> = (modules.enumerate())
             .filter_map(|(index, (id, outputs))| {
