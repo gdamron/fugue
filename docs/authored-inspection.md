@@ -106,7 +106,8 @@ loaded or saved (`baseline` says which; the host decides when it moves), and
 lists the changes: modules removed, then each module in document order with
 its changed fields and config keys (saved and current value) or as added;
 connections removed and added; then the piece's other fields, each
-development and asset by name. Keys and fields come in name order, and a
+development and asset by name. Keys and fields come in name order (the
+saved piece's first, then those only the current one has), and a
 number compares by value, so `440` and `440.0` are the same.
 
 Apart from the changes, `performed` lists the controls written as
@@ -120,8 +121,9 @@ on the calling thread, never the audio thread.
 `summary` says the whole difference in a sentence or two, on every page.
 Pages hold the inspection limits (16 KiB, 1 to 100 records, 4 KiB values;
 a larger value is left out with `omitted`), and `next_cursor` is bound to the
-revision. Performed writes do not move the revision, so `performed` may
-change between pages.
+revision and to a digest of every record: a save or a performed write moves
+what is measured without moving the revision, and a cursor from other
+differences is refused, to read again from the first page.
 
 The browser engine's static `FugueEngine.diffInventions(baseline, kind,
 current, sounding, revision, query)` answers the same over documents a page
